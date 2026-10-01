@@ -47,7 +47,8 @@ public sealed class RowVersionPatchesTests
         {
             "_pMetaTable", "_pTimestampField", "_pFieldIndex", "_pItem", "_mCreate",
             "_pSystemIdField", "_pSystemIdProp", "_pReadOnlyBuffer", "_pReadOnlyBufferSystemId",
-            "_pTableCaptionSafe", "_fPrimaryTree", "_mCreateUniqueConstraint", "_pStoredItem",
+            "_pTableCaptionSafe", "_fPrimaryTree", "_mCreateUniqueConstraint", "_mFormatKeyFieldsAndValues",
+            "_pStoredItem",
             "_pendingInsertStampIndex", "_pendingModifyRestore",
             "_modifyRestored", "_keepOwnResult", "_fBufferedResults",
         })
@@ -441,8 +442,11 @@ public sealed class RowVersionPatchesTests
 
     // ── #2573: Insert refuses a duplicate explicit SystemId ────────────────────────
 
+    // The duplicate is found; naming the field takes BC's own formatter, which needs a real
+    // NCLMetaField (DuplicateSystemIdFieldListTests). A fake field refuses rather than falling
+    // back to a hand-written field list.
     [Fact]
-    public void OnBeforeInsert_DuplicateSystemId_Throws_WithUniqueIndexMessage()
+    public void OnBeforeInsert_DuplicateSystemId_FakeField_RefusesAsShapeGapNamingSystemIdField()
     {
         ResetReflectionCache();
         var duplicateId = NavGuid.NewGuid();
@@ -451,10 +455,58 @@ public sealed class RowVersionPatchesTests
         var metaTable = new FakeMetaTable(timestampField: null, systemIdField: new FakeMetaField(0));
         var buffer = new FakeBuffer(metaTable, slotCount: 1) { [0] = duplicateId };
 
-        var ex = Record.Exception(() => RowVersionPatches.OnBeforeInsert(provider, CompanyToken, buffer));
+        var ex = Assert.Throws<AlRunner.Infrastructure.BcShapeGapException>(
+            () => RowVersionPatches.OnBeforeInsert(provider, CompanyToken, buffer));
+        Assert.Contains("SystemIdField", ex.Message);
+    }
 
-        Assert.NotNull(ex);
-        Assert.Contains("unique index", ex!.Message, StringComparison.OrdinalIgnoreCase);
+    // A tree the index can count in O(1), like BC's AvlTree.CountIfBounded, so the insert goes
+    // through StoredSystemIdIndex rather than the fallback walk.
+    private sealed class CountedTree : System.Collections.IEnumerable
+    {
+        private readonly object[] _rows;
+        public CountedTree(params object[] rows) => _rows = rows;
+        public int CountIfBounded => _rows.Length;
+        public System.Collections.IEnumerator GetEnumerator() => _rows.GetEnumerator();
+    }
+
+#pragma warning disable CS0649, CS0414 // written and read only through reflection / Set
+    private sealed class SwappableTreeProvider
+    {
+        private object? primaryTree;
+        public void Set(object? tree) => primaryTree = tree;
+    }
+#pragma warning restore CS0649, CS0414
+
+    private static Exception? Insert(object provider, NavGuid systemId)
+    {
+        var metaTable = new FakeMetaTable(timestampField: null, systemIdField: new FakeMetaField(0));
+        var buffer = new FakeBuffer(metaTable, slotCount: 1) { [0] = systemId };
+        return Record.Exception(() => RowVersionPatches.OnBeforeInsert(provider, CompanyToken, buffer));
+    }
+
+    // #5141: the store drops its tree (rows deleted), then holds the same NUMBER of rows as
+    // before but different ids. The index must not answer from the rows that are gone.
+    [Fact]
+    public void OnBeforeInsert_AfterTheTreeWasDropped_IndexDoesNotAnswerFromTheGoneRows()
+    {
+        ResetReflectionCache();
+        var provider = new SwappableTreeProvider();
+        MarkDatabaseBackedProvider(provider);
+        var gone = NavGuid.NewGuid();
+        var current = NavGuid.NewGuid();
+
+        provider.Set(new CountedTree(new FakeStoredRow(gone)));
+        Assert.NotNull(Insert(provider, gone));          // index now holds {gone} at one row
+
+        provider.Set(null);                               // rows dropped with the tree
+        Assert.Null(Insert(provider, current));           // first insert into the empty store
+
+        provider.Set(new CountedTree(new FakeStoredRow(current)));
+        Assert.Null(Insert(provider, gone));              // the gone id is free again
+        provider.Set(new CountedTree(new FakeStoredRow(current)));
+        var duplicate = Insert(provider, current);        // ...and the stored one is not
+        Assert.IsType<AlRunner.Infrastructure.BcShapeGapException>(duplicate);
     }
 
     // Negative control: a DIFFERENT explicit SystemId must insert cleanly, so an

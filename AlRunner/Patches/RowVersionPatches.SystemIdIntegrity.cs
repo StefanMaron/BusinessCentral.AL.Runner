@@ -102,6 +102,7 @@ public static partial class RowVersionPatches
     /// <summary>The AL-visible operation a shape gap in this file interrupted.</summary>
     private const string SystemIdIntegritySurface = "AL Record.Insert (SystemId uniqueness check)";
     private static MethodInfo? _mCreateUniqueConstraint;  // NavCSideDuplicateKeyException.CreateUniqueConstraint
+    private static MethodInfo? _mFormatKeyFieldsAndValues; // RecordImplementationHelper.FormatKeyFieldsAndValues (internal)
 
     /// <summary>
     /// Resolves the FieldIndex of the table's SystemId field, or null when the table
@@ -312,7 +313,15 @@ public static partial class RowVersionPatches
         // moved" case the resolution above already refuses, and folding it into the null
         // branch silently skipped the duplicate-SystemId check on every insert (#2786).
         var storedTree = _fPrimaryTree.GetValue(provider);
-        if (storedTree == null) return;
+        if (storedTree == null)
+        {
+            // The store dropped its rows with its tree, so an index kept for this provider now
+            // describes rows that are gone. Left alone, a later sync at the same row count
+            // trusts it and lets a duplicate through (#5141).
+            if (_systemIdIndexes.TryGetValue(provider, out var emptied))
+                lock (emptied) emptied.Invalidate();
+            return;
+        }
         var storedRows = AlRunner.Infrastructure.BcShape.RequiredEnumerable(
             storedTree, $"{provider.GetType().Name}.primaryTree", SystemIdIntegritySurface,
             "the SystemId integrity check cannot read the stored rows, so a duplicate "
@@ -334,7 +343,8 @@ public static partial class RowVersionPatches
             {
                 if (ReadRowSystemId(rowObj).Value != incomingSystemId.Value) continue;
                 throw BuildDuplicateSystemIdException(
-                    ResolveTableCaptionSafe(metaTable), $"SystemId={incomingSystemId.Value}");
+                    ResolveTableCaptionSafe(metaTable),
+                    FormatFieldAndValue(_pSystemIdField!.GetValue(metaTable), incomingSystemId));
             }
             return;
         }
@@ -348,7 +358,8 @@ public static partial class RowVersionPatches
             index.SyncTo(storedRowCount, () => EnumerateStoredSystemIds(storedRows));
             if (index.Contains(incomingSystemId.Value))
                 throw BuildDuplicateSystemIdException(
-                    ResolveTableCaptionSafe(metaTable), $"SystemId={incomingSystemId.Value}");
+                    ResolveTableCaptionSafe(metaTable),
+                    FormatFieldAndValue(_pSystemIdField!.GetValue(metaTable), incomingSystemId));
             index.NoteInserting(incomingSystemId.Value, storedRowCount);
         }
     }
@@ -412,6 +423,37 @@ public static partial class RowVersionPatches
                 $"[RowVersionPatches] {metaTable.GetType().Name}.TableCaptionSafe property not found — " +
                 "SystemId integrity check cannot resolve its reflection target");
         return (_pTableCaptionSafe.GetValue(metaTable) as string) ?? string.Empty;
+    }
+
+    /// <summary>
+    /// The field list of BC's unique-constraint error, from BC's own
+    /// <c>RecordImplementationHelper.FormatKeyFieldsAndValues</c>: <c>FieldCaption='value'</c>.
+    /// It is the formatter <c>GetUniqueConstraintException</c> uses when SQL reports the
+    /// $systemId index. Corpus 60061 <c>Record_Insert_DuplicateSystemId_ErrorQuotesTheFormattedValue</c>
+    /// pins the text on a service tier.
+    /// </summary>
+    private static string FormatFieldAndValue(object? systemIdField, NavValue value)
+    {
+        var field = systemIdField as NCLMetaField
+            ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                SystemIdIntegritySurface, "NCLMetaTable.SystemIdField",
+                $"holds a {systemIdField?.GetType().Name ?? "null"}, not an NCLMetaField, so BC's own "
+                + "formatter cannot name the field in the duplicate-SystemId error");
+        if (_mFormatKeyFieldsAndValues == null)
+        {
+            var helper = typeof(NCLMetaTable).Assembly.GetType(
+                    "Microsoft.Dynamics.Nav.Runtime.RecordImplementationHelper", throwOnError: false)
+                ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                    SystemIdIntegritySurface, "RecordImplementationHelper",
+                    "type not found, so the duplicate-SystemId error cannot be formatted the way BC formats it");
+            _mFormatKeyFieldsAndValues = AlRunner.Infrastructure.BcShape.RequiredMethod(
+                helper, "FormatKeyFieldsAndValues", BindingFlags.NonPublic | BindingFlags.Static,
+                SystemIdIntegritySurface, "RecordImplementationHelper.FormatKeyFieldsAndValues",
+                "the duplicate-SystemId error cannot be formatted the way BC formats it",
+                new[] { typeof(IEnumerable<Tuple<NCLMetaField, NavValue>>) });
+        }
+        return (string)_mFormatKeyFieldsAndValues.Invoke(
+            null, new object[] { new[] { Tuple.Create(field, value) } })!;
     }
 
     /// <summary>
