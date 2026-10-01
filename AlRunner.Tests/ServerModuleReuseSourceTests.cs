@@ -20,13 +20,13 @@ public sealed class ServerModuleReuseSourceTests
         }
         """;
 
-    private static string CalcTests(int expected) => $$"""
+    private static string CalcTests(int expected, string method = "Scale_Works") => $$"""
         codeunit 65331 "Reuse Calc Tests"
         {
             Subtype = Test;
 
             [Test]
-            procedure Scale_Works()
+            procedure {{method}}()
             var
                 C: Codeunit "Reuse Calc";
             begin
@@ -134,14 +134,17 @@ public sealed class ServerModuleReuseSourceTests
         File.WriteAllText(Path.Combine(x, "Tests.Codeunit.al"), CalcTests(42));
         WriteApp(y);
         File.WriteAllText(Path.Combine(y, "Calc.Codeunit.al"), Calc(3));
-        File.WriteAllText(Path.Combine(y, "Tests.Codeunit.al"), CalcTests(63));
+        File.WriteAllText(Path.Combine(y, "Tests.Codeunit.al"), CalcTests(63, "Scale_TriplesInY"));
         try
         {
             await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
             var first = await RunTests(server, x);
             Assert.True(first.Exit == 0 && first.Status["Scale_Works"] == "pass", first.Raw);
+            // Y's own test, and only it: X's module would run X's test instead.
             var second = await RunTests(server, y);
-            Assert.True(second.Exit == 0 && second.Status["Scale_Works"] == "pass", second.Raw);
+            Assert.True(second.Exit == 0, second.Raw);
+            Assert.Equal(new[] { "Scale_TriplesInY" }, second.Status.Keys.ToArray());
+            Assert.True(second.Status["Scale_TriplesInY"] == "pass", second.Raw);
         }
         finally
         {
@@ -149,35 +152,37 @@ public sealed class ServerModuleReuseSourceTests
         }
     }
 
-    /// <summary>The dependency route to the same reuse: X alone first, then Y's app with a test
-    /// app depending on it. The test app loads Y's app as a dependency, which must be compiled
-    /// from Y, not handed X's module because the id matches.</summary>
+    /// <summary>The dependency route to the same reuse: X alone first, then a test app in another
+    /// root whose dependency is Y's app, found as a sibling source folder. That dependency must be
+    /// compiled from Y, not handed X's module because the id matches.</summary>
     [SkippableFact]
-    public async Task RunTestsThenTwoBundles_DependencyFromOtherDirectory_IsItsOwnSource()
+    public async Task RunTestsThenSiblingDependency_OtherDirectorySameId_IsItsOwnSource()
     {
         TestArtifacts.SkipIfMissing();
-        var root = TestScratch.Dir("al-runner-server-reuse-5079-dep");
-        var x = Path.Combine(root, "x");
-        var yApp = Path.Combine(root, "y-app");
-        var yTest = Path.Combine(root, "y-test");
+        var rootX = TestScratch.Dir("al-runner-server-reuse-5079-dep-x");
+        var rootY = TestScratch.Dir("al-runner-server-reuse-5079-dep-y");
+        var x = Path.Combine(rootX, "x");
+        var yApp = Path.Combine(rootY, "y-app");
+        var yTest = Path.Combine(rootY, "y-test");
         WriteApp(x);
         File.WriteAllText(Path.Combine(x, "Calc.Codeunit.al"), Calc(2));
         File.WriteAllText(Path.Combine(x, "Tests.Codeunit.al"), CalcTests(42));
         WriteApp(yApp);
         File.WriteAllText(Path.Combine(yApp, "Calc.Codeunit.al"), Calc(3));
         WriteApp(yTest, id: "c5079000-0000-4a11-9111-000000000002", name: "Reuse Source Tests SX", dependsOn: AppId);
-        File.WriteAllText(Path.Combine(yTest, "Tests.Codeunit.al"), CalcTests(63));
+        File.WriteAllText(Path.Combine(yTest, "Tests.Codeunit.al"), CalcTests(63, "Scale_TriplesInY"));
         try
         {
             await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
             var first = await RunTests(server, x);
             Assert.True(first.Exit == 0, first.Raw);
-            var second = await RunTests(server, yApp, yTest);
-            Assert.True(second.Exit == 0 && second.Status["Scale_Works"] == "pass", second.Raw);
+            var second = await RunTests(server, yTest);
+            Assert.True(second.Exit == 0 && second.Status["Scale_TriplesInY"] == "pass", second.Raw);
         }
         finally
         {
-            try { Directory.Delete(root, recursive: true); } catch { }
+            try { Directory.Delete(rootX, recursive: true); } catch { }
+            try { Directory.Delete(rootY, recursive: true); } catch { }
         }
     }
 }

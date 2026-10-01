@@ -83,7 +83,7 @@ public sealed class DependencyLoader
     /// and never when it was compiled under --tdd. Within one request (and a whole CLI or --watch
     /// run, which never calls this) the #1683/#1892 sharing is unchanged.
     /// </summary>
-    internal static void BeginReuseEpoch() => Interlocked.Increment(ref _reuseEpoch);
+    public static void BeginReuseEpoch() => Interlocked.Increment(ref _reuseEpoch);
 
     private static long CurrentEpoch => Interlocked.Read(ref _reuseEpoch);
 
