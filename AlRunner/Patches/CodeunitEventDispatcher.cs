@@ -158,6 +158,24 @@ public static partial class BcRuntime
                   // own for callers that fall through it (e.g. DispatchCore's catch, below).
     }
 
+    internal const string EventScopeSuffix = "_Scope";
+
+    /// <summary>The AL event name from its scope class: exactly <c>&lt;EventName&gt;_Scope</c>, and the
+    /// name keeps its own underscores — <c>OnBeforeHandle_State_Scope</c> is <c>OnBeforeHandle_State</c>
+    /// (#5142). Every AL-compiled event method in the Base/System Application closure has this
+    /// nested type with no hash suffix (census in the #5142 PR).</summary>
+    internal static bool TryDecodeEventScopeName(string scopeName, out string eventName)
+    {
+        if (scopeName.Length > EventScopeSuffix.Length
+            && scopeName.EndsWith(EventScopeSuffix, StringComparison.Ordinal))
+        {
+            eventName = scopeName[..^EventScopeSuffix.Length];
+            return true;
+        }
+        eventName = "";
+        return false;
+    }
+
     private static bool _firstDispatchLogged;
     private static bool _firstFireLogged;
     private static void DispatchCore(object publisherScope)
@@ -187,9 +205,7 @@ public static partial class BcRuntime
         if (declType == null) return;
         var declName = declType.Name;
         var scopeName = scopeType.Name;
-        int us = scopeName.IndexOf('_');
-        if (us < 0) return;
-        string eventMethodName = scopeName.Substring(0, us);
+        if (!TryDecodeEventScopeName(scopeName, out var eventMethodName)) return;
 
         var navMethodScopeType = NavMethodScopeType;
         object? pubObj = null;
