@@ -8732,8 +8732,9 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             {
                 var notJudged = exitCode != 0 || allCompileErrors.Count > 0;
                 var note = notJudged
-                    ? $"test-selection: --test '{requestTestFilter}' selected no test, not judged: a bundle did not "
-                      + "compile or execute, so its tests were never offered to the pattern."
+                    ? $"test-selection: --test '{requestTestFilter}' selected no test, not judged: the request did not "
+                      + "otherwise end with exit code 0 (a compile or execution failure, or a company initialization "
+                      + "abort), so the zero cannot be attributed to the pattern."
                     : "test-selection: " + AlRunner.Infrastructure.TestSelectionAudit.Describe(requestTestFilter);
                 warnings = (fieldWarnings ?? Array.Empty<string>()).Append(note).ToList();
                 if (!notJudged) exitCode = AlRunner.Infrastructure.TestSelectionAudit.ExitCode;

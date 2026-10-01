@@ -221,4 +221,27 @@ public sealed class ServerTestSelectionFieldTests : IClassFixture<SharedCliServe
         var back = await Send(server, bundle);
         Assert.Equal(new[] { "AlphaCheck" }, back.Ran);
     }
+
+    /// <summary>A server started with --exclude-test keeps it as the default for a request that omits
+    /// the field (an empty list asks for nothing, so it falls back too), a request's own excludeTests
+    /// replaces it for that request only, and the default is back for the next.</summary>
+    [SkippableFact]
+    public async Task StartupExcludeTestFlag_IsTheDefault_ARequestFieldReplacesItForOneRequest()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = Bundle("al-runner-server-exclude-startup", "000000000006");
+        await using var server = await CliServer.StartAsync(new[] { "--exclude-test", "Codeunit65401" });
+
+        var first = await Send(server, bundle);
+        Assert.Equal(new[] { "BetaCheck" }, first.Ran);
+
+        var emptyList = await Send(server, bundle, r => r["excludeTests"] = Array.Empty<string>());
+        Assert.Equal(new[] { "BetaCheck" }, emptyList.Ran);
+
+        var replaced = await Send(server, bundle, r => r["excludeTests"] = new[] { "Codeunit65402" });
+        Assert.Equal(new[] { "AlphaCheck" }, replaced.Ran);
+
+        var back = await Send(server, bundle);
+        Assert.Equal(new[] { "BetaCheck" }, back.Ran);
+    }
 }

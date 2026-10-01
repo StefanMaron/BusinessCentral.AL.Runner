@@ -1290,13 +1290,14 @@ no-op, an interior `*` is matched literally), and an `excludeTests` entry is a w
 qualified test name, never a prefix. Both apply to every bundle in the request.
 
 - **Per request.** A request that omits a field gets the server's startup flag (`--test`, `--exclude-test`),
-  or no selection when it was started without one. The next request never inherits the previous request's
+  or no selection when it was started without one. An empty `excludeTests` list asks
+  for nothing, so it falls back to the startup default like an omitted one; it does not mean "exclude nothing". The next request never inherits the previous request's
   value; `ServerTestSelectionFieldTests` sends a request with each field and then one without.
 - **A pattern that selects nothing is exit 6**, as on the CLI (#4055): the summary's `exitCode` is `6` and
   `warnings` carries `test-selection: --test 'PATTERN' selected no test in this run. ...`. A match that
-  `excludeTests` then removed is not a no-match (the count is taken before exclusion, as on the CLI). When a
-  bundle did not compile or execute, the zero cannot be attributed to the pattern, so the code stays as it is
-  and the warning says "not judged". The audit judges a `test` the request carried, not a startup `--test`.
+  `excludeTests` then removed is not a no-match (the count is taken before exclusion, as on the CLI). When the
+  request ends with any other code (a compile or execution failure, or a company initialization abort), the
+  zero cannot be attributed to the pattern, so the code stays as it is and the warning says "not judged". The audit judges a `test` the request carried, not a startup `--test`.
 - **Refused with `affectedOnly`.** `test` or `excludeTests` together with `affectedOnly` returns
   `{"error": ...}` and runs nothing: selection decides which tests run, and a baseline recorded from a narrowed
   run would describe tests that never ran. The CLI refuses `--affected` with `--test` for the same reason.
@@ -1309,7 +1310,7 @@ request field because they are not per-request on this server, not because nobod
 
 | CLI flag | why a request cannot carry it |
 |---|---|
-| `--define`, `--preprocessor-symbols` | The preprocessor symbols change which `#if` branch compiles, but the module a later request reuses for another directory with the same app id ([Another directory with the same app id](#another-directory-with-the-same-app-id)) is keyed on the files' content, `app.json` and the resolved dependencies (`ProgramSupport.BundleSourceFingerprint`), not on the symbol set. A request that changed the symbols could be served a module compiled under other ones. Start the server with the flag. |
+| `--define`, `--preprocessor-symbols` | Not built yet, not impossible: the module a later request reuses for another directory with the same app id is keyed on content, `app.json` and dependencies, not the symbols ([#another-directory-with-the-same-app-id](#another-directory-with-the-same-app-id)), so it would need the route `tdd` took. Start the server with the flag. |
 | `--verbose`, `--quiet`, `--show-pass`, `--failures-only` | Results already arrive as structured `test` lines whatever the CLI would have printed. Diagnostics on stderr follow the server's own `--verbose`, a process-wide switch. |
 | `--output-json`, `--output-junit`, `--out`, `--coverage-out` | The response is already the JSON document, and a client writes its own files from it. `--coverage-out` also cannot be built on the server's coverage table: that table has no entry for a procedure that never ran, where the CLI's cobertura reports it at 0 hits (#5186). |
 | `--no-cache`, `--cache DIR` | Cache roots are process-wide directories chosen at startup. |
