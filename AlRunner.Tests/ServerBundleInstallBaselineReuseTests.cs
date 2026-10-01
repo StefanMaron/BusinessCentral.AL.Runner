@@ -12,13 +12,20 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-public sealed class ServerBundleInstallBaselineReuseTests
+// #5110: facts that need no startup flag of their own share one --server (SharedCliServer).
+public sealed class ServerBundleInstallBaselineReuseTests : IClassFixture<SharedCliServer>
 {
+    private readonly SharedCliServer _fixture;
+
+    public ServerBundleInstallBaselineReuseTests(SharedCliServer fixture) => _fixture = fixture;
+
     private const string HitLine = "InstallBaseline.BundleCache HIT";
     private const string SeedLine = "TestExecutor.InitialInstallSeed";
 
     private static readonly Dictionary<string, string> PerfEnv = new() { ["AL_RUNNER_PERF"] = "1" };
 
+    // Each fact's bundles use their own offset, so no two facts on the shared server share an
+    // app id or object ids (SharedCliServer rule (c)).
     private static string InstallTriggerLine(int offset) => $"InstallTrigger Codeunit{50601 + offset} ";
 
     [SkippableFact]
@@ -31,7 +38,7 @@ public sealed class ServerBundleInstallBaselineReuseTests
         var b = CreateBundle(5, seed: "3333", useNumberSequence: false);
         try
         {
-            await using var server = await CliServer.StartAsync(extraEnv: PerfEnv);
+            var server = await _fixture.GetAsync(extraEnv: PerfEnv);
 
             var first = await RunAsync(server, a, b);
             Assert.Equal(1, Count(first, InstallTriggerLine(0)));
@@ -64,23 +71,23 @@ public sealed class ServerBundleInstallBaselineReuseTests
     public async Task EditToTheInstallTrigger_RedoesTheSeed_AndTheTestsSeeTheNewRow()
     {
         TestArtifacts.SkipIfMissing();
-        var bundle = CreateBundle(0, seed: "7777", useNumberSequence: false);
+        var bundle = CreateBundle(10, seed: "7777", useNumberSequence: false);
         try
         {
-            await using var server = await CliServer.StartAsync(extraEnv: PerfEnv);
+            var server = await _fixture.GetAsync(extraEnv: PerfEnv);
 
             var first = await RunAsync(server, bundle);
-            Assert.Equal(1, Count(first, InstallTriggerLine(0)));
+            Assert.Equal(1, Count(first, InstallTriggerLine(10)));
 
             var source = Path.Combine(bundle, "Bundle.al");
             File.WriteAllText(source, File.ReadAllText(source).Replace("7777", "4242"));
 
             var edited = await RunAsync(server, bundle);
-            Assert.Equal(1, Count(edited, InstallTriggerLine(0)));
+            Assert.Equal(1, Count(edited, InstallTriggerLine(10)));
             Assert.Equal(0, Count(edited, HitLine));
 
             var again = await RunAsync(server, bundle);
-            Assert.Equal(0, Count(again, InstallTriggerLine(0)));
+            Assert.Equal(0, Count(again, InstallTriggerLine(10)));
             Assert.Equal(1, Count(again, HitLine));
         }
         finally
@@ -95,16 +102,16 @@ public sealed class ServerBundleInstallBaselineReuseTests
     public async Task InstallTriggerUsingANumberSequence_IsNotReused()
     {
         TestArtifacts.SkipIfMissing();
-        var bundle = CreateBundle(0, seed: "7777", useNumberSequence: true);
+        var bundle = CreateBundle(15, seed: "7777", useNumberSequence: true);
         try
         {
-            await using var server = await CliServer.StartAsync(extraEnv: PerfEnv);
+            var server = await _fixture.GetAsync(extraEnv: PerfEnv);
 
             // The second request's own AL test fails if its sequence was not created, which is
             // what a reuse would do.
             var first = await RunAsync(server, bundle);
             var second = await RunAsync(server, bundle);
-            Assert.Equal(1, Count(second, InstallTriggerLine(0)));
+            Assert.Equal(1, Count(second, InstallTriggerLine(15)));
             Assert.Equal(0, Count(second, HitLine));
             Assert.Contains("not-stored: the seed used a NumberSequence", first);
         }
@@ -120,14 +127,14 @@ public sealed class ServerBundleInstallBaselineReuseTests
     public async Task InstallTriggerReadingTheWorkDate_IsNotReused()
     {
         TestArtifacts.SkipIfMissing();
-        var bundle = CreateBundle(0, seed: "7777", useNumberSequence: false, useWorkDate: true);
+        var bundle = CreateBundle(20, seed: "7777", useNumberSequence: false, useWorkDate: true);
         try
         {
-            await using var server = await CliServer.StartAsync(extraEnv: PerfEnv);
+            var server = await _fixture.GetAsync(extraEnv: PerfEnv);
 
             var first = await RunAsync(server, bundle);
             var second = await RunAsync(server, bundle);
-            Assert.Equal(1, Count(second, InstallTriggerLine(0)));
+            Assert.Equal(1, Count(second, InstallTriggerLine(20)));
             Assert.Equal(0, Count(second, HitLine));
             Assert.Contains("not-stored: the seed used the WorkDate", first);
         }
@@ -166,10 +173,10 @@ public sealed class ServerBundleInstallBaselineReuseTests
     public async Task VersionOnlyEditToAppJson_RedoesTheSeed()
     {
         TestArtifacts.SkipIfMissing();
-        var bundle = CreateBundle(0, seed: "7777", useNumberSequence: false, checkPublishedVersion: true);
+        var bundle = CreateBundle(25, seed: "7777", useNumberSequence: false, checkPublishedVersion: true);
         try
         {
-            await using var server = await CliServer.StartAsync(extraEnv: PerfEnv);
+            var server = await _fixture.GetAsync(extraEnv: PerfEnv);
 
             var v1 = await RunAsync(server, new[] { bundle }, "codeunit", expectedPassed: 4);
             var v1Again = await RunAsync(server, new[] { bundle }, "codeunit", expectedPassed: 4);
@@ -181,7 +188,7 @@ public sealed class ServerBundleInstallBaselineReuseTests
             Assert.Equal(0, Count(v1, HitLine));
             Assert.Equal(1, Count(v1Again, HitLine));
             Assert.Equal(0, Count(v2, HitLine));
-            Assert.Equal(1, Count(v2, InstallTriggerLine(0)));
+            Assert.Equal(1, Count(v2, InstallTriggerLine(25)));
             Assert.Equal(1, Count(v2Again, HitLine));
         }
         finally
