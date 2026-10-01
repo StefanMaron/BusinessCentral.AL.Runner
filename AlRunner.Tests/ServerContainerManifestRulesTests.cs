@@ -141,7 +141,7 @@ public class ServerContainerManifestRulesTests
 
         var (exit, _, text) = await Serve(scratch, root);
         // The server runs none of a module's tests once an object is dropped, where the CLI runs
-        // the surviving codeunit (#5117), so only the refusal is compared here.
+        // the surviving codeunit (#5118), so only the refusal is compared here.
         Assert.True(exit != 0, text);
         Assert.True(text.Contains(InternalRefusal), text);
     }

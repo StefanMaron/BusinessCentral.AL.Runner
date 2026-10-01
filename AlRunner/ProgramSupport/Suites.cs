@@ -307,7 +307,7 @@ internal static partial class ProgramSupport
     /// compiles a source path as one module; given a container it merged every app into a module
     /// with no identity, where nothing is narrowed and earlier requests' modules collide.
     /// Left as given: a path that is itself an app, one inside an app, and any container holding a
-    /// suite with no app.json (the CLI merges those into one fallback module; see #5116).
+    /// suite with no app.json (the CLI merges those into one fallback module; see #5119).
     /// </summary>
     internal static string[] ExpandAppContainerRoots(string[] sourcePaths)
     {
