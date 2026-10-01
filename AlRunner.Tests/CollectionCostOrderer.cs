@@ -247,6 +247,8 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // producing a 73s single-threaded tail (it is 3rd-heaviest at ~196s of serial
             // work; see the file header and issue #1887 for the measured timeline).
             ["InstallSeedDepCompanyCacheTests"] = 196,
+            // #5068: six runner spawns on one cache root; 33-35s locally, not yet on CI.
+            ["InstallBaselineSubscriberScopeTests"] = 35,
             // #3538: every arm spawns the runner, and two of them spawn it twice to get a
             // cold-then-warm pair out of one private --cache. Measured 113.5 s on PR #3554's
             // BC 27.5 / 28.4 legs (run 34230660996) and recorded rounded DOWN per the header —

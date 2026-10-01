@@ -107,7 +107,8 @@ an event raised in one bundle's test reaches another bundle's subscriber (#4931)
 Besides the AL-output cache above, the runner keeps the result of the dependency apps'
 `Install` triggers plus `Company-Initialize` (codeunit 2) at
 `~/.cache/al-runner/install-baseline/<key>.bin`, keyed by the dependency assembly set, the
-runner build and the BC version. It is the same seeding either way — reloading it just
+apps whose automatic event subscribers could run during that seeding, the runner build and the
+BC version. It is the same seeding either way — reloading it just
 skips re-running those AL bodies in every new process (measured: 6.3s → 0.8s on a warm
 single-fixture run). `--cache <dir>` relocates it with the other caches; set
 `AL_RUNNER_NO_DEP_COMPANY_CACHE=1` to bypass it entirely (no read, no write) and force the
