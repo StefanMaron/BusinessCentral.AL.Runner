@@ -745,10 +745,11 @@ each error is constructed, trapped or not):
   dependency list: without the Test Runner app (or in a run that does not raise its events) the
   last error carries over, and the walk applies.
 
-What real BC does between test methods depends on the test runner, and corpus PR
-StefanMaron/BusinessCentral.AL.Language.Tests#520 asks it: under the 28.x legs' test hub the
-last error carried from one method to the next within a codeunit and was cleared at the next
-codeunit; under the 27.x legs' runner it was cleared.
+Real BC clears it between test methods under the standard runner: corpus PR
+StefanMaron/BusinessCentral.AL.Language.Tests#520 passes on the official Windows container (BC
+28.4) and on the 27.x legs. Only the 28.x Linux legs' test hub carried it within a codeunit.
+`--server` loads the Test Runner app by default from its package caches, as the CLI does (#5091),
+so with the app in the caches every test starts cleared and the last error links nothing.
 
 A test brought in through session state brings its codeunit (its bundle, under `disabled`), as
 in "affectedOnly and test isolation", except where nothing it reads can have changed: a test
