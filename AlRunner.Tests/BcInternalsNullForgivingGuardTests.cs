@@ -338,7 +338,11 @@ public sealed class BcInternalsNullForgivingGuardTests
         // FilterFieldDictionary.Items in RecordPatches.QueryJoinWhereFilters.cs (#5145), each a
         // BcShape.Property: a silent null there would drop a join query's WHERE filters before
         // grouping, and the post-projection pass would then test them against one row per group.
-        Assert.Equal(123, converted);
+        //
+        // 123 -> 124 for NavServerHandle.ObjectType in DotNetInteropShims.ReadObjectType (#3222),
+        // a BcShape.Property: a silent null would name the interface instead of the handle's type
+        // in the dotnet-platform-unsupported refusal for a failed DotNet member call.
+        Assert.Equal(124, converted);
     }
 
     /// <summary>
