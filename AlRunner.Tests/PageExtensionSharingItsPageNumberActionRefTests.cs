@@ -3,18 +3,12 @@
 // object by number alone, took the extension for the page, and never searched the extension's
 // instance for the target action it adds. The BC half is corpus codeunit 67538's
 // ExtActionRef_ToExtensionAction_InvokeRunsTheTargetsTrigger.
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public sealed class PageExtensionSharingItsPageNumberActionRefTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
     // Page 62800's extension shares its number; page 62801's does not, so a fault in the
     // same-number case cannot hide behind a fixture that fails for another reason.
     private static string Fixture(int pageId, int extensionId) => $$"""
@@ -69,7 +63,7 @@ public sealed class PageExtensionSharingItsPageNumberActionRefTests
         """;
 
     [SkippableFact]
-    public void ActionRefToTheExtensionsOwnAction_RunsIt_WhenTheExtensionSharesThePagesNumber()
+    public async Task ActionRefToTheExtensionsOwnAction_RunsIt_WhenTheExtensionSharesThePagesNumber()
     {
         TestArtifacts.SkipIfMissing();
         var root = TestScratch.Dir("al-runner-pageext-same-number-actionref");
@@ -90,29 +84,9 @@ public sealed class PageExtensionSharingItsPageNumberActionRefTests
             + TestProcedure("OtherNumber_ExtRefToBaseAction", 62801, "BaseRef", "BASE-62801")
             + "}\n");
 
-        var (output, exitCode) = RunCli($" --no-cache \"{root}\"");
-        Assert.True(output.Contains("Tests: 4   passed 4   failed 0"), output);
-        Assert.DoesNotContain("WRONG:", output);
-        Assert.Equal(0, exitCode);
-    }
-
-    private static (string Output, int ExitCode) RunCli(string args)
-    {
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg + args,
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        using var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(240_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
+        var r = await SuiteServer.RunViaServer(root);
+        Assert.True(r.Total == 4 && r.Passed == 4 && r.Failed == 0, r.ToString());
+        Assert.DoesNotContain(r.Tests, t => t.Message.Contains("WRONG:"));
+        Assert.Equal(0, r.ExitCode);
     }
 }

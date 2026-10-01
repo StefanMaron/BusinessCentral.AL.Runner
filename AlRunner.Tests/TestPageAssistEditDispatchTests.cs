@@ -24,21 +24,15 @@
 // RED/GREEN proof, measured on this branch with a probe bundle before the fix: both dispatch
 // arms failed with an EMPTY trace (the trigger never ran, silently) and pass after it.
 
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
 
-// Spawns the runner as a subprocess, same convention as TestPageDrillDownDispatchTests, whose
+// Runs on the shared test server (SuiteServer), same convention as TestPageDrillDownDispatchTests, whose
 // shape this follows deliberately: assist-edit is that test's sibling surface and the two
 // should not diverge in how they are driven.
 public sealed class TestPageAssistEditDispatchTests : IDisposable
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
     private readonly string _root;
 
     public TestPageAssistEditDispatchTests()
@@ -50,14 +44,6 @@ public sealed class TestPageAssistEditDispatchTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch { /* best-effort cleanup */ }
-    }
-
-    private static string[] ExtraPackageCacheArgs()
-    {
-        var platformApps = TestArtifacts.PlatformAppsDir();
-        return Directory.Exists(platformApps)
-            ? new[] { "--package-cache", platformApps }
-            : Array.Empty<string>();
     }
 
     /// <summary>
@@ -292,47 +278,25 @@ public sealed class TestPageAssistEditDispatchTests : IDisposable
         """);
     }
 
-    private (string output, int exit) RunBundled()
-    {
-        var args = new StringBuilder(
-            TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg + $" \"{_root}\"");
-        foreach (var a in ExtraPackageCacheArgs()) args.Append($" \"{a}\"");
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(600_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
     /// <summary>
     /// All five arms in one runner invocation: both dispatch routes produce their own concrete
     /// tag, neither leaks into the other, a second call runs the trigger again, and a control
     /// with no trigger stays silent rather than being refused.
     /// </summary>
     [SkippableFact]
-    public void AssistEdit_DispatchesBothRoutesAndStaysSilentWhenAbsent()
+    public async Task AssistEdit_DispatchesBothRoutesAndStaysSilentWhenAbsent()
     {
         TestArtifacts.SkipIfMissing();
 
         WriteBundle();
-        var (output, exit) = RunBundled();
+        var r = await SuiteServer.RunViaServer(_root);
 
-        Assert.True(exit == 0, $"Expected the bundle to pass; exit={exit}\n{output}");
-        Assert.Contains("PASS  Codeunit62712.AssistEditRunsTheBaseControlsOwnTrigger", output);
-        Assert.Contains("PASS  Codeunit62712.AssistEditRunsAModifyBlocksTrigger", output);
-        Assert.Contains("PASS  Codeunit62712.AssistEditIsRaisedOnlyForTheControlItWasCalledOn", output);
-        Assert.Contains("PASS  Codeunit62712.AssistEditRunsOncePerCall", output);
-        Assert.Contains("PASS  Codeunit62712.AssistEditOnAControlWithNoTriggerIsSilent", output);
-        Assert.DoesNotContain("FAIL", output);
+        Assert.True(r.ExitCode == 0, $"Expected the bundle to pass; exit={r.ExitCode}\n{r}");
+        r.AssertPassed("Codeunit62712.AssistEditRunsTheBaseControlsOwnTrigger");
+        r.AssertPassed("Codeunit62712.AssistEditRunsAModifyBlocksTrigger");
+        r.AssertPassed("Codeunit62712.AssistEditIsRaisedOnlyForTheControlItWasCalledOn");
+        r.AssertPassed("Codeunit62712.AssistEditRunsOncePerCall");
+        r.AssertPassed("Codeunit62712.AssistEditOnAControlWithNoTriggerIsSilent");
+        r.AssertNoFailures();
     }
 }

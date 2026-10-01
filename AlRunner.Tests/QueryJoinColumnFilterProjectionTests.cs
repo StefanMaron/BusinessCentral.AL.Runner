@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -42,36 +40,10 @@ namespace AlRunner.Tests;
 ///     alone would reject (C1's total is 0, failing "> 0") -- if the runtime filter were
 ///     merely ANDed with the static one instead of replacing it, the result would stay empty.
 ///
-/// Spawns the real runner; needs the BC artifact cache. Skips (no-op) when absent.
+/// Runs on the shared test server (SuiteServer); needs the BC artifact cache. Skips (no-op) when absent.
 /// </summary>
 public class QueryJoinColumnFilterProjectionTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
-    private static (string output, int exit) RunRunner(string bundle)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        args.Append(" \"").Append(bundle).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
     private static string WriteBundle()
     {
         var root = TestScratch.Dir("al-runner-query-join-columnfilter-2444");
@@ -257,18 +229,18 @@ public class QueryJoinColumnFilterProjectionTests
     }
 
     [SkippableFact]
-    public void ColumnFilter_AppliesOnJoinPath_HavingAndWhereStyle_AndRuntimeFilterReplacesStatic()
+    public async Task ColumnFilter_AppliesOnJoinPath_HavingAndWhereStyle_AndRuntimeFilterReplacesStatic()
     {
         TestArtifacts.SkipIfMissing();
 
         var bundle = WriteBundle();
-        var (output, exitCode) = RunRunner(bundle);
+        var r = await SuiteServer.RunViaServer(bundle);
 
         // Never silently pass a run that failed to even get the test codeunit compiled/run.
-        Assert.DoesNotContain("EMIT-EXCLUDED", output);
-        Assert.DoesNotContain("COMPILE FAIL", output);
+        Assert.DoesNotContain(r.CompilationErrors, c => c.Contains("EMIT-EXCLUDED"));
+        Assert.Empty(r.CompilationErrors);
         // All three tests must have run and passed — 3P/0F/0E is TestExecutor's own per-bundle
         // summary line (see QueryColumnFilterProjectionTests for the same convention).
-        Assert.Contains("3P/0F/0E", output);
+        r.AssertCounts(passed: 3, failed: 0, errors: 0);
     }
 }

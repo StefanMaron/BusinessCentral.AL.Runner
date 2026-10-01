@@ -291,6 +291,11 @@ public static class ServerProtocol
     public static ServerRequest? Parse(string line)
         => JsonSerializer.Deserialize<ServerRequest>(line);
 
+    /// <summary>The stderr line that ends request <paramref name="requestNumber"/> (1-based, counting
+    /// every non-empty stdin line except a side-channel <c>cancel</c>). See
+    /// docs/server-mode.md#stderr-request-marker.</summary>
+    public static string RequestDoneMarker(int requestNumber) => $"[server] request {requestNumber} done";
+
     // The JSON fields each command READS. A field outside its command's set is refused when
     // ServerRequest does not declare it and warned about when it does (docs/server-mode.md#request-fields).
     // Adding a request property means classifying it here; ServerRequestFieldCheckTests pins that.

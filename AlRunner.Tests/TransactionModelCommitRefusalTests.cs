@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -13,7 +11,7 @@ namespace AlRunner.Tests;
 /// The BEHAVIOURAL claim is plain BC behaviour and lives upstream —
 /// StefanMaron/BusinessCentral.AL.Language.Tests#278, codeunit 60899
 /// "Test TxModel AutoRollback", per .claude/rules/bc-behavior-tests-go-upstream.md, where all
-/// five arms were measured on a real BC 28.4 service tier. This test spawns the real runner
+/// five arms were measured on a real BC 28.4 service tier. This test runs the real runner (SuiteServer)
 /// against a synthetic bundle so a regression in the runner's own guard fails loudly here
 /// without depending on the submodule pin having moved yet.
 ///
@@ -24,34 +22,8 @@ namespace AlRunner.Tests;
 /// </summary>
 public class TransactionModelCommitRefusalTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
-    private static (string output, int exit) RunRunner(params string[] bundles)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        foreach (var b in bundles) args.Append(" \"").Append(b).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
     [SkippableFact]
-    public void AutoRollbackTest_ExplicitCommit_IsRefusedWithBcOwnText()
+    public async Task AutoRollbackTest_ExplicitCommit_IsRefusedWithBcOwnText()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -269,17 +241,17 @@ public class TransactionModelCommitRefusalTests
         }
         """);
 
-        var (output, exitCode) = RunRunner(root);
+        var r = await SuiteServer.RunViaServer(root);
 
-        Assert.True(exitCode == 0,
-            $"Expected all seven tests to pass (exit 0); got exit {exitCode}.\n{output}");
-        Assert.DoesNotContain("FAIL", output);
-        Assert.Contains("PASS  Codeunit62460.AutoRollback_ExplicitCommitIsRefused", output);
-        Assert.Contains("PASS  Codeunit62460.AutoRollback_RefusalReachesAnUnattributedCallee", output);
-        Assert.Contains("PASS  Codeunit62460.AutoCommit_ExplicitCommitIsAllowedAndDurable", output);
-        Assert.Contains("PASS  Codeunit62460.AutoRollback_CommitBehaviorIgnoreIsExempt", output);
-        Assert.Contains("PASS  Codeunit62460.AutoRollback_RefusalOutranksCommitBehaviorError", output);
-        Assert.Contains("PASS  Codeunit62460.AutoRollback_GuardedCodeunitRunIsNotRefused", output);
-        Assert.Contains("PASS  Codeunit62460.Unattributed_ExplicitCommitIsAllowed", output);
+        Assert.True(r.ExitCode == 0,
+            $"Expected all seven tests to pass (exit 0); got exit {r.ExitCode}.\n{r}");
+        r.AssertNoFailures();
+        r.AssertPassed("Codeunit62460.AutoRollback_ExplicitCommitIsRefused");
+        r.AssertPassed("Codeunit62460.AutoRollback_RefusalReachesAnUnattributedCallee");
+        r.AssertPassed("Codeunit62460.AutoCommit_ExplicitCommitIsAllowedAndDurable");
+        r.AssertPassed("Codeunit62460.AutoRollback_CommitBehaviorIgnoreIsExempt");
+        r.AssertPassed("Codeunit62460.AutoRollback_RefusalOutranksCommitBehaviorError");
+        r.AssertPassed("Codeunit62460.AutoRollback_GuardedCodeunitRunIsNotRefused");
+        r.AssertPassed("Codeunit62460.Unattributed_ExplicitCommitIsAllowed");
     }
 }

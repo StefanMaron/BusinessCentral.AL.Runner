@@ -91,52 +91,36 @@ public sealed class EventSubscriptionVirtualTableTests
     /// tests all pass, and the specific claims below are what say WHICH tests passed.</para>
     /// </summary>
     [Fact]
-    public void EventSubscription_IsPopulatedAndDiscriminates()
+    public async Task EventSubscription_IsPopulatedAndDiscriminates()
     {
-        var cacheDir = TestScratch.Dir("al-runner-esv-tests");
-        try
-        {
-            var (exit, stdout, stderr) = Run(cacheDir);
+        var r = await SuiteServer.RunViaServer(FixtureDir);
 
-            Assert.True(exit == 0,
-                $"expected a clean run (every fixture test must pass). exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");
+        Assert.True(r.ExitCode == 0,
+            $"expected a clean run (every fixture test must pass). exit={r.ExitCode}\n{r}");
 
-            // The table is populated at all, and per subscriber METHOD rather than per codeunit.
-            Assert.Contains(
-                "PASS  Codeunit70765.EventSubscription_SubscriberCodeunit_HasARowPerSubscriberMethod", stdout);
-            // ...and its partner: a codeunit in the same bundle that only PUBLISHES has none,
-            // so a provider ignoring its filters fails one of the two.
-            Assert.Contains(
-                "PASS  Codeunit70765.EventSubscription_PublishingOnlyCodeunit_HasNoRows", stdout);
+        // The table is populated at all, and per subscriber METHOD rather than per codeunit.
+        r.AssertPassed("Codeunit70765.EventSubscription_SubscriberCodeunit_HasARowPerSubscriberMethod");
+        // ...and its partner: a codeunit in the same bundle that only PUBLISHES has none,
+        // so a provider ignoring its filters fails one of the two.
+        r.AssertPassed("Codeunit70765.EventSubscription_PublishingOnlyCodeunit_HasNoRows");
 
-            // The publisher-side filter, both directions, over two tables of the same shape.
-            Assert.Contains(
-                "PASS  Codeunit70765.EventSubscription_WatchedTable_HasARowNamingItAsPublisher", stdout);
-            Assert.Contains(
-                "PASS  Codeunit70765.EventSubscription_UnsubscribedTable_HasNoRows", stdout);
+        // The publisher-side filter, both directions, over two tables of the same shape.
+        r.AssertPassed("Codeunit70765.EventSubscription_WatchedTable_HasARowNamingItAsPublisher");
+        r.AssertPassed("Codeunit70765.EventSubscription_UnsubscribedTable_HasNoRows");
 
-            // (Subscriber Codeunit ID, Subscriber Function) really keys the table: two methods
-            // of one codeunit fetch different rows.
-            Assert.Contains(
-                "PASS  Codeunit70765.EventSubscription_Get_ByPrimaryKey_ReturnsThatMethodsRow", stdout);
-            Assert.Contains(
-                "PASS  Codeunit70765.EventSubscription_Get_UndeclaredSubscriberFunction_Fails", stdout);
+        // (Subscriber Codeunit ID, Subscriber Function) really keys the table: two methods
+        // of one codeunit fetch different rows.
+        r.AssertPassed("Codeunit70765.EventSubscription_Get_ByPrimaryKey_ReturnsThatMethodsRow");
+        r.AssertPassed("Codeunit70765.EventSubscription_Get_UndeclaredSubscriberFunction_Fails");
 
-            // The row describes the subscription — real method names, real publisher type.
-            Assert.Contains(
-                "PASS  Codeunit70765.EventSubscription_TableEventRow_CarriesTheRealMethodNames", stdout);
+        // The row describes the subscription — real method names, real publisher type.
+        r.AssertPassed("Codeunit70765.EventSubscription_TableEventRow_CarriesTheRealMethodNames");
 
-            // The arm that fails if only the convenient registry is seeded: the two rows were
-            // registered through different runner registries (bare MethodInfo vs full handle).
-            Assert.Contains(
-                "PASS  Codeunit70765.EventSubscription_UnfilteredWalk_ReachesBothPublisherKinds", stdout);
+        // The arm that fails if only the convenient registry is seeded: the two rows were
+        // registered through different runner registries (bare MethodInfo vs full handle).
+        r.AssertPassed("Codeunit70765.EventSubscription_UnfilteredWalk_ReachesBothPublisherKinds");
 
-            Assert.DoesNotContain("FAIL", stdout);
-        }
-        finally
-        {
-            try { Directory.Delete(cacheDir, recursive: true); } catch { }
-        }
+        r.AssertNoFailures();
     }
 
     /// <summary>

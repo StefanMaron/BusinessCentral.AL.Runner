@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -24,46 +22,17 @@ namespace AlRunner.Tests;
 /// </summary>
 public class NestedTestCodeunitRunTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
     private const string NestedException = "NavNCLTestCodeUnitNestedInvocationException";
 
-    private static (string output, int exit) RunRunner(string bundle)
+    /// <summary>The first line of <paramref name="method"/>'s failure message (the CLI's line under its FAIL header), or null if it did not fail.</summary>
+    private static string? FailureDetail(ServerRunResult r, string method)
     {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        args.Append(" \"").Append(bundle).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
-    /// <summary>The line after the FAIL header of <paramref name="method"/>, or null if it did not fail.</summary>
-    private static string? FailureDetail(string output, string method)
-    {
-        var lines = output.Split('\n');
-        for (var i = 0; i < lines.Length - 1; i++)
-            if (lines[i].StartsWith("FAIL", StringComparison.Ordinal) && lines[i].Contains("." + method + " "))
-                return lines[i + 1].Trim();
-        return null;
+        var t = r.Tests.FirstOrDefault(t => t.Name.EndsWith("." + method, StringComparison.Ordinal));
+        return t.Status is "fail" or "error" ? t.Message.Split('\n')[0].Trim() : null;
     }
 
     [SkippableFact]
-    public void StaticRunOfTestCodeunit_FromATest_IsRefusedByBcsOwnGuard()
+    public async Task StaticRunOfTestCodeunit_FromATest_IsRefusedByBcsOwnGuard()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -178,24 +147,24 @@ public class NestedTestCodeunitRunTests
         }
         """);
 
-        var (output, exitCode) = RunRunner(root);
+        var r = await SuiteServer.RunViaServer(root);
 
-        Assert.True(exitCode == 1, $"Expected exactly the two nested runs to fail (exit 1); got exit {exitCode}.\n{output}");
+        Assert.True(r.ExitCode == 1, $"Expected exactly the two nested runs to fail (exit 1); got exit {r.ExitCode}.\n{r}");
 
         foreach (var method in new[] { "StaticRun_Unguarded", "StaticRun_Guarded" })
         {
-            var detail = FailureDetail(output, method);
-            Assert.True(detail != null, $"{method} must fail: the nested run is refused.\n{output}");
+            var detail = FailureDetail(r, method);
+            Assert.True(detail != null, $"{method} must fail: the nested run is refused.\n{r}");
             Assert.StartsWith(NestedException + ":", detail);
             Assert.Contains("Test codeunit 64827", detail);
         }
 
-        Assert.Null(FailureDetail(output, "PlainRun_Succeeds"));
-        Assert.Null(FailureDetail(output, "InnerTest_Runs"));
-        Assert.Null(FailureDetail(output, "ModalPage_AfterRefusedNestedRun_ReachesItsHandler"));
-        Assert.Null(FailureDetail(output, "Page_AfterRefusedNestedRun_ReachesItsPageHandler"));
-        Assert.Contains("Tests: 6", output);
-        Assert.DoesNotContain("NTC4827 unguarded nested run was not refused", output);
-        Assert.DoesNotContain("NTC4827 guarded nested run returned", output);
+        Assert.Null(FailureDetail(r, "PlainRun_Succeeds"));
+        Assert.Null(FailureDetail(r, "InnerTest_Runs"));
+        Assert.Null(FailureDetail(r, "ModalPage_AfterRefusedNestedRun_ReachesItsHandler"));
+        Assert.Null(FailureDetail(r, "Page_AfterRefusedNestedRun_ReachesItsPageHandler"));
+        Assert.Equal(6, r.Total);
+        Assert.DoesNotContain(r.Tests, t => t.Message.Contains("NTC4827 unguarded nested run was not refused"));
+        Assert.DoesNotContain(r.Tests, t => t.Message.Contains("NTC4827 guarded nested run returned"));
     }
 }

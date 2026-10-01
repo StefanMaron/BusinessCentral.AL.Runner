@@ -4,6 +4,11 @@
 `--verbose` (or `AL_RUNNER_VERBOSE=1`) is set. A short exemption list (`[bc]`, `[dep]`,
 `[warn]`, …) stays visible. The reasons for each exemption are in the comment above the pattern.
 
+One line goes past the filter on purpose: `--server`'s `[server] request <n> done` marker, written
+with `Log.WriteLineToStdErrUnfiltered` because clients parse it
+(docs/server-mode.md#stderr-request-marker). `[server]` stays Internal in the census below; use
+that helper only for a line a client parses, never to make a diagnostic visible.
+
 ## Hyphenated tags
 
 The tag character class is `[A-Za-z0-9._+]`, with no hyphen, so a tag such as

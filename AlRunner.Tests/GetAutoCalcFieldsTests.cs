@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -9,38 +7,12 @@ namespace AlRunner.Tests;
 /// replaces BC's primary-key lookup and must call BC's CalcAutoCalcFieldsAsync after a found record,
 /// as BC's own body does. Get, Get(RecordId), GetBySystemId and RecordRef.Get all route through it.
 /// The BC-behaviour claim is pinned upstream in corpus codeunit 60910 "Test SetAutoCalcFields On Get";
-/// this spawns the runner on a platform-only bundle so a regression in the replacement fails here.
+/// this runs the runner (SuiteServer) on a platform-only bundle so a regression in the replacement fails here.
 /// </summary>
 public class GetAutoCalcFieldsTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
-    private static (string output, int exit) RunRunner(string bundle)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        args.Append(" \"").Append(bundle).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
     [SkippableFact]
-    public void PrimaryKeyLookups_HonorSetAutoCalcFields()
+    public async Task PrimaryKeyLookups_HonorSetAutoCalcFields()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -175,11 +147,11 @@ public class GetAutoCalcFieldsTests
         }
         """);
 
-        var (output, exitCode) = RunRunner(root);
+        var r = await SuiteServer.RunViaServer(root);
 
-        Assert.True(exitCode == 0, $"runner exited {exitCode}:\n{output}");
-        Assert.DoesNotContain("FAIL", output);
+        Assert.True(r.ExitCode == 0, $"runner exited {r.ExitCode}:\n{r}");
+        r.AssertNoFailures();
         foreach (var name in new[] { "GetByKey", "GetByKeyWithoutAutoCalc", "GetByRecordId", "GetBySystemId", "RecordRefGet" })
-            Assert.Contains($"PASS  Codeunit63578.{name} ", output);
+            r.AssertPassed($"Codeunit63578.{name}");
     }
 }

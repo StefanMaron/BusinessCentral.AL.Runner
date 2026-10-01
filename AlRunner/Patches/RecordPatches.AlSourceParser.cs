@@ -852,6 +852,16 @@ public static partial class RecordPatches
         return parts.Count > 0 ? parts[^1] : Unquote(fallbackText?.Trim() ?? "");
     }
 
+    /// <summary>A key's declared <c>ObsoleteState</c> (member name, "No" when undeclared) and
+    /// <c>ObsoleteReason</c> — read exactly as a field's are in <c>ParseFieldSyntax</c> (#5136).</summary>
+    private static (string State, string? Reason) KeyObsolescence(NavSyntax.PropertyListSyntax? props)
+    {
+        var stateText = PropValue(props, "ObsoleteState")?.ToString()?.Trim();
+        var reasonRaw = PropValue(props, "ObsoleteReason")?.ToString();
+        return (string.IsNullOrEmpty(stateText) ? "No" : stateText,
+            reasonRaw == null ? null : ConstValueText(reasonRaw));
+    }
+
     private static void TryParseTableFile(string text, string? filePath = null)
     {
         foreach (var obj in ParseAlObjects(text))
@@ -883,21 +893,25 @@ public static partial class RecordPatches
                         var f = fields.FirstOrDefault(x =>
                             string.Equals(x.FieldName, kn, StringComparison.OrdinalIgnoreCase));
                         if (f != null) keyFieldIds.Add(f.FieldId);
+                        else if (PlatformKeyFieldId(kn) is { } platformId) keyFieldIds.Add(platformId);
                     }
                     // #3568 — the key's own properties, which BC propagates into the live
                     // NCLMetaKey via CreateFromMetaKey and the reader used to discard.
                     var clustered = BoolPropValue(k.PropertyList, "Clustered");
                     var unique = BoolPropValue(k.PropertyList, "Unique") == true;
                     var siftIds = ResolveSumIndexFieldIds(k.PropertyList, fields);
+                    var (keyObsoleteState, keyObsoleteReason) = KeyObsolescence(k.PropertyList);
                     if (firstKey)
                     {
                         pkFieldIds.AddRange(keyFieldIds);
-                        primaryKey = new ParsedKey(keyName, keyFieldIds, clustered, unique, siftIds);
+                        primaryKey = new ParsedKey(keyName, keyFieldIds, clustered, unique, siftIds,
+                            keyObsoleteState, keyObsoleteReason);
                         firstKey = false;
                     }
                     else if (keyFieldIds.Count > 0)
                     {
-                        secondaryKeys.Add(new ParsedKey(keyName, keyFieldIds, clustered, unique, siftIds));
+                        secondaryKeys.Add(new ParsedKey(keyName, keyFieldIds, clustered, unique, siftIds,
+                            keyObsoleteState, keyObsoleteReason));
                     }
                 }
             }
@@ -999,7 +1013,11 @@ public static partial class RecordPatches
                         if (!string.IsNullOrWhiteSpace(kn)) keyFieldNames.Add(kn);
                     }
                     if (keyFieldNames.Count > 0)
-                        extKeys.Add(new ParsedExtensionKey(keyName, keyFieldNames));
+                    {
+                        var (keyObsoleteState, keyObsoleteReason) = KeyObsolescence(k.PropertyList);
+                        extKeys.Add(new ParsedExtensionKey(keyName, keyFieldNames,
+                            keyObsoleteState, keyObsoleteReason));
+                    }
                 }
             }
 
@@ -1678,8 +1696,12 @@ internal record ParsedField(int FieldId, string FieldName, string TypeName, int 
 /// <param name="SumIndexFieldIds">Declared <c>SumIndexFields</c>, resolved to field ids.
 /// <c>NCLMetaKey.CreateFromMetaKey</c> turns these into the SIFT field array, so dropping them
 /// leaves a key that maintains no SIFT index.</param>
+/// <param name="ObsoleteState">Declared <c>ObsoleteState</c> as the member name, "No" when
+/// undeclared. BC's <c>NavRecordRef.ALKeyCount</c>/<c>ALKeyIndex</c> hide a key whose live
+/// <c>NCLMetaKey</c> says Removed, so this must reach the <c>MetaKey</c> (#5136).</param>
 internal record ParsedKey(string Name, List<int> FieldIds, bool? Clustered = null,
-    bool Unique = false, List<int>? SumIndexFieldIds = null);
+    bool Unique = false, List<int>? SumIndexFieldIds = null,
+    string ObsoleteState = "No", string? ObsoleteReason = null);
 
 /// <summary>A key declared by a <c>tableextension</c> on the table it extends (#3216).
 /// <para>Carries field NAMES, not field ids, which is the whole reason it is not a
@@ -1692,8 +1714,10 @@ internal record ParsedKey(string Name, List<int> FieldIds, bool? Clustered = nul
 /// base table's fields and every merged extension field together.</para>
 /// <para>All of a tableextension's keys are SECONDARY keys — a tableextension cannot restate
 /// the primary key, so the "first key is the PK" rule that governs a table's own key list
-/// (see <c>TryParseTableFile</c>) must NOT be applied here.</para></summary>
-internal record ParsedExtensionKey(string Name, List<string> FieldNames);
+/// (see <c>TryParseTableFile</c>) must NOT be applied here.</para>
+/// <para><c>ObsoleteState</c>/<c>ObsoleteReason</c> as on <see cref="ParsedKey"/> (#5136).</para></summary>
+internal record ParsedExtensionKey(string Name, List<string> FieldNames,
+    string ObsoleteState = "No", string? ObsoleteReason = null);
 
 /// <summary>Which value shape a <see cref="ParsedColumnFilter"/> condition carries — matches
 /// <c>Microsoft.Dynamics.Nav.Types.Metadata.FilterType</c>'s CONST/FILTER members exactly

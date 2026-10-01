@@ -22,103 +22,48 @@
 // the reading session, flagged "My Session" — is proven upstream against a live BC tier by
 // "Test Session Virtual Table" in StefanMaron/BusinessCentral.AL.Language.Tests, per
 // .claude/rules/bc-behavior-tests-go-upstream.md.
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public sealed class SessionVirtualTableTests
 {
-    /// <summary>The cap this file's subprocess spawns actually apply, and the single source of
-    /// the figure their timeout messages report (#4275). Derived rather than repeated: a literal
-    /// in the message is invisible while it happens to match, and wrong the moment the cap moves.
-    /// Measured for real on #3435 — a cap squeezed to 3s still threw "did not exit within 120s".
-    /// Same shape as BcVersionDefaultDocumentationTests.SpawnTimeoutMs (#3487).</summary>
-    private const int SpawnTimeoutMs = 120_000;
-
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 
     private static readonly string FixtureDir =
         Path.Combine(RepoRoot, "AlRunner.Tests", "Fixtures", "SessionVirtualTable");
 
-    private static (int ExitCode, string StdOut, string StdErr) Run(string cacheDir)
-    {
-        var sb = new StringBuilder(TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner")));
-        sb.Append(' ').Append($"\"{FixtureDir}\"");
-        sb.Append(' ').Append($"--cache \"{cacheDir}\"");
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = sb.ToString(),
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = RepoRoot,
-        };
-
-        var outSb = new StringBuilder();
-        var errSb = new StringBuilder();
-        using var proc = Process.Start(psi)!;
-        proc.OutputDataReceived += (_, e) => { if (e.Data != null) lock (outSb) outSb.AppendLine(e.Data); };
-        proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (errSb) errSb.AppendLine(e.Data); };
-        proc.BeginOutputReadLine();
-        proc.BeginErrorReadLine();
-        if (!proc.WaitForExit(SpawnTimeoutMs))
-        {
-            try { proc.Kill(entireProcessTree: true); } catch { }
-            throw new TimeoutException($"al-runner did not exit within {SpawnTimeoutMs / 1000}s.");
-        }
-        // WaitForExit(int) returns as soon as the process exits and does NOT wait for the
-        // async BeginOutputReadLine/BeginErrorReadLine callbacks to drain — only the
-        // parameterless overload does. Without this the last stdout lines can still be in
-        // flight when we read outSb, and an Assert.Contains on a line the runner definitely
-        // printed fails intermittently, the more so the more loaded the machine is (#2496).
-        proc.WaitForExit();
-        return (proc.ExitCode, outSb.ToString(), errSb.ToString());
-    }
-
     [Fact]
-    public void Session_ReadingSession_AllFixtureTestsPass()
+    public async Task Session_ReadingSession_AllFixtureTestsPass()
     {
-        var cacheDir = TestScratch.Dir("al-runner-svt-tests");
-        try
-        {
-            var (exit, stdout, stderr) = Run(cacheDir);
+        var r = await SuiteServer.RunViaServer(FixtureDir);
 
-            Assert.True(exit == 0,
-                $"expected a clean run (every fixture test must pass). exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");
+        Assert.True(r.ExitCode == 0,
+            $"expected a clean run (every fixture test must pass). exit={r.ExitCode}\n{r}");
 
-            // The table answers a row at all, and exactly one row claims to be this session —
-            // this is the direct RED this fixes.
-            Assert.Contains("PASS  Codeunit70561.Session_HasARowForTheReadingSession", stdout);
-            // Read-it-back, the whole point: a populator that invented a connection id passes
-            // the row-exists assertion and fails this one.
-            Assert.Contains("PASS  Codeunit70561.Session_MySessionRow_ConnectionIdIsWhatSessionIdReturns", stdout);
-            // Same for the user: rules out a row whose "User ID" is blank or someone else.
-            Assert.Contains("PASS  Codeunit70561.Session_MySessionRow_UserIdIsWhatUserIdReturns", stdout);
-            // Get() reaches the row by primary key, so the key columns and the row's own
-            // "Connection ID" must agree.
-            Assert.Contains("PASS  Codeunit70561.Session_Get_ByConnectionId_FindsTheSameRow", stdout);
-            // Rules out one row inserted with BC's per-field defaults everywhere but the key.
-            Assert.Contains("PASS  Codeunit70561.Session_MySessionRow_CarriesALoginDateAndTime", stdout);
-            Assert.Contains("PASS  Codeunit70561.Session_MySessionRow_CarriesAHostName", stdout);
-            // Negative: a connection id belonging to no session still answers false. Passes
-            // against an EMPTY table too, which is why it is not sufficient on its own.
-            Assert.Contains("PASS  Codeunit70561.Session_GetOnAConnectionIdThatIsNotThisSession_ReturnsFalse", stdout);
-            // Negative: nothing may claim to be a session other than this one.
-            Assert.Contains("PASS  Codeunit70561.Session_FilterOnMySessionFalse_SelectsNothing", stdout);
-            // #3230: both columns read back off the session's Active Session row.
-            Assert.Contains("PASS  Codeunit70561.Session_MySessionRow_ApplicationNameIsActiveSessionsClientType", stdout);
-            Assert.Contains("PASS  Codeunit70561.Session_MySessionRow_DatabaseNameIsActiveSessionsDatabaseName", stdout);
-            Assert.DoesNotContain("FAIL", stdout);
-        }
-        finally
-        {
-            try { Directory.Delete(cacheDir, recursive: true); } catch { /* best-effort cleanup */ }
-        }
+        // The table answers a row at all, and exactly one row claims to be this session —
+        // this is the direct RED this fixes.
+        r.AssertPassed("Codeunit70561.Session_HasARowForTheReadingSession");
+        // Read-it-back, the whole point: a populator that invented a connection id passes
+        // the row-exists assertion and fails this one.
+        r.AssertPassed("Codeunit70561.Session_MySessionRow_ConnectionIdIsWhatSessionIdReturns");
+        // Same for the user: rules out a row whose "User ID" is blank or someone else.
+        r.AssertPassed("Codeunit70561.Session_MySessionRow_UserIdIsWhatUserIdReturns");
+        // Get() reaches the row by primary key, so the key columns and the row's own
+        // "Connection ID" must agree.
+        r.AssertPassed("Codeunit70561.Session_Get_ByConnectionId_FindsTheSameRow");
+        // Rules out one row inserted with BC's per-field defaults everywhere but the key.
+        r.AssertPassed("Codeunit70561.Session_MySessionRow_CarriesALoginDateAndTime");
+        r.AssertPassed("Codeunit70561.Session_MySessionRow_CarriesAHostName");
+        // Negative: a connection id belonging to no session still answers false. Passes
+        // against an EMPTY table too, which is why it is not sufficient on its own.
+        r.AssertPassed("Codeunit70561.Session_GetOnAConnectionIdThatIsNotThisSession_ReturnsFalse");
+        // Negative: nothing may claim to be a session other than this one.
+        r.AssertPassed("Codeunit70561.Session_FilterOnMySessionFalse_SelectsNothing");
+        // #3230: both columns read back off the session's Active Session row.
+        r.AssertPassed("Codeunit70561.Session_MySessionRow_ApplicationNameIsActiveSessionsClientType");
+        r.AssertPassed("Codeunit70561.Session_MySessionRow_DatabaseNameIsActiveSessionsDatabaseName");
+        r.AssertNoFailures();
     }
 }

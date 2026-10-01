@@ -35,11 +35,8 @@ public class PageBackgroundTaskInlineTests
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
-    private static (string output, int exit) RunRunner(params string[] bundles)
-        => RunRunnerTimed(bundles) is var (output, exit, _) ? (output, exit) : default;
-
     /// <summary>
-    /// Same as <see cref="RunRunner"/>, but also reports wall-clock elapsed time so a caller
+    /// Spawns the runner and reports wall-clock elapsed time so a caller
     /// can assert "the process exited promptly" rather than just "it exited before the 180s
     /// safety-net timeout fired" — see
     /// <see cref="PageBackgroundTask_ProcessExitsPromptly_NoSchedulerLoopHang"/>.
@@ -69,7 +66,7 @@ public class PageBackgroundTaskInlineTests
     }
 
     [SkippableFact]
-    public void PageBackgroundTask_EnqueueAndRunInline_MatchBcMeasuredShapes()
+    public async Task PageBackgroundTask_EnqueueAndRunInline_MatchBcMeasuredShapes()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -433,17 +430,17 @@ public class PageBackgroundTaskInlineTests
         }
         """);
 
-        var (output, exitCode) = RunRunner(root);
+        var r = await SuiteServer.RunViaServer(root);
 
-        Assert.True(exitCode == 0,
-            $"Expected all five page-background-task tests to pass (exit 0); got exit {exitCode}.\n{output}");
-        Assert.DoesNotContain("FAIL", output);
-        Assert.Contains("PASS  Codeunit62517.EnqueueBackgroundTask_CompletesBeforeOpenAndGoToRecordReturn", output);
-        Assert.Contains("PASS  Codeunit62517.RunPageBackgroundTask_ReturnsWorkerResult", output);
-        Assert.Contains("PASS  Codeunit62517.EnqueueBackgroundTask_HandledErrorDoesNotPropagate", output);
-        Assert.Contains("PASS  Codeunit62517.EnqueueBackgroundTask_UnhandledErrorPropagates", output);
-        Assert.Contains("PASS  Codeunit62517.RunPageBackgroundTask_WorkerInsert_RefusedByReadOnlySession", output);
-        Assert.Contains("PASS  Codeunit62517.RunPageBackgroundTask_WorkerTemporaryWrite_Allowed", output);
+        Assert.True(r.ExitCode == 0,
+            $"Expected all five page-background-task tests to pass (exit 0); got exit {r.ExitCode}.\n{r}");
+        r.AssertNoFailures();
+        r.AssertPassed("Codeunit62517.EnqueueBackgroundTask_CompletesBeforeOpenAndGoToRecordReturn");
+        r.AssertPassed("Codeunit62517.RunPageBackgroundTask_ReturnsWorkerResult");
+        r.AssertPassed("Codeunit62517.EnqueueBackgroundTask_HandledErrorDoesNotPropagate");
+        r.AssertPassed("Codeunit62517.EnqueueBackgroundTask_UnhandledErrorPropagates");
+        r.AssertPassed("Codeunit62517.RunPageBackgroundTask_WorkerInsert_RefusedByReadOnlySession");
+        r.AssertPassed("Codeunit62517.RunPageBackgroundTask_WorkerTemporaryWrite_Allowed");
     }
 
     /// <summary>

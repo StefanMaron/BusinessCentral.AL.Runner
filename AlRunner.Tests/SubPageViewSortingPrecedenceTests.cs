@@ -2,7 +2,7 @@
 // BEFORE the part page's own SourceTableView and OnOpenPage, so each can override it. The
 // BC-observable claim is measured upstream by corpus codeunit 67950 "SPO Tests"
 // (StefanMaron/BusinessCentral.AL.Language.Tests#507); this pins the runner's own ordering in
-// RunnerPageInstance.RaiseOnOpenPage, spawning the real runner against a synthetic bundle.
+// RunnerPageInstance.RaiseOnOpenPage, running the real runner (SuiteServer) against a synthetic bundle.
 // No Library Assert dependency (.claude/rules/no-base-app-in-csharp-tests.md): each AL test
 // raises Error() with the order it saw.
 //
@@ -12,40 +12,12 @@
 //     2     10    400
 //     3     40    300
 //     4     20    100
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public class SubPageViewSortingPrecedenceTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
-    private static (string output, int exit) RunRunner(string bundle)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        args.Append(" --show-pass \"").Append(bundle).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
     private static string WriteBundle()
     {
         var root = TestScratch.Dir("al-runner-subpageview-sorting-precedence-4969");
@@ -318,17 +290,17 @@ public class SubPageViewSortingPrecedenceTests
     }
 
     [SkippableFact]
-    public void PartOwnOrder_OverridesTheControlsSubPageViewSorting()
+    public async Task PartOwnOrder_OverridesTheControlsSubPageViewSorting()
     {
         TestArtifacts.SkipIfMissing();
 
-        var (output, exit) = RunRunner(WriteBundle());
+        var r = await SuiteServer.RunViaServer(WriteBundle());
 
-        Assert.True(exit == 0, $"Expected the bundle to pass; exit={exit}\n{output}");
-        Assert.Contains("PASS  Codeunit62966.ViewOnly_OrdersByTheViewKey", output);
-        Assert.Contains("PASS  Codeunit62966.PartViewKey_KeepsTheControlsDirection", output);
-        Assert.Contains("PASS  Codeunit62966.PartOnOpenPageSetCurrentKey_Wins", output);
-        Assert.Contains("PASS  Codeunit62966.PartOnOpenPageAscendingFalse_ReversesTheViewKey", output);
-        Assert.DoesNotContain("FAIL", output);
+        Assert.True(r.ExitCode == 0, $"Expected the bundle to pass; exit={r.ExitCode}\n{r}");
+        r.AssertPassed("Codeunit62966.ViewOnly_OrdersByTheViewKey");
+        r.AssertPassed("Codeunit62966.PartViewKey_KeepsTheControlsDirection");
+        r.AssertPassed("Codeunit62966.PartOnOpenPageSetCurrentKey_Wins");
+        r.AssertPassed("Codeunit62966.PartOnOpenPageAscendingFalse_ReversesTheViewKey");
+        r.AssertNoFailures();
     }
 }

@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -24,8 +22,8 @@ namespace AlRunner.Tests;
 /// StefanMaron/BusinessCentral.AL.Language.Tests codeunit 60815 "Test Page Part Agcr Tests"
 /// (corpus PR #141, all 8 BC legs green, independently confirmed against a local BC 28.4
 /// container), per .claude/rules/bc-behavior-tests-go-upstream.md. This test exists so a
-/// regression in OUR OWN eager-build/refresh-on-load mechanism fails loudly here, spawning
-/// the real runner against a synthetic bundle, without depending on the submodule pin having
+/// regression in OUR OWN eager-build/refresh-on-load mechanism fails loudly here, running
+/// the real runner (SuiteServer) against a synthetic bundle, without depending on the submodule pin having
 /// moved yet.
 ///
 /// No Library Assert dependency (no "application" in the fixture's app.json — see
@@ -34,32 +32,6 @@ namespace AlRunner.Tests;
 /// </summary>
 public class TestPagePartLinkedRowLoadTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
-    private static (string output, int exit) RunRunner(string bundle)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        args.Append(" \"").Append(bundle).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
     private static string WriteBundle()
     {
         var root = TestScratch.Dir("al-runner-testpage-part-linked-row-load-2677");
@@ -255,26 +227,26 @@ public class TestPagePartLinkedRowLoadTests
     }
 
     [SkippableFact]
-    public void NoTouch_PartFiresOnOpenView()
+    public async Task NoTouch_PartFiresOnOpenView()
     {
         TestArtifacts.SkipIfMissing();
 
-        var (output, exit) = RunRunner(WriteBundle());
+        var r = await SuiteServer.RunViaServer(WriteBundle());
 
-        Assert.True(exit == 0, $"Expected the bundle to pass; exit={exit}\n{output}");
-        Assert.Contains("PASS  Codeunit62528.NoTouch_PartFiresOnOpenView", output);
-        Assert.DoesNotContain("FAIL", output);
+        Assert.True(r.ExitCode == 0, $"Expected the bundle to pass; exit={r.ExitCode}\n{r}");
+        r.AssertPassed("Codeunit62528.NoTouch_PartFiresOnOpenView");
+        r.AssertNoFailures();
     }
 
     [SkippableFact]
-    public void GoToRecord_PartRefires()
+    public async Task GoToRecord_PartRefires()
     {
         TestArtifacts.SkipIfMissing();
 
-        var (output, exit) = RunRunner(WriteBundle());
+        var r = await SuiteServer.RunViaServer(WriteBundle());
 
-        Assert.True(exit == 0, $"Expected the bundle to pass; exit={exit}\n{output}");
-        Assert.Contains("PASS  Codeunit62528.GoToRecord_PartRefires", output);
-        Assert.DoesNotContain("FAIL", output);
+        Assert.True(r.ExitCode == 0, $"Expected the bundle to pass; exit={r.ExitCode}\n{r}");
+        r.AssertPassed("Codeunit62528.GoToRecord_PartRefires");
+        r.AssertNoFailures();
     }
 }

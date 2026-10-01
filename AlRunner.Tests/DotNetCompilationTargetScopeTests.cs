@@ -34,7 +34,6 @@
 // it is the no-declaration diagnostic, which was never broken. #2737 fixed the real cell by
 // making the manifest target reach the compiler.
 
-using System.Diagnostics;
 using System.Text;
 using Xunit;
 
@@ -42,10 +41,6 @@ namespace AlRunner.Tests;
 
 public sealed class DotNetCompilationTargetScopeTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
     /// <summary>
     /// A `dotnet` declaration block naming one mscorlib type. Its presence is one of the two
     /// independent variables in the table above.
@@ -109,69 +104,48 @@ public sealed class DotNetCompilationTargetScopeTests
         return root;
     }
 
-    private static string RunRunner(string bundle)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        args.Append(" \"").Append(bundle).Append('"');
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(300_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return sb.ToString();
-    }
-
     [Fact]
-    public void CloudTarget_DeclaringADotNetBlock_IsRefusedByTheCompiler()
+    public async Task CloudTarget_DeclaringADotNetBlock_IsRefusedByTheCompiler()
     {
-        var output = RunRunner(WriteBundle("cloud-decl", "Cloud", withDeclaration: true));
+        var r = await SuiteServer.RunViaServer(WriteBundle("cloud-decl", "Cloud", withDeclaration: true));
 
         // The cell #2641 is actually about. Before #2737 this compiled and the test PASSED.
-        Assert.Contains("error AL0296", output, StringComparison.Ordinal);
-        Assert.Contains("cannot be used for 'Cloud' development", output, StringComparison.Ordinal);
-        Assert.Contains("COMPILE FAIL", output, StringComparison.Ordinal);
+        Assert.Contains(r.CompilationErrors, c => c.Contains("error AL0296", StringComparison.Ordinal));
+        Assert.Contains(r.CompilationErrors, c => c.Contains("cannot be used for 'Cloud' development", StringComparison.Ordinal));
 
         // It must not have run: a compile-refused bundle that still reports a passing test
         // would mean the diagnostic was raised and then ignored.
-        Assert.DoesNotContain("PASS  Codeunit62260", output, StringComparison.Ordinal);
+        AssertNoTestOfTheCodeunitPassed(r);
     }
 
     [Fact]
-    public void OnPremTarget_DeclaringADotNetBlock_CompilesAndRuns()
+    public async Task OnPremTarget_DeclaringADotNetBlock_CompilesAndRuns()
     {
-        var output = RunRunner(WriteBundle("onprem-decl", "OnPrem", withDeclaration: true));
+        var r = await SuiteServer.RunViaServer(WriteBundle("onprem-decl", "OnPrem", withDeclaration: true));
 
         // The positive control. Without it, a runner that refused DotNet unconditionally
         // would satisfy every other assertion in this file.
-        Assert.Contains("PASS  Codeunit62260.DeclaresADotNetVariable", output, StringComparison.Ordinal);
-        Assert.DoesNotContain("error AL0296", output, StringComparison.Ordinal);
-        Assert.DoesNotContain("error AL0185", output, StringComparison.Ordinal);
+        r.AssertPassed("Codeunit62260.DeclaresADotNetVariable");
+        Assert.DoesNotContain(r.CompilationErrors, c => c.Contains("error AL0296", StringComparison.Ordinal));
+        Assert.DoesNotContain(r.CompilationErrors, c => c.Contains("error AL0185", StringComparison.Ordinal));
     }
 
     [Theory]
     [InlineData("Cloud")]
     [InlineData("OnPrem")]
-    public void EitherTarget_WithoutADotNetBlock_IsRefusedAsMissing(string target)
+    public async Task EitherTarget_WithoutADotNetBlock_IsRefusedAsMissing(string target)
     {
-        var output = RunRunner(WriteBundle("no-decl-" + target, target, withDeclaration: false));
+        var r = await SuiteServer.RunViaServer(WriteBundle("no-decl-" + target, target, withDeclaration: false));
 
         // A DotNet variable with no declaration is missing on BOTH targets, which is why the
         // AL0185 output quoted in #2641 does not demonstrate a target defect. Asserting the
         // type name too, so this cannot pass on some unrelated AL0185.
-        Assert.Contains("error AL0185: DotNet 'Encoding' is missing", output, StringComparison.Ordinal);
-        Assert.Contains("COMPILE FAIL", output, StringComparison.Ordinal);
-        Assert.DoesNotContain("PASS  Codeunit62260", output, StringComparison.Ordinal);
+        Assert.Contains(r.CompilationErrors,
+            c => c.Contains("error AL0185: DotNet 'Encoding' is missing", StringComparison.Ordinal));
+        AssertNoTestOfTheCodeunitPassed(r);
     }
+
+    /// <summary>The CLI's "no <c>PASS  Codeunit62260</c> line", read from the protocol.</summary>
+    private static void AssertNoTestOfTheCodeunitPassed(ServerRunResult r)
+        => Assert.DoesNotContain(r.Tests, t => t.Status == "pass" && t.Name.StartsWith("Codeunit62260.", StringComparison.Ordinal));
 }

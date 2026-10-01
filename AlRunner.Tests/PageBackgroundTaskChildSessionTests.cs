@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -16,34 +14,8 @@ namespace AlRunner.Tests;
 /// </summary>
 public class PageBackgroundTaskChildSessionTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
-    private static (string output, int exit) RunRunner(string bundle)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        args.Append(" --show-pass \"").Append(bundle).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
     [SkippableFact]
-    public void Worker_RunsOutsideTheCallersWriteTransaction_AndItsCommitIsItsOwn()
+    public async Task Worker_RunsOutsideTheCallersWriteTransaction_AndItsCommitIsItsOwn()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -210,14 +182,14 @@ public class PageBackgroundTaskChildSessionTests
         }
         """);
 
-        var (output, exitCode) = RunRunner(root);
+        var r = await SuiteServer.RunViaServer(root);
 
-        Assert.True(exitCode == 0,
-            $"Expected all four child-session tests to pass (exit 0); got exit {exitCode}.\n{output}");
-        Assert.DoesNotContain("FAIL", output);
-        Assert.Contains("PASS  Codeunit64683.WorkerHasNoWriteTransaction", output);
-        Assert.Contains("PASS  Codeunit64683.CallerStillInWriteTransactionAfterTask", output);
-        Assert.Contains("PASS  Codeunit64683.WorkerCommitDoesNotCommitCallersRows", output);
-        Assert.Contains("PASS  Codeunit64683.FailingWorkerLeavesCallersWriteTransactionOpen", output);
+        Assert.True(r.ExitCode == 0,
+            $"Expected all four child-session tests to pass (exit 0); got exit {r.ExitCode}.\n{r}");
+        r.AssertNoFailures();
+        r.AssertPassed("Codeunit64683.WorkerHasNoWriteTransaction");
+        r.AssertPassed("Codeunit64683.CallerStillInWriteTransactionAfterTask");
+        r.AssertPassed("Codeunit64683.WorkerCommitDoesNotCommitCallersRows");
+        r.AssertPassed("Codeunit64683.FailingWorkerLeavesCallersWriteTransactionOpen");
     }
 }

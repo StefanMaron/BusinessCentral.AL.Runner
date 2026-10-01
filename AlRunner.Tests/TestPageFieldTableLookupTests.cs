@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Text;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -34,32 +32,6 @@ namespace AlRunner.Tests;
 /// </summary>
 public class TestPageFieldTableLookupTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
-    private static (string output, int exit) RunRunner(string bundle)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        args.Append(" \"").Append(bundle).Append('"');
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
-
     private static string WriteBundle()
     {
         var root = TestScratch.Dir("al-runner-testpage-field-table-lookup-2549");
@@ -213,16 +185,16 @@ public class TestPageFieldTableLookupTests
     /// pass two tests out of three and look like progress.
     /// </summary>
     [SkippableFact]
-    public void FieldLookup_FallsBackToTheTableFieldTrigger_ButOnlyWhenOneExists()
+    public async Task FieldLookup_FallsBackToTheTableFieldTrigger_ButOnlyWhenOneExists()
     {
         TestArtifacts.SkipIfMissing();
 
-        var (output, exit) = RunRunner(WriteBundle());
+        var r = await SuiteServer.RunViaServer(WriteBundle());
 
-        Assert.True(exit == 0, $"Expected the bundle to pass; exit={exit}\n{output}");
-        Assert.Contains("PASS  Codeunit62562.TableFieldOnLookupRunsWhenTheControlDeclaresNone", output);
-        Assert.Contains("PASS  Codeunit62562.ControlOnLookupWinsOverTheTableFieldTrigger", output);
-        Assert.Contains("PASS  Codeunit62562.FieldWithNeitherTriggerRaisesUnhandledModalPage", output);
-        Assert.DoesNotContain("FAIL", output);
+        Assert.True(r.ExitCode == 0, $"Expected the bundle to pass; exit={r.ExitCode}\n{r}");
+        r.AssertPassed("Codeunit62562.TableFieldOnLookupRunsWhenTheControlDeclaresNone");
+        r.AssertPassed("Codeunit62562.ControlOnLookupWinsOverTheTableFieldTrigger");
+        r.AssertPassed("Codeunit62562.FieldWithNeitherTriggerRaisesUnhandledModalPage");
+        r.AssertNoFailures();
     }
 }
