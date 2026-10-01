@@ -24,6 +24,32 @@ public class ServerRequestFieldCheckTests
         Assert.Contains("--preprocessor-symbols", r.Error);
     }
 
+    [Theory]
+    [InlineData("verbose", "Verbosity is not a request field")]
+    [InlineData("showPass", "Verbosity is not a request field")]
+    [InlineData("outputJson", "Output files are not a request field")]
+    [InlineData("outputJunit", "Output files are not a request field")]
+    [InlineData("coverageOut", "Output files are not a request field")]
+    [InlineData("noCache", "Cache roots are chosen at startup")]
+    [InlineData("define", "not on the symbol set")]
+    public void RunTests_ProcessWideCliFlag_IsRefusedWithItsReason(string field, string reason)
+    {
+        var r = Check($$"""{"command":"runTests","sourcePaths":["/a"],"{{field}}":true}""");
+        Assert.NotNull(r.Error);
+        Assert.StartsWith($"runTests: unknown request field '{field}' ", r.Error);
+        Assert.Contains(reason, r.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RunTests_RequestOnlyFlagHints_AppearOnlyForTheirOwnField()
+    {
+        var r = Check("""{"command":"runTests","sourcePaths":["/a"],"verbose":true}""");
+        Assert.NotNull(r.Error);
+        Assert.DoesNotContain("Output files are not a request field", r.Error, StringComparison.Ordinal);
+        Assert.DoesNotContain("Cache roots", r.Error, StringComparison.Ordinal);
+        Assert.DoesNotContain("--define SYM", r.Error, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void RunTests_UnrelatedUnknownField_IsRefusedWithoutTheSymbolHint()
     {
@@ -31,7 +57,7 @@ public class ServerRequestFieldCheckTests
         Assert.NotNull(r.Error);
         Assert.StartsWith("runTests: unknown request fields 'cobertura', 'testFilter' ", r.Error);
         Assert.DoesNotContain("--define", r.Error);
-        Assert.Contains("Fields runTests reads: affectedOnly, coverage, includeFailing, packagePaths, perTestCoverage, sourcePaths, strictEnvironment, tdd, testIsolation.", r.Error);
+        Assert.Contains("Fields runTests reads: affectedOnly, coverage, excludeTests, includeFailing, packagePaths, perTestCoverage, sourcePaths, strictEnvironment, tdd, test, testIsolation.", r.Error);
     }
 
     [Fact]
@@ -64,6 +90,8 @@ public class ServerRequestFieldCheckTests
     [InlineData("""{"command":"runTests","sourcePaths":["/a"],"affectedOnly":true,"strictEnvironment":true}""")]
     // #5034
     [InlineData("""{"command":"runTests","sourcePaths":["/a"],"tdd":true}""")]
+    // #5183
+    [InlineData("""{"command":"runTests","sourcePaths":["/a"],"test":"Alpha","excludeTests":["Codeunit1"]}""")]
     // A field that asks for nothing is exact to ignore.
     [InlineData("""{"command":"runTests","sourcePaths":["/a"],"captureValues":false,"stubPaths":[],"code":""}""")]
     [InlineData("""{"command":"runTests","sourcePaths":["/a"],"code":null}""")]
@@ -114,6 +142,20 @@ public class ServerRequestFieldCheckTests
         var r = Check("""{"command":"execute","sourcePaths":["/a"],"strictEnvironment":true}""");
         Assert.Null(r.Error);
         Assert.Equal(new[] { "'strictEnvironment' has no effect on execute; only runTests reads it — ignored." }, r.Warnings);
+    }
+
+    [Fact]
+    public void Execute_TestSelection_WarnsOnlyRunTestsReadsIt()
+    {
+        var r = Check("""{"command":"execute","sourcePaths":["/a"],"test":"Alpha","excludeTests":["Codeunit1"]}""");
+        Assert.Null(r.Error);
+        Assert.Equal(
+            new[]
+            {
+                "'excludeTests' has no effect on execute; only runTests reads it — ignored.",
+                "'test' has no effect on execute; only runTests reads it — ignored.",
+            },
+            r.Warnings.OrderBy(w => w, StringComparer.Ordinal));
     }
 
     [Fact]

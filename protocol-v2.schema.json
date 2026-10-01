@@ -154,7 +154,7 @@
           "type": "array",
           "items": { "type": "string" },
           "minItems": 1,
-          "description": "Present only when the request carried a declared field that asks for something runTests does not read, one message per field (#4952). Never an empty array. A field the protocol does not declare refuses the request instead. See docs/server-mode.md#request-fields."
+          "description": "Present only when the request carried a declared field that asks for something runTests does not read, one message per field (#4952), or when a request that carried `test` selected no test: a test-selection note, with exitCode 6 unless a bundle did not compile or execute (#5183). Never an empty array. A field the protocol does not declare refuses the request instead. See docs/server-mode.md#request-fields and docs/server-mode.md#test-and-excludetests."
         },
         "wallSeconds": { "type": "number", "minimum": 0 },
         "protocolVersion": { "const": 2 }

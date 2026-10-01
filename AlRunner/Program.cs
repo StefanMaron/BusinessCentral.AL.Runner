@@ -8487,6 +8487,10 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     // compiles without it (RunTestsWithSelection sets it for the request it serves).
     var defaultServerTdd = tddMode;
     BcCompiler.SetTddMode(false);
+    // #5183: --test / --exclude-test given at startup are the default for a runTests request that
+    // omits `test` / `excludeTests`; a request's own value never outlives that request.
+    var defaultServerTestFilter = executor.TestFilter;
+    var defaultServerExclusions = executor.Exclusions;
 
     // Readiness handshake — MUST be the first line on stdout.
     lock (outputLock)
@@ -8589,6 +8593,25 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         }
     }
 
+    // #5183: the request's `test` / `excludeTests` (the CLI's --test / --exclude-test) on the shared
+    // executor, or the startup defaults when it carries none — every runTests sets both, so one
+    // request's selection cannot reach the next, and nothing else in --server reads them. Returns an
+    // error response string when the request cannot be honoured, else null.
+    string? ApplyRequestTestSelection(AlRunner.ServerRequest req)
+    {
+        var carries = req.Test != null || req.ExcludeTests is { Length: > 0 };
+        if (carries && req.AffectedOnly == true)
+            return AlRunner.ServerProtocol.Error(
+                "runTests: 'test' and 'excludeTests' cannot be combined with affectedOnly — selection decides which "
+                + "tests run, and a baseline recorded from a narrowed run would describe tests that never ran "
+                + "(the CLI refuses --affected with --test for the same reason).");
+        executor.TestFilter = req.Test ?? defaultServerTestFilter;
+        executor.Exclusions = req.ExcludeTests is { Length: > 0 }
+            ? new AlRunner.Infrastructure.TestExclusionFilter(req.ExcludeTests)
+            : defaultServerExclusions;
+        return null;
+    }
+
     // ── runTests: re-emit + run every requested bundle in-process, STREAMING one
     // {"type":"test"} NDJSON line per completed test (via TestExecutor.Run's
     // onTestComplete hook) as it finishes, then exactly one terminal
@@ -8644,6 +8667,19 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             return;
         }
 
+        var selectionError = ApplyRequestTestSelection(req);
+        if (selectionError != null)
+        {
+            lock (outputLock)
+            {
+                output.WriteLine(selectionError);
+                output.Flush();
+            }
+            return;
+        }
+        var requestTestFilter = req.Test;
+        var selectedBefore = executor.FilterSelectedCount;
+
         var cts = new System.Threading.CancellationTokenSource();
         System.Threading.Interlocked.Exchange(ref activeRunCts, cts);
         try
@@ -8686,6 +8722,23 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             var scanFailures = outcome.ScanFailures;
             var requestSelection = outcome.Selection;
             var requestPerTestCoverage = req.PerTestCoverage == true;
+
+            // #4055 for a request that carried `test`: a pattern that selects no test is exit 6, not a
+            // clean 0-test run — the CLI's audit, same message and same stand-down when a bundle did
+            // not compile or execute (the zero is then unattributable).
+            var warnings = fieldWarnings;
+            if (requestTestFilter != null && !cancelled
+                && executor.FilterSelectedCount - selectedBefore == 0 && allTests.Count == 0)
+            {
+                var notJudged = exitCode != 0 || allCompileErrors.Count > 0;
+                var note = notJudged
+                    ? $"test-selection: --test '{requestTestFilter}' selected no test, not judged: the request did not "
+                      + "otherwise end with exit code 0 (a compile or execution failure, or a company initialization "
+                      + "abort), so the zero cannot be attributed to the pattern."
+                    : "test-selection: " + AlRunner.Infrastructure.TestSelectionAudit.Describe(requestTestFilter);
+                warnings = (fieldWarnings ?? Array.Empty<string>()).Append(note).ToList();
+                if (!notJudged) exitCode = AlRunner.Infrastructure.TestSelectionAudit.ExitCode;
+            }
 
             var combinedHashes = new Dictionary<string, string>();
             foreach (var r in runs)
@@ -8735,7 +8788,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     perTestStatementTable: requestPerTestCoverage ? perTestStatementTable : null,
                     companyInitFailures: companyInitFailures,
                     sourceScanFailures: scanFailures,
-                    warnings: fieldWarnings));
+                    warnings: warnings));
                 output.Flush();
             }
         }

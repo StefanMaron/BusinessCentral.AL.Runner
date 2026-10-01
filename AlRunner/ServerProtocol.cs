@@ -226,6 +226,21 @@ public sealed class ServerRequest
     [JsonPropertyName("tdd")] public bool? Tdd { get; set; }
 
     /// <summary>
+    /// #5183, <c>runTests</c> only: the CLI's <c>--test</c> / <c>--filter</c> for this request. A
+    /// case-insensitive substring of <c>CodeunitNNNN.Method</c>; a pattern that selects no test
+    /// ends the request with exit code 6, as on the CLI. Null = the server's startup flag; refused
+    /// with <c>affectedOnly</c>. See docs/server-mode.md#test-and-excludetests.
+    /// </summary>
+    [JsonPropertyName("test")] public string? Test { get; set; }
+
+    /// <summary>
+    /// #5183, <c>runTests</c> only: the CLI's <c>--exclude-test</c> (repeatable) for this request —
+    /// whole codeunit names or whole qualified test names. Null = the server's startup flags;
+    /// refused with <c>affectedOnly</c>. See docs/server-mode.md#test-and-excludetests.
+    /// </summary>
+    [JsonPropertyName("excludeTests")] public string[]? ExcludeTests { get; set; }
+
+    /// <summary>
     /// Every field the request carried that no property above declares. <c>runTests</c> and
     /// <c>execute</c> refuse a request with any (#4952); see <see cref="ServerProtocol.CheckFields"/>.
     /// </summary>
@@ -306,6 +321,7 @@ public static class ServerProtocol
             {
                 "command", "sourcePaths", "packagePaths", "coverage", "perTestCoverage",
                 "affectedOnly", "includeFailing", "strictEnvironment", "testIsolation", "tdd",
+                "test", "excludeTests",
             },
             ["execute"] = new HashSet<string>(StringComparer.Ordinal)
             {
@@ -350,10 +366,7 @@ public static class ServerProtocol
                 if (cased != null)
                     parts.Add($"Field names are case-sensitive: did you mean '{cased}'?");
             }
-            if (names.Any(n => n.Contains("symbol", StringComparison.OrdinalIgnoreCase)
-                            || n.Contains("define", StringComparison.OrdinalIgnoreCase)))
-                parts.Add("Preprocessor symbols are daemon-wide: start the server with --define SYM "
-                    + "(or --preprocessor-symbols A,B); a request cannot change them.");
+            foreach (var hint in ProcessWideFlagHints(names)) parts.Add(hint);
             parts.Add("Fields " + wireCommand + " reads: "
                 + string.Join(", ", reads.Where(r => r != "command").OrderBy(r => r, StringComparer.Ordinal)) + ".");
             return new RequestFieldCheck(string.Join(" ", parts), Array.Empty<string>());
@@ -369,6 +382,26 @@ public static class ServerProtocol
                 : $"'{name}' is read by no command (v1 field) — ignored.");
         }
         return new RequestFieldCheck(null, warnings);
+    }
+
+    // #5183: CLI flags a request deliberately has no field for, with the reason, so a client that
+    // sends one is told why instead of only that the field is unknown. docs/server-mode.md#cli-flags-with-no-request-field.
+    private static IEnumerable<string> ProcessWideFlagHints(IReadOnlyList<string> names)
+    {
+        bool Has(params string[] parts) => names.Any(n => parts.Any(p => n.Contains(p, StringComparison.OrdinalIgnoreCase)));
+        if (Has("symbol", "define"))
+            yield return "Preprocessor symbols are daemon-wide: start the server with --define SYM "
+                + "(or --preprocessor-symbols A,B); a request cannot change them, because the module a "
+                + "later request reuses is keyed on source content and not on the symbol set.";
+        if (Has("verbose", "quiet", "showpass", "failuresonly"))
+            yield return "Verbosity is not a request field: results arrive as structured test lines whatever "
+                + "the CLI would have printed, and stderr diagnostics follow the server's own --verbose, set at startup.";
+        if (Has("outputjson", "outputjunit", "coverageout"))
+            yield return "Output files are not a request field: the response is already the JSON document, "
+                + "and a client writes its own files from it.";
+        if (Has("nocache", "cacheroot", "cachedir"))
+            yield return "Cache roots are chosen at startup (--cache DIR / --no-cache): they are process-wide, "
+                + "so a request cannot change them.";
     }
 
     // A false flag, an empty list or an empty string asks for nothing, so ignoring it is exact.
