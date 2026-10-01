@@ -7,8 +7,13 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-public class ServerAffectedSelectionSessionStateTests
+// #5110: facts that need no startup flag of their own share one --server (SharedCliServer).
+public class ServerAffectedSelectionSessionStateTests : IClassFixture<SharedCliServer>
 {
+    private readonly SharedCliServer _fixture;
+
+    public ServerAffectedSelectionSessionStateTests(SharedCliServer fixture) => _fixture = fixture;
+
     // The #5048 reviewer's reproducer: A sets WorkDate and draws from a sequence through a helper;
     // B and C read what A left under per-test isolation; D reads no session state.
     internal static string SessionHelper(string date = "20200101D", int nexts = 1)
@@ -250,9 +255,10 @@ public class ServerAffectedSelectionSessionStateTests
             ["affectedOnly"] = affectedOnly,
         };
         if (isolation != null) request["testIsolation"] = isolation;
+        var stderrMark = server.StdErrMark;
         var lines = await server.SendRequestStreamingAsync(JsonSerializer.Serialize(request), TimeSpan.FromSeconds(180));
         var (events, summary) = ProtocolV2Streaming.Split(lines);
-        var raw = string.Join(" | ", lines) + "\n--- stderr ---\n" + server.StdErr;
+        var raw = string.Join(" | ", lines) + "\n--- stderr ---\n" + server.StdErrSince(stderrMark);
         var forced = summary.TryGetProperty("selection", out var selection) && selection.GetProperty("forcedFull").GetBoolean();
         var tests = events.ToDictionary(
             e => e.GetProperty("name").GetString()!.Split('.').Last(),
@@ -280,7 +286,7 @@ public class ServerAffectedSelectionSessionStateTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = SessionBundle("al-runner-server-affected-session-state", "000000000001");
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
 
         var baseline = await Send(server, bundle, "test");
         Assert.True(baseline.ForcedFull, baseline.Raw);
@@ -310,7 +316,7 @@ public class ServerAffectedSelectionSessionStateTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = StoreBundle("al-runner-server-affected-session-si", "000000000002");
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
 
         var baseline = await Send(server, bundle, null);
         Assert.True(baseline.ForcedFull, baseline.Raw);
@@ -333,7 +339,7 @@ public class ServerAffectedSelectionSessionStateTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = SessionBundle("al-runner-server-affected-session-provenance", "000000000004");
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
 
         Assert.True((await Send(server, bundle, "test")).ForcedFull);
 
@@ -354,7 +360,7 @@ public class ServerAffectedSelectionSessionStateTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = WorkDateTokenBundle("al-runner-server-affected-session-wtoken", "000000000005");
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
 
         var baseline = await Send(server, bundle, "test");
         Assert.True(baseline.ForcedFull, baseline.Raw);
@@ -420,7 +426,7 @@ public class ServerAffectedSelectionSessionStateTests
             """;
         var reader = Bundle("al-runner-server-affected-session-xb-reader", "000000000007",
             ("Reader.Codeunit.al", Reader("XB")));
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
 
         async Task<Observed> SendBoth()
         {
@@ -431,9 +437,10 @@ public class ServerAffectedSelectionSessionStateTests
                 ["packagePaths"] = Array.Empty<string>(),
                 ["affectedOnly"] = true,
             };
+            var stderrMark = server.StdErrMark;
             var lines = await server.SendRequestStreamingAsync(JsonSerializer.Serialize(request), TimeSpan.FromSeconds(180));
             var (events, summary) = ProtocolV2Streaming.Split(lines);
-            var raw = string.Join(" | ", lines) + "\n--- stderr ---\n" + server.StdErr;
+            var raw = string.Join(" | ", lines) + "\n--- stderr ---\n" + server.StdErrSince(stderrMark);
             var forced = summary.TryGetProperty("selection", out var selection) && selection.GetProperty("forcedFull").GetBoolean();
             return new Observed(events.ToDictionary(
                 e => e.GetProperty("name").GetString()!.Split('.').Last(),

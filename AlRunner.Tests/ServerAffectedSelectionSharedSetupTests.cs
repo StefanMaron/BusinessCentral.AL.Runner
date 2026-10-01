@@ -7,8 +7,13 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-public class ServerAffectedSelectionSharedSetupTests
+// #5110: facts that need no startup flag of their own share one --server (SharedCliServer).
+public class ServerAffectedSelectionSharedSetupTests : IClassFixture<SharedCliServer>
 {
+    private readonly SharedCliServer _fixture;
+
+    public ServerAffectedSelectionSharedSetupTests(SharedCliServer fixture) => _fixture = fixture;
+
     private const string Setup = """
         table 61830 "Shared Setup SX"
         {
@@ -156,9 +161,10 @@ public class ServerAffectedSelectionSharedSetupTests
             ["affectedOnly"] = true,
         };
         if (isolation != null) request["testIsolation"] = isolation;
+        var stderrMark = server.StdErrMark;
         var lines = await server.SendRequestStreamingAsync(JsonSerializer.Serialize(request), TimeSpan.FromSeconds(180));
         var (events, summary) = ProtocolV2Streaming.Split(lines);
-        var raw = string.Join(" | ", lines) + "\n--- stderr ---\n" + server.StdErr;
+        var raw = string.Join(" | ", lines) + "\n--- stderr ---\n" + server.StdErrSince(stderrMark);
         Assert.True(summary.TryGetProperty("selection", out var selection), raw);
         var tests = events.ToDictionary(
             e => e.GetProperty("name").GetString()!.Split('.').Last(),
@@ -189,7 +195,7 @@ public class ServerAffectedSelectionSharedSetupTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = Bundle("al-runner-server-affected-shared-setup", "000000000001");
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
 
         var baseline = await Send(server, bundle);
         Assert.True(baseline.ForcedFull, baseline.Raw);
@@ -235,7 +241,7 @@ public class ServerAffectedSelectionSharedSetupTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = Bundle("al-runner-server-affected-shared-setup-testiso", "000000000003");
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
 
         Assert.True((await Send(server, bundle, "test")).ForcedFull);
 
@@ -372,7 +378,7 @@ public class ServerAffectedSelectionSharedSetupTests
         File.WriteAllText(Path.Combine(dir, "Writer.Codeunit.al"), SiWriter);
         File.WriteAllText(Path.Combine(dir, "Stateful.Codeunit.al"), SiStatefulReaders);
         File.WriteAllText(Path.Combine(dir, "Stateless.Codeunit.al"), SiStatelessReaders);
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
 
         var baseline = await Send(server, dir, "test");
         Assert.True(baseline.ForcedFull, baseline.Raw);
@@ -392,7 +398,7 @@ public class ServerAffectedSelectionSharedSetupTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = Bundle("al-runner-server-affected-shared-setup-disabled", "000000000004");
-        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
 
         Assert.True((await Send(server, bundle, "disabled")).ForcedFull);
 
