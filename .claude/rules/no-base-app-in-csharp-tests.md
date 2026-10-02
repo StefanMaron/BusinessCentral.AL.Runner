@@ -58,7 +58,9 @@ that setting compiled where the same bundle failed with it.
 
 **The bar for adding to either allowlist is a completed run showing the class or fixture fails
 without the floor**, never a reading of what the test looks like it needs — a partial local run
-missed classes CI found (#2364).
+missed classes CI found (#2364). `PlatformFloorFixtureGuardTests` enforces it for the `"platform"`
+allowlists: an entry must say the floor is the subject or carry `Measured` with the object and
+diagnostic that failed, so a "reads System table X" entry cannot rest on a reading (#5112).
 
 ## Sister rules
 
