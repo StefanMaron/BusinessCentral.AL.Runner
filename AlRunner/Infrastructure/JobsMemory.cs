@@ -29,10 +29,11 @@ internal static class JobsMemory
     public const double Headroom = 0.8;
 
     /// <summary>The least-squares fit in docs/jobs-unit-claiming.md § Memory, on peak proportional set
-    /// size (shared pages counted once, not per worker): 1,390 MB for a worker that has run nothing,
-    /// whatever the bundle's size, and 3.31 MB x tests^0.76 on top. JobsMemoryModelTests holds the
-    /// measured runs it was fitted to and the band it must stay inside.</summary>
-    public static readonly WorkerModel Model = new(BaseMb: 1390, CoeffMb: 3.31, Exponent: 0.76);
+    /// size (shared pages counted once, not per worker): 1,370 MB for a worker that has run nothing,
+    /// whatever the bundle's size, and 6.9 MB x tests^0.68 on top. The measured runs sit between
+    /// -16% and +18% of it, which is bucket-to-bucket spread that test count does not explain, so the
+    /// plan keeps its headroom. JobsMemoryModelTests holds the runs and the band.</summary>
+    public static readonly WorkerModel Model = new(BaseMb: 1370, CoeffMb: 6.9, Exponent: 0.68);
 
     private static readonly Lazy<long?> Reading = new(Read);
 

@@ -71,7 +71,9 @@ the backup-reader sidecar included), `--test-data`, BC 28.1.49838.53910, the wor
 | Tests-ERM serial (random seed; seed 7: 4,975 MB PSS) | 9,497 | 4,875 MB | 4,935 MB |
 | Tests-ERM `--jobs 2` | 4,288, 5,209 | 6,784 MB | 7,173 MB |
 | Tests-ERM `--jobs 3` | 2,762, 3,759, 2,976 | 8,188 MB | 8,943 MB |
-| Tests-VAT serial, held out of the fit | 1,200 | 2,230 MB | 2,290 MB |
+| Tests-VAT serial | 1,200 | 2,230 MB | 2,290 MB |
+| Tests-Job serial | 1,290 | 2,608 MB | 2,669 MB |
+| Tests-Workflow serial | 1,058 | 2,579 MB | 2,666 MB |
 
 - **The base does not depend on the bundle's size.** 45 AL files (SMB) to 293 (ERM) all start at
   1.3 to 1.55 GB.
@@ -79,11 +81,14 @@ the backup-reader sidecar included), `--test-data`, BC 28.1.49838.53910, the wor
   at 9,497; SMB from 1.3 GB to 2.3 GB at 1,027. (The figures in `ShardPlanner.cs` and `--help`
   that say peak memory tracks bundles loaded, not tests run, are from one configuration; with
   `--test-data` tests run do cost memory.)
-- **The model** (`JobsMemory.Model`) is `1,390 MB + 3.31 MB x tests^0.76` per worker, a
-  least-squares fit on the relative error of every row above but the held-out one. It lands within
-  -11% to +14% of each of them, and 5% under the held-out Tests-VAT run (the prediction, 2,115
-  MB, was computed before the run). `JobsMemoryModelTests` holds the rows and the 15% band.
-  A plan may claim 80% of the free memory, which covers the under-estimates.
+- **The model** (`JobsMemory.Model`) is `1,370 MB + 6.9 MB x tests^0.68` per worker, a
+  least-squares fit on the relative error of every row above. It lands between -16% (Tests-Workflow)
+  and +18% (Tests-SMB `--jobs 3`) of them, with a root-mean-square error of 9%. The spread is
+  bucket to bucket, not noise in the fit: buckets of 1,000 to 1,300 tests grew a worker by 0.85 to
+  1.25 GB. A first fit on the six ERM and SMB runs predicted Tests-VAT 5% under, Tests-Job 17% under
+  and Tests-Workflow 21% under before those three were run (the predictions were computed first), so
+  the fit was redone on all of them and no run is held out any more. `JobsMemoryModelTests` holds the
+  rows and a 20% band. A plan may claim 80% of the free memory, which covers the under-estimates.
 - **The reading** of free memory is `MemAvailable` (and the tightest cgroup v2 limit on the way
   up). Where it cannot be read the plan is not sized at all; `AL_RUNNER_JOBS_FREE_MEMORY_MB`
   overrides it. Linux only; elsewhere it is unknown, never zero.
@@ -94,7 +99,9 @@ the backup-reader sidecar included), `--test-data`, BC 28.1.49838.53910, the wor
 Not in the model, and each one measured to be real:
 
 - **A cold cache.** The first compile of Tests-ERM peaked at 3.4 GB in one process, against 1.5 GB
-  warm (SMB 2.2, VAT 1.8, SCM 3.6). Workers started against an empty cache are not sized for it.
+  warm (SMB 2.2, VAT 1.8, SCM 3.6). Workers started against an empty cache are not sized for it, and
+  every worker of a shared bundle compiles it itself: SMB on `--jobs 2` with a fresh cache took 418 s
+  of CPU and 4.5 GB against 190 s and 2.2 GB for one process, at the same wall time (#5238).
 - **Abort-resume stacks attempts.** The aborted attempt stays alive while the retry runs, so a run
   that resumed twice held three attempts at once: Tests-SCM-Service (two watchdog aborts) peaked at
   10.8 GB (PSS), and one process of it reached 6.5 GB on its own. That run is why it is not in the

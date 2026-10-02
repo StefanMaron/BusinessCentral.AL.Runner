@@ -22,22 +22,27 @@ public sealed class JobsMemoryModelTests
         new object[] { "Tests-SMB serial, seed 7", new[] { 1027 }, 2295 },
         new object[] { "Tests-SMB --jobs 2", new[] { 436, 591 }, 3441 },
         new object[] { "Tests-SMB --jobs 3", new[] { 334, 241, 452 }, 4387 },
+        new object[] { "Tests-VAT serial, seed 7", new[] { 1200 }, 2230 },
+        new object[] { "Tests-Job serial, seed 7", new[] { 1290 }, 2608 },
+        new object[] { "Tests-Workflow serial, seed 7", new[] { 1058 }, 2579 },
         new object[] { "Tests-ERM, one codeunit of 11 tests, warm", new[] { 11 }, 1453 },
         new object[] { "Tests-SMB, one codeunit of 4 tests, warm", new[] { 4 }, 1322 },
         new object[] { "Tests-VAT, one codeunit of 4 tests, warm", new[] { 4 }, 1385 },
         new object[] { "Tests-SCM, one codeunit of 6 tests, warm", new[] { 6 }, 1549 },
     };
 
-    /// <summary>Within 15% of each measured peak, over and under. The plan then keeps its own 20%
-    /// headroom (<see cref="JobsMemory.Headroom"/>), which is what covers the under-estimates.</summary>
+    /// <summary>Within 20% of each measured peak, over and under. Buckets of about a thousand tests
+    /// differ from one another by that much for the same test count (they touch different tables), so
+    /// the plan keeps its own 20% headroom (<see cref="JobsMemory.Headroom"/>), which is what covers
+    /// the under-estimates.</summary>
     [Theory]
     [MemberData(nameof(Measured))]
-    public void TheDefaultModel_StaysWithinFifteenPercentOfEachMeasuredRun(string run, int[] testsPerWorker, int measuredMb)
+    public void TheDefaultModel_StaysWithinTwentyPercentOfEachMeasuredRun(string run, int[] testsPerWorker, int measuredMb)
     {
         var estimateMb = testsPerWorker.Sum(n => JobsMemory.Model.EstimateBytes(n)) / (1024.0 * 1024);
 
-        Assert.InRange(estimateMb / measuredMb, 0.85, 1.15);
-        _ = run;
+        Assert.True(estimateMb / measuredMb is >= 0.80 and <= 1.20,
+            $"{run}: estimated {estimateMb:F0} MB against a measured {measuredMb} MB");
     }
 
     /// <summary>The shape the fit rests on: tests grow a worker's memory, but less than in

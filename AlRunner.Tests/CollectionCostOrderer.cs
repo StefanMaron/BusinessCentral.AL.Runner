@@ -206,6 +206,10 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // leg rounded down. Kept as one class on purpose: dispatched first it is not the tail
             // (the suite is ~1700s of work over four threads), and each fact pins its own mutation.
             ["JobsUnitClaimEndToEndTests"] = 222,
+            // #5215, #5216: four tests spawning fan-outs of real runners (a hang and its resume,
+            // --per-suite, and two memory-limited plans). 57s locally for the class on a quiet box,
+            // rounded down; not yet seen on a CI leg.
+            ["JobsSharedBundleEndToEndTests"] = 57,
             // #4813: 8 tests, each spawning a runner subprocess on a bundle that source-compiles
             // Microsoft's Test Runner app or stand-ins for it. Absent from this table on its
             // first CI run (36294813041): 180.2s on both the BC 27.5 and 28.5 legs, rounded down.

@@ -115,7 +115,7 @@ public sealed class JobsSharedBundleEndToEndTests
 
     /// <summary>
     /// Free memory limits sharing (#5216). `--jobs 3` on the eight-file fixture would share it by
-    /// three, but 5,000 MB free at 80% headroom is 4,000, which holds two workers (about 1,400 MB
+    /// three, but 4,500 MB free at 80% headroom is 3,600, which holds two workers (about 1,400 MB
     /// each under the default model) and not three, so the bundle is shared by two, the plan says
     /// so, and every test still runs once.
     /// </summary>
@@ -127,7 +127,7 @@ public sealed class JobsSharedBundleEndToEndTests
 
         var (exit, output) = JobsUnitClaimEndToEndTests.RunRunner(
             $"--cache \"{Path.Combine(scratch, "cache")}\" --jobs 3 \"{FixtureDir()}\"",
-            lowSplitFloor: true, freeMemoryMb: "5000");
+            lowSplitFloor: true, freeMemoryMb: "4500");
 
         Assert.True(exit == 0, $"expected exit 0, got {exit}.\n{output}");
         Assert.Contains("jobs: free memory holds fewer workers per bundle than --jobs asked for", output);
