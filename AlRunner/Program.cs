@@ -3600,7 +3600,17 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                 {
                     compileGate = AlRunner.Infrastructure.CacheCompileLock.Acquire(
                         Path.Combine(alCacheDir, cacheKey + ".compile.lock"), gateWhat, gateWait, Say);
-                    if (compileGate.WaitedForSibling) ReadCompleteEntry(reportIncomplete: false);
+                    if (compileGate.WaitedForSibling)
+                    {
+                        ReadCompleteEntry(reportIncomplete: false);
+                        // The holder found out while this process waited that it publishes nothing:
+                        // let the next waiter in now, not after this compile too.
+                        if (cachedBytes == null && AlRunner.Infrastructure.UncacheableCompile.Exists(uncacheableMarker))
+                        {
+                            compileGate.Dispose();
+                            compileGate = null;
+                        }
+                    }
                 }
             }
             }

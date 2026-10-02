@@ -41,12 +41,14 @@ public sealed class CacheCompileLockEndToEndTests
         }
         """;
 
-    private const string DepBrokenAl = """
-        codeunit 70980 "CCL Dep Math"
+    private const int BrokenDependencyObjects = 400;
+
+    private static string DepBrokenAl(int i) => $$"""
+        codeunit {{70980 + i}} "CCL Dep Math {{i}}"
         {
             procedure Add(A: Integer; B: Integer): Integer
             var
-                Missing: Codeunit "CCL Dep Does Not Exist At All";
+                Missing: Codeunit "CCL Dep Does Not Exist At All {{i}}";
             begin
                 exit(Missing.Whatever(A + B));
             end;
@@ -56,7 +58,7 @@ public sealed class CacheCompileLockEndToEndTests
     /// <summary>Enough test codeunits that the bundle's own Emit+Compile takes seconds, not
     /// milliseconds: the second process must still be at its bundle key check while the first is
     /// compiling, or a missing gate reads as a pass.</summary>
-    private const int BundleCodeunits = 40;
+    internal const int BundleCodeunits = 40;
 
     private static string MainTestAl(int i, int sleepMs) => $$"""
         codeunit {{70900 + i}} "CCL Main Tests {{i}}"
@@ -98,7 +100,7 @@ public sealed class CacheCompileLockEndToEndTests
     /// by a survivor, so the module is not run at all.</param>
     /// <param name="brokenDependency">The source dependency cannot bind at all, so its compile
     /// throws and nothing is published for it.</param>
-    private static string BuildFixture(string root, int testSleepMs = 0, int codeunits = BundleCodeunits,
+    internal static string BuildFixture(string root, int testSleepMs = 0, int codeunits = BundleCodeunits,
         bool withUncompilableCodeunit = false, bool uncompilableIsATest = false, bool brokenDependency = false)
     {
         var main = Path.Combine(root, "main");
@@ -163,7 +165,13 @@ public sealed class CacheCompileLockEndToEndTests
                 w.Write(content);
             }
             Add("NavxManifest.xml", manifest);
-            Add("src/DepMath.Codeunit.al", broken ? DepBrokenAl : DepAl);
+            if (broken)
+                // Many objects that cannot bind: the compile spends seconds retrying before it
+                // gives up, which is what lets a test tell "side by side" from "one after another".
+                for (var i = 0; i < BrokenDependencyObjects; i++)
+                    Add($"src/DepBroken{i}.Codeunit.al", DepBrokenAl(i));
+            else
+                Add("src/DepMath.Codeunit.al", DepAl);
         }
         var payload = zipBuffer.ToArray();
         using var app = new MemoryStream();
@@ -179,15 +187,17 @@ public sealed class CacheCompileLockEndToEndTests
         return app.ToArray();
     }
 
-    private sealed class Spawned
+    internal sealed class Spawned
     {
         public required System.Diagnostics.Process Process { get; init; }
         public required System.Text.StringBuilder Output { get; init; }
         public required System.Text.StringBuilder Stdout { get; init; }
         public required System.Text.StringBuilder Stderr { get; init; }
+        /// <summary>Every output line with the moment it arrived, for tests about ORDER in time.</summary>
+        public List<(DateTime At, string Line)> Lines { get; init; } = new();
     }
 
-    private static Spawned Start(string bundlePath, string cacheDir,
+    internal static Spawned Start(string bundlePath, string cacheDir,
         string extraArgs = "", IReadOnlyDictionary<string, string>? env = null)
     {
         var args = new System.Text.StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
@@ -206,15 +216,16 @@ public sealed class CacheCompileLockEndToEndTests
         var sb = new System.Text.StringBuilder();
         var so = new System.Text.StringBuilder();
         var se = new System.Text.StringBuilder();
+        var lines = new List<(DateTime At, string Line)>();
         var p = System.Diagnostics.Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) { sb.AppendLine(e.Data); so.AppendLine(e.Data); } };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) { sb.AppendLine(e.Data); se.AppendLine(e.Data); } };
+        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) { sb.AppendLine(e.Data); so.AppendLine(e.Data); lines.Add((DateTime.UtcNow, e.Data)); } };
+        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) { sb.AppendLine(e.Data); se.AppendLine(e.Data); lines.Add((DateTime.UtcNow, e.Data)); } };
         p.BeginOutputReadLine();
         p.BeginErrorReadLine();
-        return new Spawned { Process = p, Output = sb, Stdout = so, Stderr = se };
+        return new Spawned { Process = p, Output = sb, Stdout = so, Stderr = se, Lines = lines };
     }
 
-    private static (string Output, int Exit) Finish(Spawned s)
+    internal static (string Output, int Exit) Finish(Spawned s)
     {
         if (!s.Process.WaitForExit(300_000))
         {
@@ -225,7 +236,18 @@ public sealed class CacheCompileLockEndToEndTests
         lock (s.Output) return (s.Output.ToString(), s.Process.ExitCode);
     }
 
-    private static int Count(string haystack, string needle)
+    /// <summary>Everything in these runs published, so nothing may be marked uncacheable: a marker
+    /// beside an entry that was just written means a compile gave up after succeeding, which hands
+    /// the compile phase on after the first key and splits the work between the workers again.</summary>
+    private static void AssertNoMarkers(string cacheDir, string output)
+    {
+        var markers = Directory.GetFiles(cacheDir, "*" + AlRunner.Infrastructure.UncacheableCompile.Suffix,
+            SearchOption.AllDirectories);
+        Assert.True(markers.Length == 0,
+            $"a compile that published was marked uncacheable: {string.Join(", ", markers.Select(Path.GetFileName))}\n{output}");
+    }
+
+    internal static int Count(string haystack, string needle)
         => haystack.Split(needle).Length - 1;
 
     /// <summary>
@@ -271,6 +293,7 @@ public sealed class CacheCompileLockEndToEndTests
             var bundleHit = Count(both, "[cache] HIT  key=");
             Assert.True(bundleMiss == 1 && bundleHit == 1,
                 $"bundle: expected 1 compile + 1 HIT across both processes, saw {bundleMiss} MISS(es) + {bundleHit} HIT(s):\n{both}");
+            AssertNoMarkers(cacheDir, both);
         }
         finally
         {
@@ -321,6 +344,7 @@ public sealed class CacheCompileLockEndToEndTests
                 + $"[{string.Join(", ", blocks.Select(Compiles))}]:\n{output}");
             Assert.Equal(2, Compiles(compiling[0]));          // the dependency and the bundle, both here
             Assert.Equal(2, Hits(loading[0]));                // and both read back by the other
+            AssertNoMarkers(cacheDir, output);
 
             // The compile phase ends before the tests start, so the worker that waited for it is
             // not made to wait for the other's tests as well: it joins in, and each ran some.
@@ -442,6 +466,7 @@ public sealed class CacheCompileLockEndToEndTests
             var hit = Count(output, "[cache] HIT  key=");
             Assert.True(miss == 1 && hit == 1,
                 $"expected the bundle compiled once and read once, saw {miss} MISS(es) + {hit} HIT(s):\n{output}");
+            AssertNoMarkers(cacheDir, output);
         }
         finally
         {

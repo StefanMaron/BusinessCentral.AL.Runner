@@ -806,11 +806,21 @@ public sealed class DependencyLoader
                 compileGate = CacheCompileLock.Acquire(
                     Path.Combine(cacheDir, cacheKey + ".compile.lock"), what,
                     CacheCompileLock.MaxWaitFromEnvironment(Say), Say);
-                if (compileGate.WaitedForSibling && TryServeFromSourceCache() is { } cacheHitAfterWait)
+                if (compileGate.WaitedForSibling)
                 {
-                    compileGate.Dispose();
-                    phase?.ReleaseIfNotCompiling();
-                    return cacheHitAfterWait;
+                    if (TryServeFromSourceCache() is { } cacheHitAfterWait)
+                    {
+                        compileGate.Dispose();
+                        phase?.ReleaseIfNotCompiling();
+                        return cacheHitAfterWait;
+                    }
+                    // The holder found out while this process waited that it publishes nothing:
+                    // let the next waiter in now, not after this compile too.
+                    if (UncacheableCompile.Exists(uncacheableMarker))
+                    {
+                        compileGate.Dispose();
+                        compileGate = null;
+                    }
                 }
             }
         }
