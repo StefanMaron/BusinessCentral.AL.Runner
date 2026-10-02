@@ -80,6 +80,75 @@ public sealed class JobsMemorySizingTests : IDisposable
         Assert.Empty(JobsMemory.CgroupDirectories("12:memory:/foo\n11:cpu:/foo\n", "/cg"));
     }
 
+    // ── reading the cgroup tree ─────────────────────────────────────────────────────────────
+
+    private string CgroupTree(params (string Rel, string? Max, string? Current)[] dirs)
+    {
+        var root = Path.Combine(_dir, "cgroup");
+        Directory.CreateDirectory(root);
+        foreach (var (rel, max, current) in dirs)
+        {
+            var d = Path.Combine(root, rel);
+            Directory.CreateDirectory(d);
+            if (max != null) File.WriteAllText(Path.Combine(d, "memory.max"), max);
+            if (current != null) File.WriteAllText(Path.Combine(d, "memory.current"), current);
+        }
+        return root;
+    }
+
+    /// <summary>The shape of a real Linux box: the root cgroup has no memory.max (that is not a limit of
+    /// zero), a middle one is "max" (no limit), and the leaf has a real one, which is then the tightest.</summary>
+    [Fact]
+    public void TheCgroupTree_RootWithoutFiles_MaxAndALimit_GivesTheLimitsRemainder()
+    {
+        var root = CgroupTree(("", null, null), ("a", "max\n", "10\n"), ("a/b", "1000\n", "400\n"));
+
+        Assert.Equal(600L, JobsMemory.ReadCgroupRemainingBytes("0::/a/b\n", root));
+    }
+
+    /// <summary>Nothing on the path has a limit: unknown, so the host's reading stands. Zero here would
+    /// read as "no memory" and stop every Linux box with cgroup v2 from sharing a bundle.</summary>
+    [Fact]
+    public void TheCgroupTree_WithNoLimitAnywhere_IsUnknownNotZero()
+    {
+        var root = CgroupTree(("", null, null), ("a", "max\n", "10\n"), ("a/b", "max\n", "5\n"));
+
+        Assert.Null(JobsMemory.ReadCgroupRemainingBytes("0::/a/b\n", root));
+        Assert.Null(JobsMemory.ReadCgroupRemainingBytes("12:memory:/a/b\n", root));
+    }
+
+    /// <summary>A limit higher up binds the leaf too, and the leaf's own file being absent is not zero.</summary>
+    [Fact]
+    public void TheCgroupTree_AnAncestorsLimitBindsALeafWithNoFiles()
+    {
+        var root = CgroupTree(("", null, null), ("a", "2000\n", "500\n"), ("a/b", null, null));
+
+        Assert.Equal(1500L, JobsMemory.ReadCgroupRemainingBytes("0::/a/b\n", root));
+    }
+
+    /// <summary>A memory.max this process may not read is unknown for that directory, not zero; the
+    /// limit above it still binds.</summary>
+    [SkippableFact]
+    public void TheCgroupTree_AnUnreadableLimitFile_IsUnknownNotZero()
+    {
+        Skip.IfNot(OperatingSystem.IsLinux(), "needs POSIX file modes to make a file unreadable");
+        var root = CgroupTree(("", null, null), ("a", "2000\n", "500\n"), ("a/b", "100\n", "50\n"));
+        var hidden = Path.Combine(root, "a", "b", "memory.max");
+        File.SetUnixFileMode(hidden, UnixFileMode.None);
+        Skip.If(CanRead(hidden), "running as a user that reads any file");
+
+        Assert.Equal(1500L, JobsMemory.ReadCgroupRemainingBytes("0::/a/b\n", root));
+    }
+
+    /// <summary>The tightest of two limits is the smaller remainder, not the smaller limit.</summary>
+    [Fact]
+    public void TheCgroupTree_TakesTheSmallestRemainderAlongThePath()
+    {
+        var root = CgroupTree(("", null, null), ("a", "5000\n", "4900\n"), ("a/b", "1000\n", "100\n"));
+
+        Assert.Equal(100L, JobsMemory.ReadCgroupRemainingBytes("0::/a/b\n", root));
+    }
+
     // ── counting what a worker will run ─────────────────────────────────────────────────────
 
     [Fact]

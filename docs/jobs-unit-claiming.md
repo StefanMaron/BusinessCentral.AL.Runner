@@ -218,6 +218,7 @@ slowest codeunit (54 tests) is claimed late. A recorded per-codeunit duration is
 
 ## What it does not do yet
 
+- The wall time of the whole surface (all 33 buckets) under `--jobs` was not measured: #5240.
 - The weight is a file count, so the number of workers per bundle is only as good as that proxy
   (#5239).
 - Memory is not modelled for a cold cache, for abort-resume chains or for workers holding several

@@ -24,8 +24,7 @@ internal static class JobsMemory
             => (BaseMb + (long)Math.Ceiling(CoeffMb * Math.Pow(Math.Max(0, testsRun), Exponent))) * 1024 * 1024;
     }
 
-    /// <summary>Fraction of the free memory a plan may claim. The same bucket peaked 20% apart
-    /// between repeats, and the box has other users, so the plan keeps a margin.</summary>
+    /// <summary>Fraction of the free memory a plan may claim; see docs/jobs-unit-claiming.md § Memory.</summary>
     public const double Headroom = 0.8;
 
     /// <summary>The least-squares fit in docs/jobs-unit-claiming.md § Memory, on peak proportional set
@@ -53,7 +52,7 @@ internal static class JobsMemory
         if (!OperatingSystem.IsLinux()) return null;
         try
         {
-            return Combine(ParseMemAvailableBytes(File.ReadAllText("/proc/meminfo")), ReadCgroupRemainingBytes());
+            return Combine(ParseMemAvailableBytes(File.ReadAllText("/proc/meminfo")), ReadCgroupRemainingBytes(File.ReadAllText("/proc/self/cgroup"), "/sys/fs/cgroup"));
         }
         catch (IOException) { return null; }
         catch (UnauthorizedAccessException) { return null; }
@@ -135,21 +134,19 @@ internal static class JobsMemory
         return Array.Empty<string>();
     }
 
-    private static long? ReadCgroupRemainingBytes()
-    {
-        try
+    /// <summary>The tightest remaining memory along this process's cgroup path, reading
+    /// <c>memory.max</c> and <c>memory.current</c> under <paramref name="root"/>. A directory with no
+    /// such files (the root cgroup has none) or one that cannot be read is unknown, never 0; so is
+    /// <c>max</c>. Null when no directory on the path has a limit.</summary>
+    internal static long? ReadCgroupRemainingBytes(string procSelfCgroup, string root)
+        => Tightest(CgroupDirectories(procSelfCgroup, root).Select(dir =>
         {
-            return Tightest(CgroupDirectories(File.ReadAllText("/proc/self/cgroup")).Select(dir =>
+            try
             {
-                try
-                {
-                    return CgroupRemainingBytes(
-                        File.ReadAllText(dir + "/memory.max"), File.ReadAllText(dir + "/memory.current"));
-                }
-                catch (IOException) { return (long?)null; }   // the root cgroup has no such files
-            }));
-        }
-        catch (IOException) { return null; }
-        catch (UnauthorizedAccessException) { return null; }
-    }
+                return CgroupRemainingBytes(
+                    File.ReadAllText(dir + "/memory.max"), File.ReadAllText(dir + "/memory.current"));
+            }
+            catch (IOException) { return (long?)null; }
+            catch (UnauthorizedAccessException) { return (long?)null; }
+        }));
 }
