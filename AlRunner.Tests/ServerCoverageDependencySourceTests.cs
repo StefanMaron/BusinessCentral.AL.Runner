@@ -87,10 +87,12 @@ public sealed class ServerCoverageDependencySourceTests
             + $"hit; got {twice}.\n{diagnostic}");
 
         // THE over-attribution control. A fix that lists the dependency's LINES rather than its
-        // executed statements reports Never()'s body as covered; this is what catches it.
+        // executed statements reports Never()'s body as covered; this is what catches it. Listed
+        // at 0, as the CLI does for a procedure that never ran (#5186) — absent would read as
+        // "not instrumented".
         var never = HitsAt(statements!, NeverLine);
-        Assert.True(never is null or 0,
-            $"{label}: Never() is not called, so line {NeverLine} must never carry a hit; got {never} "
+        Assert.True(never == 0,
+            $"{label}: Never() is not called, so line {NeverLine} must be listed with no hit; got {never} "
             + $"— the report is attributing the dependency's lines, not its executed statements.\n{diagnostic}");
     }
 
@@ -104,14 +106,11 @@ public sealed class ServerCoverageDependencySourceTests
     /// so the registry alone still covers them. The helper's own comment carries the honest
     /// version ("insurance, not a demonstrated requirement").</para>
     ///
-    /// <para>It also carries the discrimination that makes <c>Never()</c>'s ABSENCE above
-    /// readable. Within this one response the consumer shows a hits:0 statement (the un-taken
-    /// Error branch, inside a scope that ran) AND no entry at all for a procedure that was never
-    /// called. So zero-hit statements are plainly not being dropped, and a never-run scope is
-    /// plainly not listed — for the consumer and the dependency alike, which is the claim: the
-    /// dependency became an ordinary parsed root. AlCoverageTracker.GetHitTrackedTypes is why,
-    /// and it is deliberate (a warm server holds stale assembly generations whose types would
-    /// otherwise emit phantom hits:0 twins).</para>
+    /// <para>It also carries the discrimination that makes <c>Never()</c>'s ZERO above readable.
+    /// Within this one response the consumer shows a hits:0 statement for the un-taken Error
+    /// branch (inside a scope that ran) AND a hits:0 statement for a procedure that was never
+    /// called, as the CLI reports both (#5186; the server used to omit the second). The
+    /// dependency is an ordinary parsed root, so it gets the same treatment.</para>
     /// </summary>
     private static void AssertConsumerAttributedTheSameWay(
         JsonElement coverage, string consumerFileSuffix, string label, string diagnostic)
@@ -132,10 +131,9 @@ public sealed class ServerCoverageDependencySourceTests
             + $"must be listed with no hit; got {untaken}. Without this, Never()'s absence could just "
             + $"mean zero-hit statements are dropped.\n{diagnostic}");
 
-        Assert.True(HitsAt(statements, ConsumerNeverRunLine) is null,
-            $"{label}: the consumer's own never-called procedure (line {ConsumerNeverRunLine}) is listed, "
-            + $"so a never-run scope IS reported here and the dependency's Never() being absent would be "
-            + $"an asymmetry rather than the documented behaviour.\n{diagnostic}");
+        Assert.True(HitsAt(statements, ConsumerNeverRunLine) == 0,
+            $"{label}: the consumer's own never-called procedure (line {ConsumerNeverRunLine}) must be "
+            + $"listed with no hit, as the CLI lists it (#5186).\n{diagnostic}");
     }
 
     /// <summary>

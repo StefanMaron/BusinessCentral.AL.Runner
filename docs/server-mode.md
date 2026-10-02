@@ -394,7 +394,9 @@ Two more properties of the series, both since #2056:
 **both** `runTests`' terminal `summary` line and `execute`'s response — reusing
 `--coverage`'s existing `StmtHit`/`CStmtHit` hook (#1922), no new instrumentation.
 `coverage` is an array with one entry per AL source file; each file's
-`statements` array has one entry per BC-instrumented statement:
+`statements` array has one entry per BC-instrumented statement of the request's own
+assembly generation, a statement that never ran listed at `hits: 0` (#5186), the same
+line table the CLI's `--coverage-out` writes:
 
 ```json
 {"command":"execute","captureValues":true,"coverage":true,
@@ -1312,7 +1314,7 @@ request field because they are not per-request on this server, not because nobod
 |---|---|
 | `--define`, `--preprocessor-symbols` | Not built yet, not impossible: the module a later request reuses for another directory with the same app id is keyed on content, `app.json` and dependencies, not the symbols ([#another-directory-with-the-same-app-id](#another-directory-with-the-same-app-id)), so it would need the route `tdd` took. Start the server with the flag. |
 | `--verbose`, `--quiet`, `--show-pass`, `--failures-only` | Results already arrive as structured `test` lines whatever the CLI would have printed. Diagnostics on stderr follow the server's own `--verbose`, a process-wide switch. |
-| `--output-json`, `--output-junit`, `--out`, `--coverage-out` | The response is already the JSON document, and a client writes its own files from it. `--coverage-out` also cannot be built on the server's coverage table: that table has no entry for a procedure that never ran, where the CLI's cobertura reports it at 0 hits (#5186). |
+| `--output-json`, `--output-junit`, `--out`, `--coverage-out` | The response is already the JSON document, and a client writes its own files from it. A client can build the CLI's cobertura from the `coverage` table: it lists a procedure that never ran at 0 hits, as the CLI does (#5186). |
 | `--no-cache`, `--cache DIR` | Cache roots are process-wide directories chosen at startup. |
 
 ### `shutdown`
