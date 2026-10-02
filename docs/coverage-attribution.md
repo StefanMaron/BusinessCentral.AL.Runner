@@ -95,6 +95,26 @@ Not covered: a **precompiled** package (Tier 1, 2 or 2.5) next to a sibling sour
 embedded text was compiled, so there is nothing to compare against, and the folder is attributed
 as before. Not measured; tracked in #5155.
 
+## A sibling source folder beside an execution root (#5222)
+
+A run naming `bundle/` and `tests/`, with `src/` registered as a sibling source folder because it
+carries the same app id (the original source of an app whose compiled text is `bundle/`'s), has two
+folders declaring the same objects, in different text. `[SourceSpans]` lines are numbered in the
+text that was compiled, so they must be turned into file lines with that file's own offsets.
+`Build` kept the LAST root's mapping of an object, and the sibling roots come after the execution
+roots, so `src/` replaced `bundle/`: the report named `src/`, and a later object in a file got
+`src/`'s offset for lines numbered in `bundle/`'s text, which shifted it by the difference in length
+of the objects before it. The first object of a file has offset 0 in both, so only its filename was
+wrong.
+
+`RootsWithParsedSourceDependencies` now records which roots were the execution roots
+(`CoverageRoots.ExecutionRoots`), and `Build` does not let a non-execution root replace an object
+an execution root declared. A sibling still supplies an object no execution root declares (#3965),
+and a package's root is still replaced by an execution root, as before. Pinned by
+`CoverageSiblingSourceBesideExecutionRootTests` (the map in process, and the issue's layout through
+the CLI, cold and warm against one cache root). `--server` and the DAP launch build the map through
+the same function.
+
 ## The resolution chain
 
 `AlCoverageTracker.ResolveScopeInfo` asks four questions in order, and any one of them ends the
