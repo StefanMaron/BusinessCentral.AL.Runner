@@ -255,9 +255,11 @@ internal static partial class ProgramSupport
         // suite on each branch: a suite's own sub-directories are part of that suite,
         // never separate buckets.
         bool found = false;
+        _fallbackContainers.TryGetValue(NormalizeContainerKey(root), out var servedAsOwnApps);
         foreach (var d in EnumerateSuitesBelow(root))
         {
             found = true;
+            if (servedAsOwnApps != null && servedAsOwnApps.Contains(d)) continue;
             yield return d;
         }
 
@@ -306,9 +308,12 @@ internal static partial class ProgramSupport
     /// narrowing (#4096) — as the CLI's per-app.json AppGroups do (#5107). RunBundleForServer
     /// compiles a source path as one module; given a container it merged every app into a module
     /// with no identity, where nothing is narrowed and earlier requests' modules collide.
-    /// Left as given: a path that is itself an app, one inside an app, and any container holding a
-    /// suite with no app.json or an unreadable one (the CLI merges those into one fallback module;
-    /// see #5119).
+    /// A container that also holds suites with no readable app.json (#5119) splits as BuildAppGroups
+    /// does: each identified suite becomes its own path, and the container path itself stays, last,
+    /// as the fallback module of the remaining suites — <see cref="EnumerateSuites"/> leaves the
+    /// identified ones out of it for as long as the container is registered in
+    /// <see cref="_fallbackContainers"/>. Left as given: a path that is itself an app, one inside
+    /// an app, and a container with no identified suite.
     /// </summary>
     internal static string[] ExpandAppContainerRoots(string[] sourcePaths)
     {
@@ -320,15 +325,40 @@ internal static partial class ProgramSupport
                 expanded.Add(path);
                 continue;
             }
-            var suites = EnumerateSuitesBelow(path).ToList();
-            // An app.json with no readable identity is an orphan suite to BuildAppGroups, which
-            // merges it into the fallback module; such a container stays as given (#5119).
-            if (suites.Count == 0 || !suites.All(s => File.Exists(Path.Combine(s, "app.json"))
-                    && AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(Path.Combine(s, "app.json")) != null))
+            var key = NormalizeContainerKey(path);
+            var identified = new List<string>();
+            var orphans = 0;
+            foreach (var s in EnumerateSuitesBelow(path))
+            {
+                var appJson = Path.Combine(s, "app.json");
+                // An app.json with no readable identity is an orphan suite to BuildAppGroups.
+                if (File.Exists(appJson) && AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJson) != null)
+                    identified.Add(s);
+                else
+                    orphans++;
+            }
+            // Recomputed on every call, so a container edited between requests never keeps a stale split.
+            _fallbackContainers.TryRemove(key, out _);
+            if (identified.Count == 0)
+            {
                 expanded.Add(path);
-            else
-                expanded.AddRange(suites);
+                continue;
+            }
+            expanded.AddRange(identified);
+            if (orphans > 0)
+            {
+                _fallbackContainers[key] = new HashSet<string>(identified, StringComparer.Ordinal);
+                expanded.Add(path);
+            }
         }
         return expanded.ToArray();
     }
+
+    // Containers a --server request split (ExpandAppContainerRoots) -> the identified suites that
+    // are served as their own bundles. Only the server's expansion fills it; the CLI never does.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, HashSet<string>> _fallbackContainers
+        = new(StringComparer.Ordinal);
+
+    private static string NormalizeContainerKey(string path)
+        => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
 }

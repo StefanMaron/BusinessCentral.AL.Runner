@@ -484,6 +484,8 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (92.4s) scaled by the
             // local after/before ratio (18.2s/64.2s). An estimate until a CI leg measures it.
             ["ServerBundleInstallBaselineReuseTests"] = 26,
+            // #5119: measured 76.0s on the BC 28.5.54151.55580 leg of run 36915465977.
+            ["ServerMixedContainerSplitTests"] = 76,
             // #5059/#5069: added by PR #5066, six server starts and fourteen requests; 59s locally.
             // An estimate until a CI leg measures it: replace with the observed maximum.
             // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (140.7s) scaled by the

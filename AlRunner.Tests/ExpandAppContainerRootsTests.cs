@@ -69,27 +69,44 @@ public sealed class ExpandAppContainerRootsTests : IDisposable
     }
 
     [Fact]
-    public void ContainerWithASuiteThatHasNoAppJson_IsLeftAsGiven()
+    public void ContainerWithASuiteThatHasNoAppJson_SplitsAsTheCliDoes()
     {
-        App("mixed", "with-manifest");
+        var withManifest = App("mixed", "with-manifest");
         Touch(Path.Combine(_root, "mixed", "split-suite", "src", "B.Codeunit.al"), "codeunit 50101 B { }");
         var mixed = Path.Combine(_root, "mixed");
 
-        Assert.Equal(new[] { mixed }, ProgramSupport.ExpandAppContainerRoots(new[] { mixed }));
+        // The app on its own, then the container as the fallback module of what is left (#5119).
+        Assert.Equal(new[] { withManifest, mixed }, ProgramSupport.ExpandAppContainerRoots(new[] { mixed }));
+        // ...and that fallback no longer enumerates the app, so it is not compiled twice.
+        Assert.Equal(new[] { Path.GetFullPath(Path.Combine(mixed, "split-suite")) }, ProgramSupport.EnumerateSuites(mixed));
+    }
+
+    [Fact]
+    public void ContainerThatStopsBeingMixed_EnumeratesEverySuiteAgain()
+    {
+        App("shifting", "with-manifest");
+        Touch(Path.Combine(_root, "shifting", "split-suite", "src", "B.Codeunit.al"), "codeunit 50101 B { }");
+        var shifting = Path.Combine(_root, "shifting");
+        ProgramSupport.ExpandAppContainerRoots(new[] { shifting });
+        Directory.Delete(Path.Combine(shifting, "split-suite"), recursive: true);
+
+        ProgramSupport.ExpandAppContainerRoots(new[] { shifting });
+
+        Assert.Single(ProgramSupport.EnumerateSuites(shifting));
     }
 
     /// <summary>The CLI's BuildAppGroups reads a suite whose app.json yields no identity as an
-    /// orphan and compiles it in the fallback module; splitting it into its own server bundle made
-    /// its dependency read throw, and the request ran nothing (AlOutputCacheDoNotCacheTests).</summary>
+    /// orphan and compiles it in the fallback module (AlOutputCacheDoNotCacheTests): the bad suite
+    /// stays in the container's fallback module, the good app is its own path.</summary>
     [Fact]
-    public void ContainerWithAnUnreadableAppJson_IsLeftAsGiven()
+    public void ContainerWithAnUnreadableAppJson_SplitsAsTheCliDoes()
     {
-        App("broken", "good-app");
+        var good = App("broken", "good-app");
         Touch(Path.Combine(_root, "broken", "bad-app", "app.json"), """{ "id": "not valid json """);
         Touch(Path.Combine(_root, "broken", "bad-app", "B.Codeunit.al"), "codeunit 50103 B { }");
         var broken = Path.Combine(_root, "broken");
 
-        Assert.Equal(new[] { broken }, ProgramSupport.ExpandAppContainerRoots(new[] { broken }));
+        Assert.Equal(new[] { good, broken }, ProgramSupport.ExpandAppContainerRoots(new[] { broken }));
     }
 
     [Fact]
