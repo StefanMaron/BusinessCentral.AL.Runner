@@ -108,13 +108,9 @@ public sealed class PlatformFloorFixtureGuardTests
         ["Fixtures/EventSubscriptionMultiBundle/AppA/app.json"] = "AL reads the System tables Event Subscription and AllObj",
         ["Fixtures/EventSubscriptionMultiBundle/AppB/app.json"] = "AL reads the System tables Event Subscription and AllObj",
         ["Fixtures/SessionUserRowAlreadyPresent/dep/app.json"] = "AL reads the System table User and the session identity",
-        ["Fixtures/SessionUserRowAlreadyPresent/main/app.json"] = "AL reads the System table User and the session identity",
         ["Fixtures/SessionUserRowNameCollision/dep/app.json"] = "AL reads the System tables User and User Property",
-        ["Fixtures/SessionUserRowNameCollision/main/app.json"] = "AL reads the System tables User and User Property",
         ["Fixtures/InstallTriggerSessionIdentity/dep/app.json"] = "AL reads the System tables User and Access Control",
-        ["Fixtures/InstallTriggerSessionIdentity/main/app.json"] = "AL reads the session identity the install trigger keys on (System User and Access Control)",
         ["Fixtures/DepInstallTriggerSessionIdentity/dep/app.json"] = "AL reads the System tables User, Access Control, Company and NAV App Installed App",
-        ["Fixtures/DepInstallTriggerSessionIdentity/main/app.json"] = "depends on the dep fixture that reads System tables; both bundles are one install closure",
         ["Fixtures/BundleInstallTriggerSeedVisibility/main/app.json"] = "AL reads the System tables Access Control, Company and Published Application",
     };
 
@@ -134,7 +130,7 @@ public sealed class PlatformFloorFixtureGuardTests
         ["PlaceholderFloorProvisioningTests.cs"] = "the floor is the subject: the placeholder 1.0.0.0 floor",
         ["NestedBundleManifestDiscoveryTests.cs"] = "the floor is a parameter of the test: one app declares a future 999.0.0.0 floor",
         ["PhaseLogIntegrationTests.cs"] = "its platformRoots parameter toggles the floor on purpose, to see the phase log with and without it",
-        ["ServerAffectedSelectionUnrecordedStateTests.cs"] = "the test-runner variant needs the 27.0.0.0 floor and a second test bumps the floor as the edit under test",
+        ["ServerAffectedSelectionUnrecordedStateTests.cs"] = "the bundles that load the Test Runner app need the 27.0.0.0 floor; the other bundles pass without it, so both writers emit it only for those",
 
         // Measured: fails without the floor because the AL needs System symbols.
         ["AllObjPopulateCostTests.cs"] = "the WriteFixture manifest's AL reads the System virtual tables AllObj and AllObjWithCaption, and its server-mode test returns no events without the floor (" + Measured + "); the file's other two manifests pass without it",
@@ -173,7 +169,7 @@ public sealed class PlatformFloorFixtureGuardTests
         ["BaseAppFloorFixtureGuardTests.cs"] = 4,
         ["CoverageMultiObjectFileTests.cs"] = 2,
         ["InstallSeedClosure.cs"] = 2,
-        ["ServerAffectedSelectionUnrecordedStateTests.cs"] = 4,
+        ["ServerAffectedSelectionUnrecordedStateTests.cs"] = 2,
     };
 
     [Fact]
