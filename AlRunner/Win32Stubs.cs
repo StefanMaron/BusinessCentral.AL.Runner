@@ -100,11 +100,25 @@ internal static class Win32Stubs
 
     private static void TryRegister(Assembly asm)
     {
-        var n = asm.GetName().Name ?? "";
-        if (!n.Contains("Nav.")) return;
+        if (!IsBcAssemblyName(asm.GetName().Name ?? "")) return;
         try { NativeLibrary.SetDllImportResolver(asm, Resolver); }
         catch (InvalidOperationException) { /* already registered */ }
     }
+
+    /// <summary>
+    /// Which assemblies get the resolver: BC's own vendor namespaces (<c>Microsoft.Dynamics.*</c> — Nav,
+    /// Framework.UI, … — and <c>Microsoft.BusinessCentral.*</c>), plus the legacy "Nav." substring.
+    /// Claim: only these import the Win32 libraries in <see cref="_libs"/> on a path an in-scope test
+    /// can reach (#3803: Framework.UI's KeyboardMapper imports user32); the resolver itself returns
+    /// "not mine" for every other library, so widening cannot redirect a non-Win32 import.
+    /// TRAP: a non-matching assembly is a SILENT no-op — nothing reports that no resolver was
+    /// installed, and the failure surfaces later as a DllNotFoundException deep in Microsoft's code.
+    /// When one appears for a BC assembly, widen this predicate rather than debugging the stack.
+    /// </summary>
+    internal static bool IsBcAssemblyName(string name) =>
+        name.StartsWith("Microsoft.Dynamics.", StringComparison.OrdinalIgnoreCase)
+        || name.StartsWith("Microsoft.BusinessCentral.", StringComparison.OrdinalIgnoreCase)
+        || name.Contains("Nav.");
 
     private static IntPtr Resolver(string library, Assembly asm, DllImportSearchPath? sp)
     {
