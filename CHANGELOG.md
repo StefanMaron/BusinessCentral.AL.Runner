@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **jobs:** free memory limits shared-bundle workers, measured floor, abort/resume/--per-suite tests
 - **jobs:** workers sharing a heavy bundle claim its test codeunits first come, first served
 - **server:** runTests request fields for the CLI flags tests pass
 - **server:** mark the end of each request on stderr
