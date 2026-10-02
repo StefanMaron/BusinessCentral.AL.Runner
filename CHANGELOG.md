@@ -20,6 +20,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **compiler:** name a missing .NET reference pack up front and as the cause of AL0185 DotNet drops
 - **resolver:** bundle-declared TableRelation/CalcFormula names resolve by namespace and usings
 - **dap:** source-less frame reports line/column 0; scopes hand out positive variablesReference
 - **win32:** install the P/Invoke resolver on Microsoft.Dynamics.Framework.UI too
