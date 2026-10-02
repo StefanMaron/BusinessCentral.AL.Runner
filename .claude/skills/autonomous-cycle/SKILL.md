@@ -300,8 +300,6 @@ drifted since.
 
 ## Pin the model on every dispatch
 
-Each role runs at a set model and reasoning effort (owner decision, #5211):
-
 | role | model | effort |
 |---|---|---|
 | this loop (the main session) | sonnet | high: set with `/model` and `/effort` before `/loop` |
@@ -311,20 +309,14 @@ Each role runs at a set model and reasoning effort (owner decision, #5211):
 | `orchestrator` | sonnet | low |
 | a one-off diagnosis dispatched as `general-purpose` | opus | the session's |
 
-The agent frontmatter carries both, but **pass `model` explicitly on every dispatch anyway,
-matching the table**: a per-dispatch model overrides the frontmatter, so a stale instruction to
-pass something else wins without anything saying so. Effort has no per-dispatch parameter; it
-comes from the frontmatter, and an agent without one inherits the session's.
+**Pass `model` explicitly on every dispatch, matching the table.** A per-dispatch model overrides
+the agent's frontmatter, so a stale instruction to pass something else wins silently. Effort comes
+from the frontmatter; an agent without one inherits the session's.
 
-The basis is the 2026-10-01 trial: six Sonnet implementation PRs (#5172 to #5194) passed Opus
-review with roughly a quarter fewer tokens per PR, and their one weak spot, test design, was
-caught in review every time.
+**Trap: the Opus reviewer is what makes Sonnet safe everywhere else.** Never move it down to save
+tokens.
 
-**Trap: the Opus reviewer is what makes Sonnet safe everywhere else.** Never move it down to
-save tokens; a weaker review lets a test that proves nothing reach `main`.
-
-If you cannot confirm what the running model is, say so in the cycle's report rather than
-assuming the pin took.
+If you cannot confirm what the running model is, say so in the cycle's report.
 
 ## The box profile
 

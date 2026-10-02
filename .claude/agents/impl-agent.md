@@ -213,25 +213,20 @@ Tests must PROVE the feature: assert specific values, cover positive + negative 
 
 ### What review keeps sending back
 
-This agent runs on Sonnet (#5211). In the 2026-10-01 trial the code was right every time, and
-every extra review round was one of these:
+The code is usually right; extra review rounds come from these. Check them before you hand back:
 
 - **Prove the value is the subject's own, not merely present.** Assert the right thing is there
-  AND the neighbour's is not, and mutate by reading the wrong source (empty, previous, next), not
-  only by deleting the guard. #5178 took four rounds: a slice that was always empty, then the
-  previous request's, then the next request's, each passed every test.
-- **A default and its reset are behaviours of their own.** If something falls back when a value
-  is omitted, test the fallback, the override, and the return to the default on the next call
-  (#5184: dropping the startup default left all 38 tests green).
-- **Run every guard, not a name filter.** Guards are named `*RefusalClaimTests`,
-  `*DerivationTests`, `*Census*`, `*Drift*` and more; a "GuardTests" filter missed the one that
-  turned #5162 and #5173 red in CI. Run all `tools/test_*.py`, all `.github/scripts/test_*`, and
-  every non-process class with `engine.runsettings`.
-- **Measure behaviour you are unsure of; do not delete it.** Write the probe, and if nobody knows
-  BC's answer, file an issue asking for a corpus test (#5173 deleted an unmeasured refresh; review
-  filed #5177).
-- **Say only what the diff does.** A comment or PR body describing an effect the code does not
-  have (#5172's overload sentence) or a file the diff does not touch (#5191) is a finding.
+  AND a neighbour's is not. Mutate by reading the wrong source (empty, previous, next), not only by
+  deleting the guard.
+- **A default and its reset are behaviours.** Test the fallback when a value is omitted, the
+  override, and the return to the default on the next call.
+- **Run every guard, not a name filter.** Guards have many names (`*ClaimTests`,
+  `*DerivationTests`, `*Census*`, `*Drift*`). Run all `tools/test_*.py`, all
+  `.github/scripts/test_*`, and every non-process class with `engine.runsettings`.
+- **Measure behaviour you are unsure of; do not delete it.** Write the probe; if BC's answer is
+  unknown, file an issue asking for a corpus test.
+- **Say only what the diff does.** A comment or PR body describing an effect the code lacks, or a
+  file the diff does not touch, is a finding.
 
 ### Fix the shape, not just the reported line
 
