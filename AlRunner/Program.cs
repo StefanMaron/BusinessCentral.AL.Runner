@@ -3497,6 +3497,7 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
         // #5238: held from a cache MISS to the publish below, so `--jobs` workers sharing this
         // bundle compile it once between them. Null when nothing was missed or nothing is cached.
         AlRunner.Infrastructure.CacheCompileLock? compileGate = null;
+        string uncacheableMarker = "";
         // A bundle declaring an AL query also needs its query-symbols sidecar: the MetaQuery
         // design is built from the compilation's SymbolReference, which only emit produces.
         // Serving a HIT without it leaves NCLMetaQuery null and every query Find NREs inside
@@ -3548,6 +3549,7 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
             cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
             sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
             querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
+            uncacheableMarker = AlRunner.Infrastructure.UncacheableCompile.MarkerPath(alCacheDir, cacheKey);
             void ReadCompleteEntry(bool reportIncomplete)
             {
                 if (AlRunner.Infrastructure.AlCacheSidecars.IsCompleteEntry(
@@ -3579,15 +3581,22 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
             // #5238: a MISS is a compile. Take the key's lock so a process compiling it right now
             // is waited for, then read the entry again: it is a HIT when that process finished.
             // --print-cache-key compiles nothing, so it never waits.
-            if (cachedBytes == null && !printCacheKeyOnly)
+            // A key whose compile publishes nothing (UncacheableCompile) has nothing to wait for.
+            if (cachedBytes == null && !printCacheKeyOnly
+                && !AlRunner.Infrastructure.UncacheableCompile.Exists(uncacheableMarker))
             {
                 void Say(string line) => Console.Error.WriteLine(line);
                 var gateWait = AlRunner.Infrastructure.CacheCompileLock.MaxWaitFromEnvironment(Say);
                 var gateWhat = $"{moduleName} ({rel})";
                 // Among the workers of a shared bundle, one takes the whole compile phase.
                 if (compilePhase != null && compilePhase.EnterToCompile(gateWhat, gateWait, Say))
+                {
                     ReadCompleteEntry(reportIncomplete: false);
-                if (cachedBytes == null)
+                    // The holder found out while this worker waited that it cannot publish this key.
+                    if (cachedBytes == null && AlRunner.Infrastructure.UncacheableCompile.Exists(uncacheableMarker))
+                        compilePhase.ReleaseUnproductive();
+                }
+                if (cachedBytes == null && !AlRunner.Infrastructure.UncacheableCompile.Exists(uncacheableMarker))
                 {
                     compileGate = AlRunner.Infrastructure.CacheCompileLock.Acquire(
                         Path.Combine(alCacheDir, cacheKey + ".compile.lock"), gateWhat, gateWait, Say);
@@ -3671,6 +3680,10 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
             // Released when this block ends, after the publish below, and on any exception.
             using var compileGateScope = compileGate;
             compilePhase?.NoteCompiling();
+            // Gives the locks up and leaves the marker unless this compile publishes the entry.
+            using var cacheOutcome = cacheKey != null && alCacheDir != null
+                ? new AlRunner.Infrastructure.UncacheableCompile(uncacheableMarker, compileGate, compilePhase)
+                : null;
             // cacheKey == null with alCacheDir set is #2954's do-not-cache path: there is no key
             // to miss against, and counting it as a MISS would put it in the same bucket as a
             // cold entry that the next run will HIT. It never will — nothing was written.
@@ -4202,6 +4215,7 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                                     querySidecarPath!, tmp => File.Copy(qsrc, tmp, overwrite: true));
                             AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
                                 cachePath, tmp => File.WriteAllBytes(tmp, assemblyBytes));
+                            cacheOutcome?.Published();
                             // Issue #2239: same category as [cache] HIT/MISS above — cache
                             // population detail, not a result. Observed printing
                             // unconditionally on every cold run while verifying that fix

@@ -41,6 +41,18 @@ public sealed class CacheCompileLockEndToEndTests
         }
         """;
 
+    private const string DepBrokenAl = """
+        codeunit 70980 "CCL Dep Math"
+        {
+            procedure Add(A: Integer; B: Integer): Integer
+            var
+                Missing: Codeunit "CCL Dep Does Not Exist At All";
+            begin
+                exit(Missing.Whatever(A + B));
+            end;
+        }
+        """;
+
     /// <summary>Enough test codeunits that the bundle's own Emit+Compile takes seconds, not
     /// milliseconds: the second process must still be at its bundle key check while the first is
     /// compiling, or a missing gate reads as a pass.</summary>
@@ -78,12 +90,21 @@ public sealed class CacheCompileLockEndToEndTests
 
     /// <param name="testSleepMs">Makes each test take that long, so a bundle's tests outlast the
     /// compile phase of the worker that started them.</param>
-    private static string BuildFixture(string root, int testSleepMs = 0)
+    /// <param name="codeunits">How many test codeunits the bundle declares.</param>
+    /// <param name="withUncompilableCodeunit">Adds a codeunit nothing references that cannot bind:
+    /// the bundle then compiles with that object dropped (EMIT-EXCLUDED) and is never cached.</param>
+    /// <param name="uncompilableIsATest">A test codeunit is a drop the runner judges safe: the
+    /// survivors still run and their module is refused by the cache. A plain codeunit may be called
+    /// by a survivor, so the module is not run at all.</param>
+    /// <param name="brokenDependency">The source dependency cannot bind at all, so its compile
+    /// throws and nothing is published for it.</param>
+    private static string BuildFixture(string root, int testSleepMs = 0, int codeunits = BundleCodeunits,
+        bool withUncompilableCodeunit = false, bool uncompilableIsATest = false, bool brokenDependency = false)
     {
         var main = Path.Combine(root, "main");
         var packages = Path.Combine(main, ".alpackages");
         Directory.CreateDirectory(packages);
-        for (var i = 0; i < BundleCodeunits; i++)
+        for (var i = 0; i < codeunits; i++)
             File.WriteAllText(Path.Combine(main, $"CclMainTests{i}.Codeunit.al"), MainTestAl(i, testSleepMs));
         File.WriteAllText(Path.Combine(main, "app.json"), $$"""
             {
@@ -101,14 +122,29 @@ public sealed class CacheCompileLockEndToEndTests
               "features": []
             }
             """);
-        File.WriteAllBytes(Path.Combine(packages, "AL_Runner_Fixtures_CCL_Source_Dep_1.0.0.0.app"), BuildSourceOnlyApp());
+        if (withUncompilableCodeunit)
+            File.WriteAllText(Path.Combine(main, "CclBroken.Codeunit.al"), $$"""
+                codeunit 70979 "CCL Broken"
+                {
+                    {{(uncompilableIsATest ? "Subtype = Test;" : "")}}
+
+                    {{(uncompilableIsATest ? "[Test]" : "")}}
+                    procedure Triple()
+                    var
+                        Missing: Codeunit "CCL This Codeunit Does Not Exist At All";
+                    begin
+                        Missing.Whatever(3);
+                    end;
+                }
+                """);
+        File.WriteAllBytes(Path.Combine(packages, "AL_Runner_Fixtures_CCL_Source_Dep_1.0.0.0.app"), BuildSourceOnlyApp(brokenDependency));
         return main;
     }
 
     /// <summary>NAVX container (magic, header length, version, app id, payload length, magic) over
     /// a zip of the manifest and one .al file; no SymbolReference.json, which is what sends the
     /// loader down the source-compile tier.</summary>
-    private static byte[] BuildSourceOnlyApp()
+    private static byte[] BuildSourceOnlyApp(bool broken)
     {
         var manifest = $"""
             <?xml version="1.0" encoding="utf-8"?>
@@ -127,7 +163,7 @@ public sealed class CacheCompileLockEndToEndTests
                 w.Write(content);
             }
             Add("NavxManifest.xml", manifest);
-            Add("src/DepMath.Codeunit.al", DepAl);
+            Add("src/DepMath.Codeunit.al", broken ? DepBrokenAl : DepAl);
         }
         var payload = zipBuffer.ToArray();
         using var app = new MemoryStream();
@@ -361,6 +397,173 @@ public sealed class CacheCompileLockEndToEndTests
                 phaseLock.Dispose();
                 if (!worker.Process.HasExited) { try { worker.Process.Kill(true); } catch { } }
             }
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// The arm the usual real case takes: the dependencies are warm and only the BUNDLE is cold (the
+    /// code was edited and the run repeated), so a worker's first miss is the bundle itself and
+    /// nothing but the re-read after the phase wait stands between it and a second compile. The
+    /// other tests miss a dependency first, which re-reads and hands the phase on before the
+    /// bundle is reached.
+    /// </summary>
+    [SkippableFact]
+    public void WarmDependenciesColdBundle_JobsWorkersCompileTheBundleOnce()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = TestScratch.FlatDir("al-runner-cache-phase-bundle-");
+        Directory.CreateDirectory(root);
+        try
+        {
+            const int Units = 12;
+            var bundle = BuildFixture(root, codeunits: Units);
+            var cacheDir = Path.Combine(root, "cache");
+            Directory.CreateDirectory(cacheDir);
+
+            // Warm the dependency (and the bundle as it is now), then change the bundle: a new key.
+            var (warmOut, warmExit) = Finish(Start(bundle, cacheDir));
+            Assert.True(warmExit == 0, $"warming run exited {warmExit}:\n{warmOut}");
+            File.AppendAllText(Path.Combine(bundle, "CclMainTests0.Codeunit.al"), "\n// edited\n");
+
+            var run = Start(bundle, cacheDir, " --jobs 2",
+                new Dictionary<string, string> { ["AL_RUNNER_JOBS_SPLIT_MIN_FILES"] = "1" });
+            var (output, exit) = Finish(run);
+            Assert.True(exit == 0, $"exit {exit}:\n{output}");
+            Assert.Contains($"Tests: {2 * Units}   passed {2 * Units}", run.Stdout.ToString(), StringComparison.Ordinal);
+
+            Assert.Equal(0, Count(output, "[deps] source-cache WROTE:"));
+            Assert.Equal(2, Count(output, "[deps] source-cache HIT:"));
+            var miss = Count(output, "[cache] MISS key=");
+            var hit = Count(output, "[cache] HIT  key=");
+            Assert.True(miss == 1 && hit == 1,
+                $"expected the bundle compiled once and read once, saw {miss} MISS(es) + {hit} HIT(s):\n{output}");
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// A bundle that can never be cached (a dropped object keeps it out of the cache) must not make
+    /// the workers wait for each other: the waiting would be for an entry that is never written, and
+    /// each worker would then compile after the others, on every run. The first compile leaves a
+    /// marker; a worker that finds it compiles at once. The test is the holder of the compile phase
+    /// for the second run, so a worker that waited for it would never finish.
+    /// </summary>
+    [SkippableTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ABundleThatCannotBeCached_IsNotWaitedFor(bool droppedObjectIsATest)
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = TestScratch.FlatDir("al-runner-cache-uncacheable-");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var bundle = BuildFixture(root, codeunits: 4, withUncompilableCodeunit: true,
+                uncompilableIsATest: droppedObjectIsATest);
+            var cacheDir = Path.Combine(root, "cache");
+            var claimDir = Path.Combine(root, "claims");
+            Directory.CreateDirectory(cacheDir);
+            Directory.CreateDirectory(claimDir);
+            var env = new Dictionary<string, string>
+            {
+                [AlRunner.Infrastructure.UnitClaimQueue.DirEnvVar] = claimDir,
+                [AlRunner.Infrastructure.UnitClaimQueue.BundlesEnvVar] = bundle,
+            };
+
+            // First run: compiles with the object dropped, publishes nothing, leaves the marker.
+            var (first, _) = Finish(Start(bundle, cacheDir, "", env));
+            Assert.Contains("EMIT-EXCLUDED", first, StringComparison.Ordinal);
+            // The two shapes of "never cached": survivors ran (a test was dropped), or nothing ran.
+            Assert.Contains(droppedObjectIsATest ? "reported as SKIPPED" : "The module was NOT run", first,
+                StringComparison.Ordinal);
+            Assert.Equal(1, Count(first, "[cache] MISS key="));
+            var markers = Directory.GetFiles(cacheDir, "*" + AlRunner.Infrastructure.UncacheableCompile.Suffix);
+            Assert.True(markers.Length == 1, $"expected one {AlRunner.Infrastructure.UncacheableCompile.Suffix} marker, saw {markers.Length}:\n{first}");
+            Assert.Empty(Directory.GetFiles(cacheDir, "*.dll"));
+
+            // Second run, with the phase held by someone else: nothing to wait for, so it finishes.
+            Directory.Delete(claimDir, recursive: true);
+            Directory.CreateDirectory(claimDir);
+            var queue = new AlRunner.Infrastructure.UnitClaimQueue(claimDir, bundle);
+            using var phaseLock = AlRunner.Infrastructure.CacheCompileLock.Acquire(
+                queue.CompilePhaseLockPath, "the phase", TimeSpan.FromSeconds(5), _ => { });
+            Assert.True(phaseLock.HoldsLock);
+
+            var worker = Start(bundle, cacheDir, "", env);
+            if (!worker.Process.WaitForExit(90_000))
+            {
+                try { worker.Process.Kill(true); } catch { }
+                string text; lock (worker.Output) text = worker.Output.ToString();
+                Assert.Fail($"the worker waited for the compile phase of a bundle that is never cached:\n{text}");
+            }
+            worker.Process.WaitForExit();
+            string second; lock (worker.Output) second = worker.Output.ToString();
+            Assert.Equal(1, Count(second, "[cache] MISS key="));
+            Assert.DoesNotContain("another process is compiling", second, StringComparison.Ordinal);
+            Assert.Contains("EMIT-EXCLUDED", second, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    /// <summary>The dependency half of the same rule: a source dependency whose compile throws (a
+    /// Microsoft one is swallowed upstream and the run goes on) publishes nothing either, so the
+    /// workers behind the first must not queue for it.</summary>
+    [SkippableFact]
+    public void ADependencyThatCannotBeCompiled_IsNotWaitedFor()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = TestScratch.FlatDir("al-runner-cache-uncacheable-dep-");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var bundle = BuildFixture(root, codeunits: 2, brokenDependency: true);
+            var cacheDir = Path.Combine(root, "cache");
+            var claimDir = Path.Combine(root, "claims");
+            Directory.CreateDirectory(cacheDir);
+            Directory.CreateDirectory(claimDir);
+            var env = new Dictionary<string, string>
+            {
+                [AlRunner.Infrastructure.UnitClaimQueue.DirEnvVar] = claimDir,
+                [AlRunner.Infrastructure.UnitClaimQueue.BundlesEnvVar] = bundle,
+            };
+
+            var (first, _) = Finish(Start(bundle, cacheDir, "", env));
+            Assert.Contains("EMIT-ZERO", first, StringComparison.Ordinal);
+            var markers = Directory.GetFiles(cacheDir, "*" + AlRunner.Infrastructure.UncacheableCompile.Suffix,
+                SearchOption.AllDirectories);
+            Assert.True(markers.Length == 1, $"expected one marker for the dependency, saw {markers.Length}:\n{first}");
+
+            Directory.Delete(claimDir, recursive: true);
+            Directory.CreateDirectory(claimDir);
+            var queue = new AlRunner.Infrastructure.UnitClaimQueue(claimDir, bundle);
+            using var phaseLock = AlRunner.Infrastructure.CacheCompileLock.Acquire(
+                queue.CompilePhaseLockPath, "the phase", TimeSpan.FromSeconds(5), _ => { });
+            Assert.True(phaseLock.HoldsLock);
+
+            var worker = Start(bundle, cacheDir, "", env);
+            if (!worker.Process.WaitForExit(90_000))
+            {
+                try { worker.Process.Kill(true); } catch { }
+                string text; lock (worker.Output) text = worker.Output.ToString();
+                Assert.Fail($"the worker waited for the compile phase of a dependency that is never cached:\n{text}");
+            }
+            worker.Process.WaitForExit();
+            string second; lock (worker.Output) second = worker.Output.ToString();
+            Assert.Contains("EMIT-ZERO", second, StringComparison.Ordinal);
+            Assert.DoesNotContain("another process is compiling", second, StringComparison.Ordinal);
         }
         finally
         {

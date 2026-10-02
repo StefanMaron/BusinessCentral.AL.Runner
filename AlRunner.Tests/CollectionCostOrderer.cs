@@ -214,6 +214,10 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // --per-suite, two memory-limited plans and an unusable override). 68s locally for the
             // class, rounded down; a LOCAL value, to be re-recorded from the first CI leg's weight step.
             ["JobsSharedBundleEndToEndTests"] = 68,
+            // #5238: seven tests, each spawning one to three real runners on a cold cache. 53s to 71s locally
+            // for the class (the box's load), recorded at the higher; a LOCAL value, to be re-recorded
+            // from the first CI leg's weight step.
+            ["CacheCompileLockEndToEndTests"] = 71,
             // #4813: 8 tests, each spawning a runner subprocess on a bundle that source-compiles
             // Microsoft's Test Runner app or stand-ins for it. Absent from this table on its
             // first CI run (36294813041): 180.2s on both the BC 27.5 and 28.5 legs, rounded down.

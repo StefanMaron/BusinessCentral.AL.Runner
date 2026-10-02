@@ -189,7 +189,11 @@ Both are OS file locks: a killed holder frees them with its process, so there is
 only a live holder that is slow. The wait is bounded (`AL_RUNNER_CACHE_LOCK_WAIT_SEC`, default
 1800, longer than the 301 s of wall #5238 recorded for the largest cold compile, Tests-ERM); on expiry the waiter says so
 and compiles in its own process, which is the behaviour before the locks: slower, never wrong. A
-lock file that cannot be taken for any other reason is named and compiled around, not read as "free".
+lock file that cannot be taken for any other reason is named and compiled around, not read as "free",
+with one case that is not: on Unix .NET reports a conflict only for `EWOULDBLOCK`, so a filesystem that
+refuses `flock`, or `DOTNET_SYSTEM_IO_DISABLEFILELOCKING`, would give every process the lock without a
+message, which is the behaviour before the locks (correct, not cheaper). That is a reading of .NET's
+`SafeFileHandle.Unix.cs` by the reviewer of #5248, not something measured here.
 A wait of more than 5 s prints one line saying what it is waiting for. The lock files are never
 deleted (unlinking one another process already opened lets a third lock a different file).
 
@@ -212,8 +216,23 @@ trivial tests, no `--test-data`), three runs each, alternating base and new: `--
 776 to 786 MB after. The warm run of that bundle against the cache the cold one wrote: 2.8 s, no
 compile, both workers read the entry, 90 of 90 passed in both.
 
-Not covered, and measured as still duplicated: the install baseline (`[InstallBaselineDisk] wrote`)
-is written by each worker on a cold cache. The cost of that was not measured.
+**A key that publishes nothing is not waited for.** An EMIT-EXCLUDED bundle (a dropped object keeps
+the module out of the cache), a failed compile and a dependency whose source compile throws leave no
+entry, so waiting for the holder would only queue the workers to compile the same thing one after
+another, on every run. Such a compile (`UncacheableCompile`) gives both locks up when it ends and
+leaves `<key>.uncacheable` beside where the entry would be; a process that sees the marker compiles
+without waiting, and a later compile that does publish the key removes it. It is a hint about cost
+only: it skips the locks and nothing else, and a stale one costs the locks and nothing else. The
+FIRST run is still serial, because the workers are already waiting when the holder finds out. A
+45-file synthetic bundle with one uncompilable test codeunit, `--jobs 2`, three runs each at a load
+of 4 to 5 (base / the first push of #5248 / with the marker): cold 18.1 to 21.0 s / 22.8 to 24.2 s /
+23.9 to 25.2 s; warm 11.2 to 12.0 s / 16.2 to 17.7 s / 10.0 to 11.4 s. Cold, CPU and peak memory stay
+below base; warm they match it.
+
+Not covered, and found still duplicated: the install baseline (`[InstallBaselineDisk] wrote`) is
+written by each worker on a cold cache (#5252, cost not measured). A holder that drops
+`NoteCompiling` in `LoadOne` is not caught by any test either: it would hand the phase on after a
+hit on a key an unrelated process compiled, costing time and never correctness.
 
 ## Speed and correctness on a large bucket
 

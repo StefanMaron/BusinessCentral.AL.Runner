@@ -149,4 +149,26 @@ public sealed class CompilePhaseTests : IDisposable
         Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"asked again and waited {clock.Elapsed}");
         Assert.Single(said);
     }
+
+    /// <summary>A holder whose compile publishes nothing frees the phase at once, and does not take it
+    /// again: the workers behind it compile side by side instead of queueing for a cache entry that
+    /// is never written.</summary>
+    [Fact]
+    public void AnUnproductiveHolder_FreesThePhase_AndDoesNotTakeItAgain()
+    {
+        var leader = CompilePhase.Open(_queue)!;
+        leader.EnterToCompile("dep A", Long, _ => { });
+        leader.NoteCompiling();
+
+        leader.ReleaseUnproductive();
+
+        Assert.False(leader.Holds, "the phase was still held after the compile gave it up");
+        var next = Another();
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        Assert.False(next.EnterToCompile("dep A", Long, _ => { }));
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(10));
+        Assert.True(next.Holds, "the next worker could not take a phase that was given up");
+        Assert.False(leader.EnterToCompile("dep B", Long, _ => { }), "the giver-up took the phase again");
+        Assert.False(leader.Holds);
+    }
 }

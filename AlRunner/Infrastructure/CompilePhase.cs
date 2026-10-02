@@ -1,11 +1,9 @@
 // CompilePhase — among the `--jobs` workers of one shared bundle, one process does ALL the
 // compiling (#5238).
 //
-// CacheCompileLock stops two processes compiling the SAME key, but not the split: worker A
-// compiles the first dependency, worker B the next, and both end up with the compiler's JIT
-// footprint and working set. Measured on Tests-SMB `--jobs 2` against a fresh cache, per-key
-// locking alone took the whole run's CPU from 390 s to 295 s and left peak memory at 4.1 GB
-// (4.3 GB before), because both workers still compiled something.
+// CacheCompileLock stops two processes compiling the SAME key, but not the split: the workers
+// race for each key, so one compiles some and another the rest, and both carry the compiler's
+// footprint. Measurements: docs/jobs-unit-claiming.md § Cold cache.
 //
 // So the first worker to MISS takes this lock and keeps it until its own compile phase for the
 // bundle ends (Program.cs releases it once every app of the bundle is loaded, before any test
@@ -76,6 +74,17 @@ internal sealed class CompilePhase : IDisposable
     public void ReleaseIfNotCompiling()
     {
         if (_compiling) return;
+        var held = _held;
+        _held = null;
+        held?.Dispose();
+    }
+
+    /// <summary>This process's compile publishes nothing (UncacheableCompile): hand the phase over
+    /// now, and do not take it again in this bundle, so the workers behind it compile side by side
+    /// as they did before the phase existed rather than one after another.</summary>
+    public void ReleaseUnproductive()
+    {
+        _unusable = true;
         var held = _held;
         _held = null;
         held?.Dispose();

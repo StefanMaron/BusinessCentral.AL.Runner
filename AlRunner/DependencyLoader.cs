@@ -786,21 +786,39 @@ public sealed class DependencyLoader
         void Say(string line) => Console.Error.WriteLine(line);
         var what = $"dependency {m.Name} v{m.Version}";
         var phase = CompilePhase.Current;
-        if (phase != null && phase.EnterToCompile(what, CacheCompileLock.MaxWaitFromEnvironment(Say), Say)
-            && TryServeFromSourceCache() is { } cacheHitAfterPhase)
+        // A key whose compile publishes nothing (UncacheableCompile) has nothing to wait for.
+        var uncacheableMarker = UncacheableCompile.MarkerPath(cacheDir, cacheKey);
+        CacheCompileLock? compileGate = null;
+        if (!UncacheableCompile.Exists(uncacheableMarker))
         {
-            phase.ReleaseIfNotCompiling();
-            return cacheHitAfterPhase;
-        }
-        using var compileGate = CacheCompileLock.Acquire(
-            Path.Combine(cacheDir, cacheKey + ".compile.lock"), what,
-            CacheCompileLock.MaxWaitFromEnvironment(Say), Say);
-        if (compileGate.WaitedForSibling && TryServeFromSourceCache() is { } cacheHitAfterWait)
-        {
-            phase?.ReleaseIfNotCompiling();
-            return cacheHitAfterWait;
+            if (phase != null && phase.EnterToCompile(what, CacheCompileLock.MaxWaitFromEnvironment(Say), Say))
+            {
+                if (TryServeFromSourceCache() is { } cacheHitAfterPhase)
+                {
+                    phase.ReleaseIfNotCompiling();
+                    return cacheHitAfterPhase;
+                }
+                // The holder found out while this worker waited that it cannot publish this key.
+                if (UncacheableCompile.Exists(uncacheableMarker)) phase.ReleaseUnproductive();
+            }
+            if (!UncacheableCompile.Exists(uncacheableMarker))
+            {
+                compileGate = CacheCompileLock.Acquire(
+                    Path.Combine(cacheDir, cacheKey + ".compile.lock"), what,
+                    CacheCompileLock.MaxWaitFromEnvironment(Say), Say);
+                if (compileGate.WaitedForSibling && TryServeFromSourceCache() is { } cacheHitAfterWait)
+                {
+                    compileGate.Dispose();
+                    phase?.ReleaseIfNotCompiling();
+                    return cacheHitAfterWait;
+                }
+            }
         }
         phase?.NoteCompiling();
+        // Held to the end of the method. A compile that ends without publishing (it throws, the
+        // write fails) gives the locks up and leaves the marker.
+        using var compileGateScope = compileGate;
+        using var cacheOutcome = new UncacheableCompile(uncacheableMarker, compileGate, phase);
 
         // Per-process, NOT the machine-wide identity-only path this used to be (#2696): the
         // delete-then-rewrite below raced two runners resolving the same dependency, and one
@@ -943,6 +961,7 @@ public sealed class DependencyLoader
                 objectMetadataSidecar,
                 AlObjectMetadataRegistry.Keys.Where(k => !objectKeysBeforeEmit.Contains(k)).ToArray(),
                 emitExcludedSidecar: emitExcludedSidecar, emitExcludedReport: emitExcludedReport);
+            cacheOutcome.Published();
             Console.Error.WriteLine(
                 $"[deps] source-cache WROTE: {m.Name} v{m.Version} key={cacheKey[..12]} ({compile.AssemblyBytes!.Length} bytes, {sidecarCount} report-metadata entries, {enumSidecarCount} enum-registry entries)");
         }
