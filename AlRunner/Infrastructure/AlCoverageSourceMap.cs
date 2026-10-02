@@ -185,11 +185,16 @@ public sealed class CoverageRoots : IReadOnlyList<string>
 {
     private readonly IReadOnlyList<string> _roots;
 
-    internal CoverageRoots(IReadOnlyList<string> roots, IReadOnlyDictionary<string, string> packagedRootOfSibling)
+    internal CoverageRoots(IReadOnlyList<string> roots, IReadOnlyDictionary<string, string> packagedRootOfSibling,
+        IReadOnlyCollection<string>? executionRoots = null)
     {
         _roots = roots;
         PackagedRootOfSibling = packagedRootOfSibling;
+        ExecutionRoots = new HashSet<string>(executionRoots ?? Array.Empty<string>(), StringComparer.Ordinal);
     }
+
+    /// <summary>The roots (as listed) the caller compiled and ran. Empty when not stated.</summary>
+    internal IReadOnlySet<string> ExecutionRoots { get; }
 
     /// <summary>Sibling root (as listed) → the materialized root of the package its objects ran from.</summary>
     internal IReadOnlyDictionary<string, string> PackagedRootOfSibling { get; }
@@ -301,7 +306,8 @@ public static class AlCoverageSourceMap
             Add(dir);
             if (appId is Guid id) packagedRootByApp[id] = dir;
         }
-        foreach (var root in executionRoots) Add(root);
+        var executionListed = new List<string>();
+        foreach (var root in executionRoots) { Add(root); executionListed.Add(root); }
         // After the execution roots, so a directory that is both keeps the caller's spelling.
         var packagedRootOfSibling = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var dir in AlRunner.Patches.RecordPatches.RegisteredSourceDirs())
@@ -311,7 +317,7 @@ public static class AlCoverageSourceMap
                 && packagedRootByApp.TryGetValue(identity.AppId, out var packagedRoot))
                 packagedRootOfSibling[dir] = packagedRoot;
         }
-        return new CoverageRoots(roots, packagedRootOfSibling);
+        return new CoverageRoots(roots, packagedRootOfSibling, executionListed);
     }
 
     /// <summary>
@@ -337,8 +343,13 @@ public static class AlCoverageSourceMap
         var symbolsByAppJson = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
         var appJsonByDir = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         var packagedRootOfSibling = (roots as CoverageRoots)?.PackagedRootOfSibling;
+        var executionRoots = (roots as CoverageRoots)?.ExecutionRoots;
+        // Objects an execution root declared: what was compiled and ran. A later, non-execution
+        // root must not replace one (#5222).
+        var executionOwned = new HashSet<(string Label, int Id)>();
         foreach (var root in rootList)
         {
+            var isExecutionRoot = executionRoots?.Contains(root) == true;
             string? verifyAgainst = null;
             packagedRootOfSibling?.TryGetValue(root, out verifyAgainst);
             if (!Directory.Exists(root))
@@ -396,6 +407,11 @@ public static class AlCoverageSourceMap
                 var parsed = ParseObjects(file, symbols, out var readFailure);
                 foreach (var o in parsed)
                 {
+                    // #5222: same app id, different text. The execution root's statement lines
+                    // are numbered in ITS text, so the sibling's file and offset would be a
+                    // different frame; only objects with no execution root come from a sibling.
+                    if (isExecutionRoot) executionOwned.Add((o.Label, o.Id));
+                    else if (executionOwned.Contains((o.Label, o.Id))) continue;
                     if (verifyAgainst != null && !SameTextAsPackage(map, o, file, verifyAgainst)) continue;
                     map.Add(o.Label, o.Id, path, o.LineOffset);
                     map.AddText(o.Label, o.Id, new AlSourceLocationMap.ObjectTextSpan(
