@@ -46,6 +46,11 @@ enforces it for fixtures and generated manifests, with a reason per allowlist en
 entry failing the run. Trap: an entry resting on "fails without it" can stop being true when the
 AL changes, and nothing fails when it does; re-run the removal before trusting one.
 
+Measure per manifest, not per class: a class that fails without the floor usually fails on ONE of its
+manifests (a dep that reads a System table, a `using System...` bundle), and the rest pass. A source
+entry pins how many literals still declare it (`SourceDeclarationCounts`), so a stripped-down file
+cannot take a new floor under its old entry.
+
 ## Do not conclude a failure set from a run that has not finished
 
 **The bar for adding to either allowlist is a completed run showing the class or fixture fails
