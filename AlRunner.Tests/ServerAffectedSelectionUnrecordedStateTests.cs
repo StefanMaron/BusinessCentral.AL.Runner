@@ -99,7 +99,6 @@ public class ServerAffectedSelectionUnrecordedStateTests : IClassFixture<SharedC
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [ {{dependency}} ],
-          {{(testRunner == null ? "" : "\"platform\": \"27.0.0.0\",")}}
           "idRanges": [ { "from": 62480, "to": 62489 } ],
           {{(onPrem ? "\"target\": \"OnPrem\"," : "")}}
           "runtime": "14.0"
@@ -349,7 +348,7 @@ public class ServerAffectedSelectionUnrecordedStateTests : IClassFixture<SharedC
     public async Task Server_LoadsTheDefaultTestRunnerApp_SoTheLastErrorIsClearedBetweenMethods()
     {
         var dirs = TestRunnerMgtEventsTests.RequireProvisioned();
-        var bundle = RawBundle("al-runner-server-default-test-tool", "00000000000d", 62480, "27.0.0.0",
+        var bundle = RawBundle("al-runner-server-default-test-tool", "00000000000d", 62480,
             ("T.Codeunit.al", """
             codeunit 62480 "US Tool Probe"
             {
@@ -572,13 +571,13 @@ public class ServerAffectedSelectionUnrecordedStateTests : IClassFixture<SharedC
 
     // ── The review's two counterexamples (stma-review-2 on PR #5080) ──────────────────────────
 
-    private static string RawBundle(string prefix, string suffix, int from, string? platformFloor, params (string File, string Content)[] files)
+    private static string RawBundle(string prefix, string suffix, int from, params (string File, string Content)[] files)
     {
         var dir = TestScratch.Dir(prefix);
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         { "id": "c5057000-0000-4a11-9111-{{suffix}}", "name": "Unrecorded State {{suffix}}", "publisher": "AL Runner",
-          "version": "1.0.0.0", "dependencies": [], {{(platformFloor == null ? "" : "\"platform\": \"" + platformFloor + "\",")}}
+          "version": "1.0.0.0", "dependencies": [],
           "idRanges": [ { "from": {{from}}, "to": {{from + 9}} } ], "runtime": "14.0" }
         """);
         foreach (var (file, content) in files) File.WriteAllText(Path.Combine(dir, file), content);
@@ -623,7 +622,7 @@ public class ServerAffectedSelectionUnrecordedStateTests : IClassFixture<SharedC
     public async Task AReaderWhoseInputChanged_DoesNotHideTheRealLastErrorWriter()
     {
         TestArtifacts.SkipIfMissing();
-        var bundle = RawBundle("al-runner-server-affected-unrecorded-cx", "00000000000b", 62490, null,
+        var bundle = RawBundle("al-runner-server-affected-unrecorded-cx", "00000000000b", 62490,
             ("Setter.Codeunit.al", CxSetter(2030)),
             ("XTests.Codeunit.al", """
             codeunit 62492 "CX X Tests"
@@ -700,7 +699,7 @@ public class ServerAffectedSelectionUnrecordedStateTests : IClassFixture<SharedC
     public async Task AWriteOnlyAnEarlierRecordHad_DoesNotEndTheWalk()
     {
         TestArtifacts.SkipIfMissing();
-        var bundle = RawBundle("al-runner-server-affected-unrecorded-cy", "00000000000c", 62500, null,
+        var bundle = RawBundle("al-runner-server-affected-unrecorded-cy", "00000000000c", 62500,
             ("BHelper.Codeunit.al", CyHelper(true)),
             ("CChecker.Codeunit.al", CyChecker("ONE")),
             ("W2Tests.Codeunit.al", TrappingTest(62501, "CY W2 Tests", "W2_Traps", "W2-ERR")),

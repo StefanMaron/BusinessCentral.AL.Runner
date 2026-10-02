@@ -130,7 +130,6 @@ public sealed class PlatformFloorFixtureGuardTests
         ["PlaceholderFloorProvisioningTests.cs"] = "the floor is the subject: the placeholder 1.0.0.0 floor",
         ["NestedBundleManifestDiscoveryTests.cs"] = "the floor is a parameter of the test: one app declares a future 999.0.0.0 floor",
         ["PhaseLogIntegrationTests.cs"] = "its platformRoots parameter toggles the floor on purpose, to see the phase log with and without it",
-        ["ServerAffectedSelectionUnrecordedStateTests.cs"] = "the bundles that load the Test Runner app need the 27.0.0.0 floor; the other bundles pass without it, so both writers emit it only for those",
 
         // Measured: fails without the floor because the AL needs System symbols.
         ["AllObjPopulateCostTests.cs"] = "the WriteFixture manifest's AL reads the System virtual tables AllObj and AllObjWithCaption, and its server-mode test returns no events without the floor (" + Measured + "); the file's other two manifests pass without it",
@@ -169,7 +168,6 @@ public sealed class PlatformFloorFixtureGuardTests
         ["BaseAppFloorFixtureGuardTests.cs"] = 4,
         ["CoverageMultiObjectFileTests.cs"] = 2,
         ["InstallSeedClosure.cs"] = 2,
-        ["ServerAffectedSelectionUnrecordedStateTests.cs"] = 2,
     };
 
     [Fact]
