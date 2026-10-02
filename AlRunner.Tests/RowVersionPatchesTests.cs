@@ -46,7 +46,7 @@ public sealed class RowVersionPatchesTests
         foreach (var name in new[]
         {
             "_pMetaTable", "_pTimestampField", "_pFieldIndex", "_pItem", "_mCreate",
-            "_pSystemIdField", "_pSystemIdProp", "_pReadOnlyBuffer", "_pReadOnlyBufferSystemId",
+            "_pSystemIdField", "_pSystemIdProp", "_pReadOnlyBuffer", "_mGetRecordId", "_mTryGetStoredRow",
             "_pTableCaptionSafe", "_fPrimaryTree", "_mCreateUniqueConstraint", "_mFormatKeyFieldsAndValues",
             "_pStoredItem",
             "_pendingInsertStampIndex", "_pendingModifyRestore",
@@ -107,10 +107,32 @@ public sealed class RowVersionPatchesTests
         }
     }
 
+    // Carries the SystemId of the row that was READ and the key the Modify targets. They differ
+    // after AL sets the primary key to another row's before Modify (#2700): BC rebuilds the
+    // read-only buffer with the new key and the read row's system fields.
     private sealed class FakeReadOnlyBuffer
     {
         public NavGuid SystemId { get; }
-        public FakeReadOnlyBuffer(NavGuid systemId) => SystemId = systemId;
+        private readonly string _recordId;
+        public FakeReadOnlyBuffer(NavGuid systemId, string recordId = "row")
+        {
+            SystemId = systemId;
+            _recordId = recordId;
+        }
+        public string GetRecordId() => _recordId;
+    }
+
+    // Stands in for TempTableDataProvider's private TryGetValue(NavRecordId, out TempTableRecordBuffer),
+    // the lookup its Modify makes for the row it will overwrite.
+    private sealed class FakeModifyProvider
+    {
+        private readonly System.Collections.Generic.Dictionary<string, FakeStoredRow> _rows = new();
+        public FakeModifyProvider With(string recordId, NavGuid systemId)
+        {
+            _rows[recordId] = new FakeStoredRow(systemId);
+            return this;
+        }
+        private bool TryGetValue(object id, out FakeStoredRow? buffer) => _rows.TryGetValue((string)id, out buffer);
     }
 
     private sealed class FakeBuffer
@@ -617,8 +639,8 @@ public sealed class RowVersionPatchesTests
     public void OnBeforeModify_IncomingSystemIdDiffersFromStored_RestoresTheStoredValue()
     {
         ResetReflectionCache();
-        var provider = MarkDatabaseBackedProvider();
         var storedId = NavGuid.NewGuid();
+        var provider = MarkDatabaseBackedProvider(new FakeModifyProvider().With("row", storedId));
         var metaTable = new FakeMetaTable(timestampField: null, systemIdField: new FakeMetaField(0));
         var buffer = new FakeBuffer(metaTable, slotCount: 1)
         {
@@ -635,8 +657,8 @@ public sealed class RowVersionPatchesTests
     public void OnBeforeModify_IncomingSystemIdMatchesStored_LeavesItUnchanged()
     {
         ResetReflectionCache();
-        var provider = MarkDatabaseBackedProvider();
         var id = NavGuid.NewGuid();
+        var provider = MarkDatabaseBackedProvider(new FakeModifyProvider().With("row", id));
         var metaTable = new FakeMetaTable(timestampField: null, systemIdField: new FakeMetaField(0));
         var buffer = new FakeBuffer(metaTable, slotCount: 1)
         {
@@ -681,5 +703,67 @@ public sealed class RowVersionPatchesTests
         RowVersionPatches.OnBeforeModify(provider, CompanyToken, buffer);
 
         Assert.Equal(incoming.Value, ((NavGuid)buffer[0]!).Value);
+    }
+
+    // #2700: Get(A), set the key to B's, Modify(). The read-only buffer names B but still carries
+    // A's SystemId; B must keep its own, not take A's.
+    [Fact]
+    public void OnBeforeModify_KeySetToAnotherRow_KeepsTheTargetRowsSystemId_NotTheReadRows()
+    {
+        ResetReflectionCache();
+        var readRowId = NavGuid.NewGuid();
+        var targetRowId = NavGuid.NewGuid();
+        var provider = MarkDatabaseBackedProvider(
+            new FakeModifyProvider().With("A", readRowId).With("B", targetRowId));
+        var metaTable = new FakeMetaTable(timestampField: null, systemIdField: new FakeMetaField(0));
+        var buffer = new FakeBuffer(metaTable, slotCount: 1)
+        {
+            ReadOnlyBuffer = new FakeReadOnlyBuffer(readRowId, recordId: "B"),
+            [0] = readRowId,
+        };
+
+        RowVersionPatches.OnBeforeModify(provider, CompanyToken, buffer);
+
+        Assert.Equal(targetRowId.Value, ((NavGuid)buffer[0]!).Value);
+    }
+
+    // No stored row has the key: nothing to preserve, and BC's own Modify answers RecordNotFound.
+    // The incoming value is left as the caller set it rather than replaced with a guess.
+    [Fact]
+    public void OnBeforeModify_NoStoredRowForTheKey_LeavesTheIncomingSystemIdUntouched()
+    {
+        ResetReflectionCache();
+        var provider = MarkDatabaseBackedProvider(new FakeModifyProvider().With("A", NavGuid.NewGuid()));
+        var metaTable = new FakeMetaTable(timestampField: null, systemIdField: new FakeMetaField(0));
+        var incoming = NavGuid.NewGuid();
+        var buffer = new FakeBuffer(metaTable, slotCount: 1)
+        {
+            ReadOnlyBuffer = new FakeReadOnlyBuffer(NavGuid.NewGuid(), recordId: "missing"),
+            [0] = incoming,
+        };
+
+        RowVersionPatches.OnBeforeModify(provider, CompanyToken, buffer);
+
+        Assert.Equal(incoming.Value, ((NavGuid)buffer[0]!).Value);
+    }
+
+    // A provider with no TryGetValue cannot say which row the Modify targets. Guessing would put
+    // the read row's SystemId back, which is the #2700 duplicate, so it refuses instead.
+    [Fact]
+    public void OnBeforeModify_ProviderWithoutTryGetValue_RefusesAsShapeGapNamingTheMember()
+    {
+        ResetReflectionCache();
+        var provider = MarkDatabaseBackedProvider();
+        var metaTable = new FakeMetaTable(timestampField: null, systemIdField: new FakeMetaField(0));
+        var buffer = new FakeBuffer(metaTable, slotCount: 1)
+        {
+            ReadOnlyBuffer = new FakeReadOnlyBuffer(NavGuid.NewGuid()),
+            [0] = NavGuid.NewGuid(),
+        };
+
+        var ex = Assert.Throws<AlRunner.Infrastructure.BcShapeGapException>(
+            () => RowVersionPatches.OnBeforeModify(provider, CompanyToken, buffer));
+
+        Assert.Contains("TryGetValue", ex.Message);
     }
 }
