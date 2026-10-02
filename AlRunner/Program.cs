@@ -3490,6 +3490,9 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
         string? cachePath = null;
         string? sidecarPath = null;
         string? querySidecarPath = null;
+        // #5238: held from a cache MISS to the publish below, so `--jobs` workers sharing this
+        // bundle compile it once between them. Null when nothing was missed or nothing is cached.
+        AlRunner.Infrastructure.CacheCompileLock? compileGate = null;
         // A bundle declaring an AL query also needs its query-symbols sidecar: the MetaQuery
         // design is built from the compilation's SymbolReference, which only emit produces.
         // Serving a HIT without it leaves NCLMetaQuery null and every query Find NREs inside
@@ -3541,29 +3544,44 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
             cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
             sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
             querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
-            if (AlRunner.Infrastructure.AlCacheSidecars.IsCompleteEntry(
-                    File.Exists(cachePath), File.Exists(sidecarPath),
-                    bundleDeclaresQuery, File.Exists(querySidecarPath)))
+            void ReadCompleteEntry(bool reportIncomplete)
             {
-                try
+                if (AlRunner.Infrastructure.AlCacheSidecars.IsCompleteEntry(
+                        File.Exists(cachePath), File.Exists(sidecarPath),
+                        bundleDeclaresQuery, File.Exists(querySidecarPath)))
                 {
-                    cachedBytes = File.ReadAllBytes(cachePath);
-                    // A short read of a file another process is still writing is not an I/O
-                    // error — ReadAllBytes happily hands back whatever bytes are on disk.
-                    // Validate the PE image explicitly so a torn/truncated entry is rejected
-                    // here as a MISS instead of reaching Assembly.Load downstream (issue #1810).
-                    AlRunner.Infrastructure.AlCacheSidecars.ValidateCachedAssemblyBytes(cachedBytes, cachePath);
+                    try
+                    {
+                        cachedBytes = File.ReadAllBytes(cachePath);
+                        // A short read of a file another process is still writing is not an I/O
+                        // error — ReadAllBytes happily hands back whatever bytes are on disk.
+                        // Validate the PE image explicitly so a torn/truncated entry is rejected
+                        // here as a MISS instead of reaching Assembly.Load downstream (issue #1810).
+                        AlRunner.Infrastructure.AlCacheSidecars.ValidateCachedAssemblyBytes(cachedBytes, cachePath);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"  [cache] read failed for {cachePath}: {ex.Message}");
+                        cachedBytes = null;
+                    }
                 }
-                catch (Exception ex)
+                else if (reportIncomplete && File.Exists(cachePath))
                 {
-                    Console.Error.WriteLine($"  [cache] read failed for {cachePath}: {ex.Message}");
-                    cachedBytes = null;
+                    var missing = !File.Exists(sidecarPath) ? sidecarPath : querySidecarPath;
+                    Console.Error.WriteLine($"  [cache] DLL present but sidecar missing — treating as MISS ({missing})");
                 }
             }
-            else if (File.Exists(cachePath))
+            ReadCompleteEntry(reportIncomplete: true);
+            // #5238: a MISS is a compile. Take the key's lock so a process compiling it right now
+            // is waited for, then read the entry again: it is a HIT when that process finished.
+            // --print-cache-key compiles nothing, so it never waits.
+            if (cachedBytes == null && !printCacheKeyOnly)
             {
-                var missing = !File.Exists(sidecarPath) ? sidecarPath : querySidecarPath;
-                Console.Error.WriteLine($"  [cache] DLL present but sidecar missing — treating as MISS ({missing})");
+                compileGate = AlRunner.Infrastructure.CacheCompileLock.Acquire(
+                    Path.Combine(alCacheDir, cacheKey + ".compile.lock"), $"{moduleName} ({rel})",
+                    AlRunner.Infrastructure.CacheCompileLock.MaxWaitFromEnvironment(line => Console.Error.WriteLine(line)),
+                    line => Console.Error.WriteLine(line));
+                if (compileGate.WaitedForSibling) ReadCompleteEntry(reportIncomplete: false);
             }
             }
         }
@@ -3631,10 +3649,15 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                     Console.Error.WriteLine($"  [cache] HIT  key={cacheKey} path={cachePath} ({cachedBytes.Length} bytes, {replayed} enum entries replayed) — skipping Emit+Compile");
                 AlRunner.Infrastructure.PhaseLog.NoteCacheHit();
                 assemblyBytes = cachedBytes;
+                // Nothing left to compile, so nothing left to hold back.
+                compileGate?.Dispose();
+                compileGate = null;
             }
         }
         if (needCompile && assemblyBytes == null)
         {
+            // Released when this block ends, after the publish below, and on any exception.
+            using var compileGateScope = compileGate;
             // cacheKey == null with alCacheDir set is #2954's do-not-cache path: there is no key
             // to miss against, and counting it as a MISS would put it in the same bucket as a
             // cold entry that the next run will HIT. It never will — nothing was written.

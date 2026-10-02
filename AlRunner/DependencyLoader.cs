@@ -739,8 +739,9 @@ public sealed class DependencyLoader
         // #2247: the emit-exclusion report, cached like the six above because a HIT skips
         // the compile that would otherwise produce it.
         var emitExcludedSidecar = Path.Combine(cacheDir, cacheKey + ".emit-excluded.txt");
-        if (File.Exists(cachedDll))
+        (Assembly? Asm, string? Tier3CacheKey, IReadOnlyList<Assembly> Assemblies)? TryServeFromSourceCache()
         {
+            if (!File.Exists(cachedDll)) return null;
             try
             {
                 var cachedBytes = File.ReadAllBytes(cachedDll);
@@ -772,8 +773,22 @@ public sealed class DependencyLoader
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"[deps] source-cache read/load failed for {m.Name}: {ex.Message}; rebuilding");
+                return null;
             }
         }
+        if (TryServeFromSourceCache() is { } cacheHit) return cacheHit;
+
+        // #5238: a miss is a compile, and `--jobs` workers sharing a bundle all miss together, so
+        // without this every one of them compiles every dependency. One process compiles; the rest
+        // wait here, then read what it published. Held to the end of the method: through the
+        // compile and the publish below.
+        using var compileGate = CacheCompileLock.Acquire(
+            Path.Combine(cacheDir, cacheKey + ".compile.lock"),
+            $"dependency {m.Name} v{m.Version}",
+            CacheCompileLock.MaxWaitFromEnvironment(line => Console.Error.WriteLine(line)),
+            line => Console.Error.WriteLine(line));
+        if (compileGate.WaitedForSibling && TryServeFromSourceCache() is { } cacheHitAfterWait)
+            return cacheHitAfterWait;
 
         // Per-process, NOT the machine-wide identity-only path this used to be (#2696): the
         // delete-then-rewrite below raced two runners resolving the same dependency, and one
