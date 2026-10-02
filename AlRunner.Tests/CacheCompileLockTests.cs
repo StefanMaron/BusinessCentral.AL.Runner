@@ -224,4 +224,48 @@ public sealed class CacheCompileLockTests : IDisposable
         Assert.False(CacheCompileLock.IsHeldElsewhere(new DirectoryNotFoundException("gone")));
         Assert.False(CacheCompileLock.IsHeldElsewhere(new UnauthorizedAccessException("denied")));
     }
+
+    /// <summary>The claim that makes a stale lock impossible: the lock belongs to the process, so a
+    /// holder that is killed (the incident class this repository has met: a run killed mid-write
+    /// leaving a cache inconsistent) frees it, and another PROCESS is excluded while it lives. The
+    /// holder here is util-linux flock(1), an implementation independent of this one.</summary>
+    [SkippableFact]
+    public void AKilledHolderProcess_LeavesNoStaleLock_AndALiveOneExcludesUs()
+    {
+        Skip.IfNot(OperatingSystem.IsLinux() && File.Exists("/usr/bin/flock"), "needs util-linux flock(1)");
+
+        var psi = new System.Diagnostics.ProcessStartInfo("/usr/bin/flock")
+        {
+            UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        foreach (var a in new[] { "-x", LockPath("child"), "sleep", "300" }) psi.ArgumentList.Add(a);
+        using var holder = System.Diagnostics.Process.Start(psi)!;
+        try
+        {
+            // Wait until the child really holds it: we are refused for as long as it lives.
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+            CacheCompileLock refused;
+            do
+            {
+                refused = CacheCompileLock.Acquire(LockPath("child"), "thing", TimeSpan.FromMilliseconds(300), _ => { });
+                if (!refused.HoldsLock) break;
+                refused.Dispose();
+                Thread.Sleep(100);
+            } while (DateTime.UtcNow < deadline);
+            Assert.False(refused.HoldsLock, "a live process holding the lock did not exclude us");
+            Assert.True(refused.WaitedForSibling);
+
+            holder.Kill(entireProcessTree: true);
+            holder.WaitForExit();
+
+            using var after = CacheCompileLock.Acquire(LockPath("child"), "thing", TimeSpan.FromSeconds(30), _ => { });
+            // A moment of "held" is allowed: the tree's last process may still be closing the
+            // descriptor. What matters is that the lock comes free without anyone releasing it.
+            Assert.True(after.HoldsLock, "a killed holder left its lock behind");
+        }
+        finally
+        {
+            try { if (!holder.HasExited) holder.Kill(entireProcessTree: true); } catch { }
+        }
+    }
 }

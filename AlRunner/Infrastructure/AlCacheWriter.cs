@@ -19,9 +19,10 @@
 // invisible under their real names), or the new complete entry — never a DLL with a
 // missing or partial sidecar, and never a partial DLL.
 //
-// No locking is needed: concurrent writers of the SAME cache key produce byte-identical
-// output (the key hashes sources + deps + runner fingerprint), so last-writer-wins
-// between two atomic renames is correct.
+// No locking is needed for CORRECTNESS: concurrent writers of the SAME cache key produce
+// byte-identical output (the key hashes sources + deps + runner fingerprint), so
+// last-writer-wins between two atomic renames is correct. It is needed for COST: each
+// writer paid the whole compile first, which is what CacheCompileLock (#5238) now spares.
 namespace AlRunner.Infrastructure;
 
 public static class AlCacheWriter

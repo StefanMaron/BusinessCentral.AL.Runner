@@ -558,6 +558,10 @@ internal static partial class ProgramSupport
         w.WriteLine("                          A bundle is shared only when each worker gets at least");
         w.WriteLine("                          AL_RUNNER_JOBS_SPLIT_MIN_FILES AL files of it (default 100;");
         w.WriteLine("                          20 pays for slow tests, e.g. --test-data BaseApp buckets).");
+        w.WriteLine("                          On a cold --cache the workers of a shared bundle do not each");
+        w.WriteLine("                          compile it: one takes the whole compile and the others wait");
+        w.WriteLine("                          for it (AL_RUNNER_CACHE_LOCK_WAIT_SEC, default 1800) and load");
+        w.WriteLine("                          the result; a wait that expires says so and compiles there.");
         w.WriteLine("                          See docs/jobs-unit-claiming.md.");
         w.WriteLine("                          Ignored by --watch/--server/--dap (long-lived warm state)");
         w.WriteLine("                          and by a single-bundle run that is not shared. Default: 1.");
