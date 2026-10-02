@@ -2254,7 +2254,7 @@ public sealed class TestExecutor
     // abandoned ones: undercounting here would silently understate the loss again,
     // which is exactly the failure mode this method exists to close off; a handful of
     // legitimately-skipped tests inflating the count by a few is the safe direction.
-    private void RecordAbortedSuite(Type hungType, MethodInfo hungMethod, string hungDisplayName,
+    internal void RecordAbortedSuite(Type hungType, MethodInfo hungMethod, string hungDisplayName,
         MethodInfo[] orderedMethodsInHungType, int hungMethodIndex,
         Type[] allTypes, int hungTypeIndex, string? filter, IReadOnlySet<string>? exactFilter)
     {
@@ -2300,7 +2300,7 @@ public sealed class TestExecutor
                 ? $" and {remainingInOtherCodeunits} in {remainingCodeunits} subsequent codeunit(s)"
                 : "") +
             $" did not run ({total} total)"
-            + (UnitClaim != null
+            + (UnitClaim != null && remainingCodeunits > 0
                 ? "; none of those codeunits was claimed yet, so they run only if another "
                   + "worker or a resumed attempt reaches them"
                 : "");

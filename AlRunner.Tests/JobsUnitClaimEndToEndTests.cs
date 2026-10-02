@@ -24,7 +24,7 @@ public sealed class JobsUnitClaimEndToEndTests
     // object-id order and largest-first order disagree about which runs first.
     private const int ClaimFixtureTests = 10;
 
-    private static (int Exit, string Output) RunRunner(string extraArgs, bool lowSplitFloor)
+    internal static (int Exit, string Output) RunRunner(string extraArgs, bool lowSplitFloor, string? freeMemoryMb = null)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg).Append(' ').Append(extraArgs);
@@ -36,6 +36,9 @@ public sealed class JobsUnitClaimEndToEndTests
         };
         // The fixture is tiny; without this a bundle is never heavy enough to be shared.
         if (lowSplitFloor) psi.Environment["AL_RUNNER_JOBS_SPLIT_MIN_FILES"] = "1";
+        // Pins the free-memory reading (plenty unless a test says otherwise): the plan sizes sharing
+        // from it, so without this these tests would pass or fail with what the box has free.
+        psi.Environment[AlRunner.Infrastructure.JobsMemory.FreeMemoryEnvVar] = freeMemoryMb ?? "1000000";
         var sb = new StringBuilder();
         var p = Process.Start(psi)!;
         p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
@@ -47,7 +50,7 @@ public sealed class JobsUnitClaimEndToEndTests
         lock (sb) return (p.ExitCode, sb.ToString());
     }
 
-    private static List<int> ShardTestCounts(string output) =>
+    internal static List<int> ShardTestCounts(string output) =>
         Regex.Matches(output, @"─+ shard \d+ \(exit [^)]*\) ─+[\s\S]*?^Tests: (\d+)", RegexOptions.Multiline)
             .Select(m => int.Parse(m.Groups[1].Value)).ToList();
 

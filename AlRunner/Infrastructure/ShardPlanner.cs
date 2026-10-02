@@ -22,6 +22,9 @@
 // per-test resets (1,027 of them) peaked within 1% of per-codeunit (44), and disabling resets
 // entirely cost 33% MORE — so the rollback is doing its job on the state it actually owns.
 //
+// (Measured again with --test-data on Tests-ERM: a worker grows from 1.5 GB at 11 tests to
+// 4.9 GB at 9,497, so tests run do cost memory there. docs/jobs-unit-claiming.md § Memory.)
+//
 // So all 33 BaseApp buckets do not fit in one process however the tests are counted, and
 // splitting the BUNDLES across workers is what makes that run possible rather than merely
 // faster. It also contains a hung test to its own shard instead of ending the whole run.
@@ -87,7 +90,8 @@ internal static class ShardPlanner
     /// <see cref="SplitBundles"/> are the names that do: the workers sharing one claim every
     /// test codeunit of it first come, first served instead of each running the whole bundle.</summary>
     public sealed record SplitPlan(
-        List<List<(string Name, long Weight)>> Shards, IReadOnlySet<string> SplitBundles);
+        List<List<(string Name, long Weight)>> Shards, IReadOnlySet<string> SplitBundles,
+        string? MemoryNote = null);
 
     /// <summary>
     /// <see cref="Plan"/>, except that a bundle heavier than one worker's fair share is cut into
@@ -99,9 +103,14 @@ internal static class ShardPlanner
     ///
     /// A piece is only a placement weight: nothing here knows which test codeunits it covers,
     /// the workers sharing the bundle decide that at run time.
+    ///
+    /// <paramref name="maxPieces"/> caps the pieces of the bundles it names (the memory limit,
+    /// #5216): a bundle it does not name keeps what the rules above give, and one it names with 1
+    /// or less is not split.
     /// </summary>
     public static SplitPlan PlanSplit(
-        IReadOnlyList<(string Name, long Weight)> items, int jobs, long minPieceWeight)
+        IReadOnlyList<(string Name, long Weight)> items, int jobs, long minPieceWeight,
+        IReadOnlyDictionary<string, int>? maxPieces = null)
     {
         var noSplit = new SplitPlan(Plan(items, jobs), new HashSet<string>(StringComparer.Ordinal));
         if (jobs <= 1 || items.Count == 0) return noSplit;
@@ -118,6 +127,7 @@ internal static class ShardPlanner
             var k = (int)Math.Round(w / fairShare, MidpointRounding.AwayFromZero);
             k = Math.Min(k, jobs);
             if (minPieceWeight > 0) k = (int)Math.Min(k, w / minPieceWeight);
+            if (maxPieces != null && maxPieces.TryGetValue(item.Name, out var cap)) k = Math.Min(k, cap);
             k = Math.Max(k, 1);
             if (k > 1) anySplit = true;
             for (var p = 0; p < k; p++) pieces.Add((item.Name, w / k));
