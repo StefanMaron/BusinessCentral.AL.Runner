@@ -51,7 +51,6 @@ public sealed class ServerCoverageNeverRunProcedureTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 65420, "to": 65439 } ],
           "runtime": "14.0"
         }
