@@ -399,18 +399,81 @@ public static partial class RowVersionPatches
         // finds its target by the same ReadOnlyBuffer.GetRecordId() key looked up here.
         var storedRow = FindStoredRowForModify(provider!, readOnlyBufferObj);
         if (storedRow == null) return; // no such row: BC's Modify answers RecordNotFound itself
-        var storedSystemId = ReadRowSystemId(storedRow);
-        if (storedSystemId.IsZeroOrEmpty) return; // defensive: an existing row should always carry one
 
         _pItem ??= bufferType.GetProperty("Item",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException(
                 $"[RowVersionPatches] {bufferType.Name}.Item indexer not found — " +
                 "SystemId integrity check cannot resolve its reflection target");
+        PreserveCreatedAuditFieldsOnModify(metaTable, recordBuffer, readOnlyBufferObj, storedRow);
+
+        var storedSystemId = ReadRowSystemId(storedRow);
+        if (storedSystemId.IsZeroOrEmpty) return; // defensive: an existing row should always carry one
         var incomingSystemId = (NavGuid)_pItem.GetValue(recordBuffer, new object[] { systemIdIndex.Value })!;
         if (incomingSystemId.Value == storedSystemId.Value) return; // already correct — the common case
 
         _pItem.SetValue(recordBuffer, storedSystemId, new object[] { systemIdIndex.Value });
+    }
+
+    /// <summary>
+    /// #5203: SystemCreatedAt/By of the row a Modify targets stay that row's own. BC writes a
+    /// Modify as the changeset of the buffer against <c>ReadOnlyBuffer</c>
+    /// (<c>MutableRecordBuffer.ComputeChangeset</c>), and after a key change that read-only
+    /// buffer still holds the READ row's audit fields, so an untouched one is no change and the
+    /// target keeps its own (corpus 60061
+    /// <c>Record_Modify_AfterKeySetToAnotherRow_TargetKeepsItsOwnSystemCreatedAt</c>).
+    /// <c>ModifyAllTrees</c> copies every slot instead, so an unchanged slot is put back to the
+    /// stored row's value here. A slot AL assigned differs from <c>ReadOnlyBuffer</c> and is left
+    /// alone — restoring from <c>ReadOnlyBuffer</c> instead would write the read row's values.
+    /// </summary>
+    private static void PreserveCreatedAuditFieldsOnModify(
+        object metaTable, object recordBuffer, object readOnlyBuffer, object storedRow)
+    {
+        foreach (var name in CreatedAuditFieldProperties)
+        {
+            if (ResolveAuditFieldIndex(metaTable, name) is not int index) continue;
+            if (_pReadOnlyItem?.DeclaringType?.IsInstanceOfType(readOnlyBuffer) != true)
+                _pReadOnlyItem = readOnlyBuffer.GetType().GetProperty("Item",
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                    ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                        SystemIdModifySurface, $"{readOnlyBuffer.GetType().Name}.Item",
+                        "indexer not found, so Modify cannot tell whether AL changed SystemCreatedAt/By");
+            if (_pStoredRowItem?.DeclaringType?.IsInstanceOfType(storedRow) != true)
+                _pStoredRowItem = storedRow.GetType().GetProperty("Item",
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                    ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                        SystemIdModifySurface, $"{storedRow.GetType().Name}.Item",
+                        "indexer not found, so Modify cannot keep the target row's SystemCreatedAt/By");
+
+            var slot = new object[] { index };
+            var incoming = _pItem!.GetValue(recordBuffer, slot);
+            if (!Equals(incoming, _pReadOnlyItem.GetValue(readOnlyBuffer, slot))) continue; // AL assigned it
+            var stored = _pStoredRowItem.GetValue(storedRow, slot);
+            if (!Equals(incoming, stored)) _pItem.SetValue(recordBuffer, stored, slot);
+        }
+    }
+
+    private static readonly string[] CreatedAuditFieldProperties = { "SystemCreatedAtField", "SystemCreatedByField" };
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Type, string), PropertyInfo>
+        _auditFieldProperties = new();
+
+    /// <summary>FieldIndex of NCLMetaTable.<paramref name="propertyName"/>, or null when the table has
+    /// no such field.</summary>
+    private static int? ResolveAuditFieldIndex(object metaTable, string propertyName)
+    {
+        var prop = _auditFieldProperties.GetOrAdd((metaTable.GetType(), propertyName), static key =>
+            key.Item1.GetProperty(key.Item2, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                SystemIdModifySurface, $"{key.Item1.Name}.{key.Item2}",
+                "property not found, so Modify cannot keep the target row's SystemCreatedAt/By"));
+        var field = prop.GetValue(metaTable);
+        if (field == null) return null;
+        _pFieldIndex ??= field.GetType().GetProperty("FieldIndex",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                SystemIdModifySurface, $"{field.GetType().Name}.FieldIndex",
+                "property not found, so Modify cannot keep the target row's SystemCreatedAt/By");
+        return (int)_pFieldIndex.GetValue(field)!;
     }
 
     /// <summary>The stored row a Modify of <paramref name="readOnlyBuffer"/> targets, through the
@@ -436,6 +499,8 @@ public static partial class RowVersionPatches
     private const string SystemIdModifySurface = "AL Record.Modify (SystemId preservation)";
     private static MethodInfo? _mGetRecordId;      // ReadOnlyRecordBuffer.GetRecordId()
     private static MethodInfo? _mTryGetStoredRow;  // TempTableDataProvider.TryGetValue (private)
+    private static PropertyInfo? _pReadOnlyItem;   // ReadOnlyRecordBuffer.this[int]
+    private static PropertyInfo? _pStoredRowItem;  // TempTableRecordBuffer.this[int]
 
     private static string ResolveTableCaptionSafe(object metaTable)
     {
