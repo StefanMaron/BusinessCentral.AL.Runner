@@ -1224,6 +1224,16 @@ public static partial class BcRuntime
             // SeedSkeletonRegionalSettings), so every AL Evaluate() into a Date/Time/DateTime
             // NRE'd inside DateTimeParsingHelper. Seed it the way BC seeds its own default.
             SeedSkeletonRegionalSettings(sessType, _skeletonSession!);
+            // NavSession's `readonly object childSessionsStateLock` is also skipped by
+            // GetUninitializedObject; ChildSessionsStates then raised ArgumentNullException out of
+            // Monitor (#3932). Past the lock BC builds a NavChildSessionsState and caches it —
+            // measured 28.1, SkeletonSessionLockObjectsTests. A lock token holds no readable value,
+            // so seeding only lets BC's own body run. NCLMetadata's locks are deliberately NOT
+            // seeded: see docs/skeleton-lock-objects.md.
+            SeededSessionLockFields = SeedNullReadonlyLockObjects(
+                _skeletonSession!, sessType, AuditedSessionLockFields, nameof(AuditedSessionLockFields),
+                out var unauditedSessionLocks);
+            UnauditedSeededSessionLockFields = unauditedSessionLocks;
             // A BC service tier runs AL on a thread whose culture is the session's culture,
             // and several BC code paths compare Thread.CurrentThread.CurrentCulture.Name
             // against the session's format region. Without this the developer's machine

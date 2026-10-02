@@ -327,6 +327,12 @@ public static partial class BcRuntime
         "stateSyncRoot",
     };
 
+    /// <summary>The <c>readonly object</c> lock fields audited on <c>NavSession</c> (#3932):
+    /// <c>childSessionsStateLock</c>, locked by <c>ChildSessionsStates</c>' getter and setter,
+    /// the only one on 28.1 and 28.5. A review roster, like
+    /// <see cref="AuditedTenantLockFields"/>, never the seeding filter.</summary>
+    internal static readonly string[] AuditedSessionLockFields = { "childSessionsStateLock" };
+
     /// <summary>Every field <see cref="SeedNullReadonlyLockObjects"/> seeded on the skeleton
     /// tenant. Non-empty after bootstrap, which is how a test tells "nothing was unaudited" apart
     /// from "nothing was measured".</summary>
@@ -337,6 +343,10 @@ public static partial class BcRuntime
     /// <c>SkeletonTenantLockObjectsTests</c> fails on anything else.</summary>
     internal static IReadOnlyList<string> UnauditedSeededLockFields { get; private set; } = Array.Empty<string>();
 
+    /// <summary>The same pair for the skeleton <c>NavSession</c> (#3932).</summary>
+    internal static IReadOnlyList<string> SeededSessionLockFields { get; private set; } = Array.Empty<string>();
+    internal static IReadOnlyList<string> UnauditedSeededSessionLockFields { get; private set; } = Array.Empty<string>();
+
     /// <summary>
     /// Assign a fresh <c>new object()</c> to every null <c>readonly</c> field of exactly type
     /// <see cref="object"/> declared on <paramref name="instance"/>'s type and its bases up to
@@ -345,15 +355,19 @@ public static partial class BcRuntime
     /// <remarks>
     /// Enumerated rather than named: a name list silently stops covering a field BC adds, and the
     /// symptom (<c>ArgumentNullException</c> out of <c>Monitor.ReliableEnter</c>) does not name the
-    /// skeleton. So <see cref="AuditedTenantLockFields"/> is a review roster, NOT the filter —
+    /// skeleton. So <paramref name="audited"/> is a review roster, NOT the filter —
     /// seeding narrowed to it would leave a lock field an unmeasured BC version declares null.
-    /// Anything seeded that the roster does not name is recorded and announced instead, which is
-    /// what stops a future non-lock <c>readonly object</c> field being given a value silently.
+    /// Anything seeded that the roster does not name is returned in <paramref name="unaudited"/>
+    /// and announced instead, which is what stops a future non-lock <c>readonly object</c> field
+    /// being given a value silently. Callers decide WHICH skeleton objects to seed: a lock whose
+    /// body, once past it, answers from state the skeleton lacks must stay null (see
+    /// docs/skeleton-lock-objects.md).
     /// </remarks>
-    internal static List<string> SeedNullReadonlyLockObjects(object instance, Type stopAfter)
+    internal static List<string> SeedNullReadonlyLockObjects(
+        object instance, Type stopAfter, string[] audited, string rosterName, out List<string> unaudited)
     {
         var seeded = new List<string>();
-        var unaudited = new List<string>();
+        unaudited = new List<string>();
         for (var t = instance.GetType(); t != null; t = t.BaseType)
         {
             foreach (var f in t.GetFields(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance))
@@ -363,16 +377,15 @@ public static partial class BcRuntime
                 if (f.GetValue(instance) != null) continue;
                 FieldPoke.SetInstance(f, instance, new object());
                 seeded.Add(t.Name + "." + f.Name);
-                if (Array.IndexOf(AuditedTenantLockFields, f.Name) < 0) unaudited.Add(t.Name + "." + f.Name);
+                if (Array.IndexOf(audited, f.Name) < 0) unaudited.Add(t.Name + "." + f.Name);
             }
             if (t == stopAfter) break;
         }
-        SeededTenantLockFields = seeded;
-        UnauditedSeededLockFields = unaudited;
         if (unaudited.Count > 0)
             Console.Error.WriteLine(
-                "[BcRuntime] InjectSkeletonSystemTenant: seeded " + unaudited.Count + " readonly object field(s) "
-                + "that BcRuntime.AuditedTenantLockFields does not name: " + string.Join(", ", unaudited)
+                "[BcRuntime] seeded " + unaudited.Count + " readonly object field(s) on the skeleton "
+                + instance.GetType().Name + " that BcRuntime." + rosterName + " does not name: "
+                + string.Join(", ", unaudited)
                 + " — audit each as a lock target and add it to that roster, or stop seeding it.");
         return seeded;
     }
@@ -557,7 +570,11 @@ public static partial class BcRuntime
         //      `readonly object` field is a lock token by construction — nothing can read a value
         //      out of it — so BC's real body then computes the answer itself (here:
         //      !IsDatabaseInitialized => false, BC's own verdict for a tenant with no database).
-        var seededLocks = SeedNullReadonlyLockObjects(_skeletonSystemTenant!, navTenantType);
+        var seededLocks = SeedNullReadonlyLockObjects(
+            _skeletonSystemTenant!, navTenantType, AuditedTenantLockFields, nameof(AuditedTenantLockFields),
+            out var unauditedTenantLocks);
+        SeededTenantLockFields = seededLocks;
+        UnauditedSeededLockFields = unauditedTenantLocks;
         if (seededLocks.Count > 0)
             Console.Error.WriteLine(
                 "[BcRuntime] InjectSkeletonSystemTenant: seeded " + seededLocks.Count
