@@ -128,6 +128,7 @@ public sealed class PlatformFloorFixtureGuardTests
         ["DefaultBcVersionSupportedVariantTests.cs"] = "the floor is the subject: the default BC version follows the declared floor",
         ["DeferredPlatformAppsProvisioningTests.cs"] = "the floor is the subject: deferred platform-app provisioning",
         ["DeferredPlatformAppsWithholdTests.cs"] = "the floor is the subject: a platform-only bundle withholds the Microsoft closure",
+        ["DeferredAttemptDependencyFloorTests.cs"] = "the floor is the subject: the withheld attempt cannot supply the Platform floor the default Test Runner declares (#5233)",
         ["DependencyResolverTests.cs"] = "the floor is the subject: the packaged floor is read back by DependencyResolver (#3719)",
         ["PlaceholderFloorProvisioningTests.cs"] = "the floor is the subject: the placeholder 1.0.0.0 floor",
         ["NestedBundleManifestDiscoveryTests.cs"] = "the floor is the subject: one app declares a future 999.0.0.0 floor, a parameter of the test",
