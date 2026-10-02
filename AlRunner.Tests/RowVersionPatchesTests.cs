@@ -47,6 +47,7 @@ public sealed class RowVersionPatchesTests
         {
             "_pMetaTable", "_pTimestampField", "_pFieldIndex", "_pItem", "_mCreate",
             "_pSystemIdField", "_pSystemIdProp", "_pReadOnlyBuffer", "_mGetRecordId", "_mTryGetStoredRow",
+            "_pReadOnlyItem", "_pStoredRowItem",
             "_pTableCaptionSafe", "_fPrimaryTree", "_mCreateUniqueConstraint", "_mFormatKeyFieldsAndValues",
             "_pStoredItem",
             "_pendingInsertStampIndex", "_pendingModifyRestore",
@@ -66,6 +67,9 @@ public sealed class RowVersionPatchesTests
         var getters = t.GetField("_rowSystemIdGetters", BindingFlags.NonPublic | BindingFlags.Static)
             ?? throw new InvalidOperationException("test setup: RowVersionPatches._rowSystemIdGetters not found");
         ((System.Collections.IDictionary)getters.GetValue(null)!).Clear();
+        var auditFields = t.GetField("_auditFieldProperties", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException("test setup: RowVersionPatches._auditFieldProperties not found");
+        ((System.Collections.IDictionary)auditFields.GetValue(null)!).Clear();
     }
 
     private static object MarkDatabaseBackedProvider(object? provider = null)
@@ -98,6 +102,8 @@ public sealed class RowVersionPatchesTests
         public FakeMetaField? TimestampField { get; }
         public FakeMetaField? SystemIdField { get; }
         public string? TableCaptionSafe { get; }
+        public FakeMetaField? SystemCreatedAtField { get; init; }
+        public FakeMetaField? SystemCreatedByField { get; init; }
         public FakeMetaTable(FakeMetaField? timestampField, FakeMetaField? systemIdField = null,
             string? tableCaptionSafe = "Fake Table")
         {
@@ -120,6 +126,9 @@ public sealed class RowVersionPatchesTests
             _recordId = recordId;
         }
         public string GetRecordId() => _recordId;
+        // The read row's field values, by slot — ReadOnlyRecordBuffer.this[int].
+        public System.Collections.Generic.Dictionary<int, object?> Slots { get; } = new();
+        public object? this[int index] => Slots.TryGetValue(index, out var v) ? v : null;
     }
 
     // Stands in for TempTableDataProvider's private TryGetValue(NavRecordId, out TempTableRecordBuffer),
@@ -130,6 +139,11 @@ public sealed class RowVersionPatchesTests
         public FakeModifyProvider With(string recordId, NavGuid systemId)
         {
             _rows[recordId] = new FakeStoredRow(systemId);
+            return this;
+        }
+        public FakeModifyProvider With(string recordId, FakeStoredRow row)
+        {
+            _rows[recordId] = row;
             return this;
         }
         private bool TryGetValue(object id, out FakeStoredRow? buffer) => _rows.TryGetValue((string)id, out buffer);
@@ -164,6 +178,9 @@ public sealed class RowVersionPatchesTests
     {
         public NavGuid SystemId { get; }
         public FakeStoredRow(NavGuid systemId) => SystemId = systemId;
+        // The stored row's field values, by slot — TempTableRecordBuffer.this[int].
+        public System.Collections.Generic.Dictionary<int, object?> Slots { get; } = new();
+        public object? this[int index] => Slots.TryGetValue(index, out var v) ? v : null;
     }
 
     // Stands in for TempTableDataProvider: CheckNoDuplicateSystemId reaches its
@@ -765,5 +782,107 @@ public sealed class RowVersionPatchesTests
             () => RowVersionPatches.OnBeforeModify(provider, CompanyToken, buffer));
 
         Assert.Contains("TryGetValue", ex.Message);
+    }
+
+    // #5203: Get(A), set the key to B's, Modify(). The buffer and the read-only buffer both carry
+    // A's SystemCreatedAt/By (slots 1 and 2); B must keep its own.
+    private static (object Provider, FakeBuffer Buffer, FakeStoredRow Target) KeyChangeModifyWithAuditFields(
+        object readCreatedAt, object readCreatedBy, object targetCreatedAt, object targetCreatedBy)
+    {
+        var readId = NavGuid.NewGuid();
+        var target = new FakeStoredRow(NavGuid.NewGuid());
+        target.Slots[1] = targetCreatedAt;
+        target.Slots[2] = targetCreatedBy;
+        var provider = MarkDatabaseBackedProvider(
+            new FakeModifyProvider().With("A", readId).With("B", target));
+        var metaTable = new FakeMetaTable(timestampField: null, systemIdField: new FakeMetaField(0))
+        {
+            SystemCreatedAtField = new FakeMetaField(1),
+            SystemCreatedByField = new FakeMetaField(2),
+        };
+        var readOnly = new FakeReadOnlyBuffer(readId, recordId: "B");
+        readOnly.Slots[1] = readCreatedAt;
+        readOnly.Slots[2] = readCreatedBy;
+        var buffer = new FakeBuffer(metaTable, slotCount: 3)
+        {
+            ReadOnlyBuffer = readOnly,
+            [0] = readId,
+            [1] = readCreatedAt,
+            [2] = readCreatedBy,
+        };
+        return (provider, buffer, target);
+    }
+
+    [Fact]
+    public void OnBeforeModify_KeySetToAnotherRow_KeepsTheTargetRowsSystemCreatedAtAndBy()
+    {
+        ResetReflectionCache();
+        var readAt = NavDateTime.Create(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        var targetAt = NavDateTime.Create(new DateTime(2026, 1, 1, 0, 0, 1, DateTimeKind.Utc));
+        var readBy = NavGuid.NewGuid();
+        var targetBy = NavGuid.NewGuid();
+        var (provider, buffer, _) = KeyChangeModifyWithAuditFields(readAt, readBy, targetAt, targetBy);
+
+        RowVersionPatches.OnBeforeModify(provider, CompanyToken, buffer);
+
+        Assert.Equal(targetAt, buffer[1]);
+        Assert.Equal(targetBy, buffer[2]);
+    }
+
+    // A value AL assigned differs from the read-only buffer, so it is a change and is left to BC's
+    // Modify as written; only an untouched slot is put back to the stored row's.
+    [Fact]
+    public void OnBeforeModify_SystemCreatedAtAssignedByAl_IsLeftAsAssigned()
+    {
+        ResetReflectionCache();
+        var readAt = NavDateTime.Create(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        var targetAt = NavDateTime.Create(new DateTime(2026, 1, 1, 0, 0, 1, DateTimeKind.Utc));
+        var assigned = NavDateTime.Create(new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        var readBy = NavGuid.NewGuid();
+        var targetBy = NavGuid.NewGuid();
+        var (provider, buffer, _) = KeyChangeModifyWithAuditFields(readAt, readBy, targetAt, targetBy);
+        buffer[1] = assigned;
+
+        RowVersionPatches.OnBeforeModify(provider, CompanyToken, buffer);
+
+        Assert.Equal(assigned, buffer[1]);
+        Assert.Equal(targetBy, buffer[2]);
+    }
+
+    // The bind is required: a stored row the runner cannot index would otherwise leave the read
+    // row's SystemCreatedAt on the target with no diagnostic.
+    [Fact]
+    public void OnBeforeModify_StoredRowWithoutIndexer_RefusesAsShapeGap()
+    {
+        ResetReflectionCache();
+        var readId = NavGuid.NewGuid();
+        var providerWithRowWithoutIndexer = MarkDatabaseBackedProvider(new FakeModifyProviderOfIndexlessRows());
+        var metaTable = new FakeMetaTable(timestampField: null, systemIdField: new FakeMetaField(0))
+        {
+            SystemCreatedAtField = new FakeMetaField(1),
+        };
+        var at = NavDateTime.Create(new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        var readOnly = new FakeReadOnlyBuffer(readId, recordId: "B");
+        readOnly.Slots[1] = at;
+        var buffer = new FakeBuffer(metaTable, slotCount: 2) { ReadOnlyBuffer = readOnly, [0] = readId, [1] = at };
+
+        var ex = Assert.Throws<AlRunner.Infrastructure.BcShapeGapException>(
+            () => RowVersionPatches.OnBeforeModify(providerWithRowWithoutIndexer, CompanyToken, buffer));
+
+        Assert.Contains(nameof(IndexlessStoredRow) + ".Item", ex.Message);
+    }
+
+    private sealed class IndexlessStoredRow
+    {
+        public NavGuid SystemId { get; } = NavGuid.NewGuid();
+    }
+
+    private sealed class FakeModifyProviderOfIndexlessRows
+    {
+        private bool TryGetValue(object id, out IndexlessStoredRow? buffer)
+        {
+            buffer = new IndexlessStoredRow();
+            return true;
+        }
     }
 }
