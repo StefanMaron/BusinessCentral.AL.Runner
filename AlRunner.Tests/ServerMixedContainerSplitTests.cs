@@ -66,7 +66,7 @@ public class ServerMixedContainerSplitTests
     {
         Write(Path.Combine(root, dir, "app.json"), $$"""
         { "id": "{{Guid.NewGuid()}}", "name": "{{name}}", "publisher": "AL Runner", "version": "1.0.0.0",
-          "dependencies": [], "platform": "1.0.0.0", "preprocessorSymbols": [ "APPSYM" ],
+          "dependencies": [], "preprocessorSymbols": [ "APPSYM" ],
           "idRanges": [ { "from": {{from}}, "to": {{from + 4}} } ], "runtime": "14.0" }
         """);
         Write(Path.Combine(root, dir, "Tests.Codeunit.al"), NeedsSymbol(from, name + " Tests"));
