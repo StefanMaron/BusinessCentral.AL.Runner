@@ -90,7 +90,7 @@ public class AllObjPopulateCostTests
     /// of Test Runner's per-test lookup. With <paramref name="withSecondTable"/> a second table
     /// exists, and the tests assert it is listed; without it, that it is not.
     /// </summary>
-    private static void WriteFixture(string dir, string tag, bool withSecondTable)
+    private static void WriteFixture(string dir, string tag, bool withSecondTable, bool systemSymbols = false)
     {
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
@@ -100,7 +100,7 @@ public class AllObjPopulateCostTests
           "publisher": "IssueTest4851",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
+          {{(systemSymbols ? "\"platform\": \"1.0.0.0\"," : "")}}
           "idRanges": [ { "from": {{BaseId}}, "to": {{BaseId + 9}} } ],
           "runtime": "14.0"
         }
@@ -585,7 +585,7 @@ public class AllObjPopulateCostTests
         try
         {
             var app = Path.Combine(root, "app");
-            WriteFixture(app, "V1", withSecondTable: false);
+            WriteFixture(app, "V1", withSecondTable: false, systemSymbols: true);
 
             await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
 
@@ -595,7 +595,7 @@ public class AllObjPopulateCostTests
             foreach (var e in events1)
                 Assert.True(e.GetProperty("status").GetString() == "pass", string.Join(" | ", lines1));
 
-            WriteFixture(app, "V2", withSecondTable: true);
+            WriteFixture(app, "V2", withSecondTable: true, systemSymbols: true);
 
             var lines2 = await server.SendRequestStreamingAsync(RunTests(app));
             var (events2, _) = ProtocolV2Streaming.Split(lines2);

@@ -183,7 +183,7 @@ public class ServerAffectedSelectionUnknownRecordTests : IClassFixture<SharedCli
 
     private static string TriggerBundle(string prefix, string appIdSuffix)
     {
-        var dir = Bundle(prefix, appIdSuffix, TriggerReader);
+        var dir = Bundle(prefix, appIdSuffix, TriggerReader, systemSymbols: true);
         File.Delete(Path.Combine(dir, "WriterA.Codeunit.al"));
         File.WriteAllText(Path.Combine(dir, "TriggerStore.Codeunit.al"), TriggerStore);
         File.WriteAllText(Path.Combine(dir, "Rows.Table.al"), RowsTable);
@@ -191,7 +191,7 @@ public class ServerAffectedSelectionUnknownRecordTests : IClassFixture<SharedCli
         return dir;
     }
 
-    private static string Bundle(string prefix, string appIdSuffix, string reader)
+    private static string Bundle(string prefix, string appIdSuffix, string reader, bool systemSymbols = false)
     {
         var dir = TestScratch.Dir(prefix);
         Directory.CreateDirectory(dir);
@@ -202,7 +202,7 @@ public class ServerAffectedSelectionUnknownRecordTests : IClassFixture<SharedCli
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
+          {{(systemSymbols ? "\"platform\": \"1.0.0.0\"," : "")}}
           "idRanges": [ { "from": 61900, "to": 61919 } ],
           "runtime": "14.0"
         }
