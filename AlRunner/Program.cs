@@ -6790,9 +6790,9 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
     // answers it later.
     var initializeAnswered = false;
 
-    // 0 is not a line: AlDapStackWalker reports it for a frame it could not map, and the
-    // `stopped` handler reports it when the walk threw. Converting that sentinel would send a
-    // 0-based client -1, so it is passed through unchanged in both converters.
+    // 0 is not a line: AlDapStackWalker reports it for a frame it could not map. Converting
+    // that sentinel would send a 0-based client -1, so it is passed through unchanged in both
+    // converters; AlDapWire withholds it from `stackTrace` and `stopped` rather than sending it.
     int ToClientLine(int oneBasedLine) =>
         linesStartAt1 || oneBasedLine <= 0 ? oneBasedLine : oneBasedLine - 1;
     int FromClientLine(int clientLine) => linesStartAt1 ? clientLine : clientLine + 1;
@@ -6827,6 +6827,7 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
     var registeredScopesBySource =
         new Dictionary<string, HashSet<System.Reflection.MemberInfo>>(AlRunner.Infrastructure.DapBreakpointResolver.PathComparer);
     var lastFrames = new List<AlRunner.Infrastructure.AlDapFrame>();
+    var variableHandles = new AlRunner.Infrastructure.AlDapVariableHandles();
 
     var compiledTcs = new System.Threading.Tasks.TaskCompletionSource<Assembly>(
         System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
@@ -7079,7 +7080,7 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
     // this one) from "the step never fired" or "the client was never scheduled to
     // read it". Per .claude/rules/loud-failures.md: a handler that cannot report a
     // stop must never leave the client waiting with nothing sent. Walk failing now
-    // degrades (empty frame list, line 0) rather than aborting the whole report, and
+    // degrades (empty frame list) rather than aborting the whole report, and
     // the client is told WHY via a DAP `output` event instead of silently getting
     // nothing — the session stays alive and the developer sees the cause instead of
     // an unexplained hang.
@@ -7087,14 +7088,14 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
     {
         AlRunner.Infrastructure.AlDapSession.Trace(
             $"STOPPED-HANDLER enter scope={scope.GetType().Name} stmt={stmt} reason={reason}");
-        var line = 0;
         Exception? walkError = null;
+        // A reference is valid only for the stop it was issued in (DAP VariablesArguments).
+        variableHandles.Reset();
         try
         {
             lastFrames = AlRunner.Infrastructure.AlDapStackWalker.Walk(scope, stmt, sourceMap);
-            line = lastFrames.Count > 0 ? lastFrames[0].Line : 0;
             AlRunner.Infrastructure.AlDapSession.Trace(
-                $"STOPPED-HANDLER walk ok frames={lastFrames.Count} line={line}");
+                $"STOPPED-HANDLER walk ok frames={lastFrames.Count} line={(lastFrames.Count > 0 ? lastFrames[0].Line : 0)}");
         }
         catch (Exception ex)
         {
@@ -7111,16 +7112,11 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                 reason,
                 threadId = 1,
                 allThreadsStopped = true,
-                // In the client's own base (#3881). A walk that threw leaves `line` at 0, the
-                // sentinel ToClientLine passes through rather than converting to -1.
-                //
-                // For a 0-based client that sentinel collides with a legal coordinate: the
-                // first line of a file is also 0. `line` is not a property DAP's StoppedEvent
-                // defines, and the failed walk is separately reported — an `output` event says
-                // why, and the following `stackTrace` returns no frames — so the conversation
-                // still distinguishes them; this one field does not. #3901 carries it, with
-                // the source-less-frame defect it belongs with.
-                line = ToClientLine(line),
+                // In the client's own base (#3881). Omitted when there is no line to report —
+                // a failed walk, or a top frame with no location — rather than sent as the 0
+                // sentinel, which a 0-based client reads as the first line (#3901). `line` is not a
+                // property DAP's StoppedEvent defines; `stackTrace` carries the location.
+                line = AlRunner.Infrastructure.AlDapWire.StoppedLine(lastFrames, ToClientLine),
             });
             AlRunner.Infrastructure.AlDapSession.Trace("STOPPED-HANDLER write-event(stopped) ok");
             if (walkError != null)
@@ -7321,18 +7317,10 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                         }
                         transport.WriteResponse(msg.Seq, command, true, new
                         {
-                            stackFrames = lastFrames.Select(f => new
-                            {
-                                id = f.Id,
-                                name = f.ScopeName,
-                                source = f.SourcePath != null ? new { path = f.SourcePath, name = Path.GetFileName(f.SourcePath) } : null,
-                                line = ToClientLine(f.Line),
-                                // The first column of the line. It was written as a literal 1,
-                                // so a 0-based client was told every frame starts one column
-                                // right of where it does — the same defect as the line half,
-                                // on the surface #3879 did not reach (#3881).
-                                column = ToClientColumn(1),
-                            }),
+                            // A frame with no source goes out with line/column 0, which DAP says a
+                            // client ignores (#3901); see AlDapWire.StackFrame.
+                            stackFrames = lastFrames.Select(f =>
+                                AlRunner.Infrastructure.AlDapWire.StackFrame(f, ToClientLine, ToClientColumn)),
                             totalFrames = lastFrames.Count,
                         });
                         break;
@@ -7340,9 +7328,16 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                     case "scopes":
                     {
                         var frameId = args?.GetProperty("frameId").GetInt32() ?? -1;
+                        if (!lastFrames.Any(f => f.Id == frameId))
+                        {
+                            transport.WriteResponse(msg.Seq, command, false, message: $"unknown frameId {frameId}");
+                            break;
+                        }
+                        // #3906: a frame id is not a variablesReference — the paused frame's id is 0,
+                        // which DAP defines as "no children", so a client never asked for its locals.
                         transport.WriteResponse(msg.Seq, command, true, new
                         {
-                            scopes = new[] { new { name = "Locals", variablesReference = frameId, expensive = false } },
+                            scopes = new[] { new { name = "Locals", variablesReference = variableHandles.ForFrame(frameId), expensive = false } },
                         });
                         break;
                     }
@@ -7350,7 +7345,9 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                     case "variables":
                     {
                         var varsRef = args?.GetProperty("variablesReference").GetInt32() ?? -1;
-                        var frame = lastFrames.FirstOrDefault(f => f.Id == varsRef);
+                        var frame = variableHandles.TryResolveFrame(varsRef, out var handleFrameId)
+                            ? lastFrames.FirstOrDefault(f => f.Id == handleFrameId)
+                            : default;
                         if (frame.Scope == null)
                         {
                             transport.WriteResponse(msg.Seq, command, false, message: $"unknown variablesReference {varsRef}");
