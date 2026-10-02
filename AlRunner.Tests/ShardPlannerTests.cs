@@ -104,4 +104,86 @@ public sealed class ShardPlannerTests
     {
         Assert.Empty(ShardPlanner.Plan(System.Array.Empty<(string, long)>(), jobs: 4));
     }
+
+    // ── PlanSplit (#5130): a bundle heavier than one worker's share is cut across workers ──
+
+    [Fact]
+    public void PlanSplit_OneHeavyBundle_IsSharedByEveryWorker_OnDistinctShards()
+    {
+        var plan = ShardPlanner.PlanSplit(Items(("big", 1000)), jobs: 4, minPieceWeight: 100);
+
+        Assert.Equal(4, plan.Shards.Count);
+        Assert.All(plan.Shards, s => Assert.Equal("big", Assert.Single(s).Name));
+        Assert.Equal(new[] { "big" }, plan.SplitBundles.ToArray());
+    }
+
+    /// <summary>A piece lighter than the minimum is not worth a worker's startup and load: the
+    /// number of pieces is capped, not the number of workers asked for.</summary>
+    [Fact]
+    public void PlanSplit_NeverCutsBelowTheMinimumPieceWeight()
+    {
+        var plan = ShardPlanner.PlanSplit(Items(("big", 1000)), jobs: 8, minPieceWeight: 400);
+
+        Assert.Equal(2, plan.Shards.Count);
+        Assert.Equal(new[] { "big" }, plan.SplitBundles.ToArray());
+    }
+
+    [Fact]
+    public void PlanSplit_BundleUnderTheMinimum_IsNotSplit_AndMatchesPlanExactly()
+    {
+        var items = Items(("a", 50), ("b", 40));
+        var plan = ShardPlanner.PlanSplit(items, jobs: 2, minPieceWeight: 100);
+
+        Assert.Empty(plan.SplitBundles);
+        var expected = ShardPlanner.Plan(items, 2).Select(s => s.Select(i => i.Name).ToArray()).ToArray();
+        var actual = plan.Shards.Select(s => s.Select(i => i.Name).ToArray()).ToArray();
+        Assert.Equal(expected, actual);
+    }
+
+    /// <summary>Balanced bundles are the case bundle-level sharding already handles; splitting
+    /// one of them would only multiply its load cost.</summary>
+    [Fact]
+    public void PlanSplit_BalancedBundles_AreNotSplit()
+    {
+        var plan = ShardPlanner.PlanSplit(Items(("a", 500), ("b", 500), ("c", 500), ("d", 500)), jobs: 4, 100);
+
+        Assert.Empty(plan.SplitBundles);
+        Assert.Equal(4, plan.Shards.Count);
+    }
+
+    /// <summary>The Tests-ERM shape: one bundle far above the fair share, several small ones. Only the
+    /// big one is cut, and every other bundle is still placed exactly once.</summary>
+    [Fact]
+    public void PlanSplit_OnlyTheDominantBundleIsCut_AndTheRestLandOnce()
+    {
+        var plan = ShardPlanner.PlanSplit(
+            Items(("erm", 900), ("scm", 100), ("misc", 100), ("upgrade", 100)), jobs: 4, minPieceWeight: 50);
+
+        Assert.Equal(new[] { "erm" }, plan.SplitBundles.ToArray());
+        var names = plan.Shards.SelectMany(s => s.Select(i => i.Name)).ToList();
+        Assert.Equal(1, names.Count(n => n == "scm"));
+        Assert.Equal(1, names.Count(n => n == "misc"));
+        Assert.Equal(1, names.Count(n => n == "upgrade"));
+        Assert.True(names.Count(n => n == "erm") > 1);
+        // no worker holds two pieces of the same bundle: that would not be a split
+        Assert.All(plan.Shards, s => Assert.Equal(s.Count, s.Select(i => i.Name).Distinct().Count()));
+    }
+
+    [Fact]
+    public void PlanSplit_OneJob_OrZeroWeight_DoesNotSplit()
+    {
+        Assert.Empty(ShardPlanner.PlanSplit(Items(("big", 1000)), jobs: 1, minPieceWeight: 1).SplitBundles);
+        Assert.Empty(ShardPlanner.PlanSplit(Items(("z", 0)), jobs: 4, minPieceWeight: 1).SplitBundles);
+        Assert.Empty(ShardPlanner.PlanSplit(System.Array.Empty<(string, long)>(), jobs: 4, 1).Shards);
+    }
+
+    [Fact]
+    public void PlanSplit_IsDeterministic()
+    {
+        var items = Items(("erm", 900), ("scm", 100), ("misc", 100));
+        string Dump(ShardPlanner.SplitPlan p) =>
+            string.Join("|", p.Shards.Select(s => string.Join(",", s.Select(i => $"{i.Name}:{i.Weight}"))));
+
+        Assert.Equal(Dump(ShardPlanner.PlanSplit(items, 3, 50)), Dump(ShardPlanner.PlanSplit(items, 3, 50)));
+    }
 }

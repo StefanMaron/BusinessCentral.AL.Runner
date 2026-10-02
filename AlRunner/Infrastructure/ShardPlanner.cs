@@ -82,4 +82,76 @@ internal static class ShardPlanner
 
         return result;
     }
+
+    /// <summary>A shard plan in which a heavy bundle may appear in several shards (#5130).
+    /// <see cref="SplitBundles"/> are the names that do: the workers sharing one claim every
+    /// test codeunit of it first come, first served instead of each running the whole bundle.</summary>
+    public sealed record SplitPlan(
+        List<List<(string Name, long Weight)>> Shards, IReadOnlySet<string> SplitBundles);
+
+    /// <summary>
+    /// <see cref="Plan"/>, except that a bundle heavier than one worker's fair share is cut into
+    /// pieces that land on DIFFERENT shards. A bundle gets round(weight / (total / jobs)) pieces,
+    /// at most <paramref name="jobs"/>, and never so many that a piece is lighter than
+    /// <paramref name="minPieceWeight"/>, because every extra worker pays startup, bundle load and
+    /// test-data company load again. When no bundle qualifies the result is exactly
+    /// <c>Plan(items, jobs)</c> with an empty <see cref="SplitPlan.SplitBundles"/>.
+    ///
+    /// A piece is only a placement weight: nothing here knows which test codeunits it covers,
+    /// the workers sharing the bundle decide that at run time.
+    /// </summary>
+    public static SplitPlan PlanSplit(
+        IReadOnlyList<(string Name, long Weight)> items, int jobs, long minPieceWeight)
+    {
+        var noSplit = new SplitPlan(Plan(items, jobs), new HashSet<string>(StringComparer.Ordinal));
+        if (jobs <= 1 || items.Count == 0) return noSplit;
+
+        var total = items.Sum(i => Math.Max(0, i.Weight));
+        if (total == 0) return noSplit;
+        var fairShare = (double)total / jobs;
+
+        var pieces = new List<(string Name, long Weight)>();
+        var anySplit = false;
+        foreach (var item in items)
+        {
+            var w = Math.Max(0, item.Weight);
+            var k = (int)Math.Round(w / fairShare, MidpointRounding.AwayFromZero);
+            k = Math.Min(k, jobs);
+            if (minPieceWeight > 0) k = (int)Math.Min(k, w / minPieceWeight);
+            k = Math.Max(k, 1);
+            if (k > 1) anySplit = true;
+            for (var p = 0; p < k; p++) pieces.Add((item.Name, w / k));
+        }
+        if (!anySplit) return noSplit;
+
+        var shardCount = Math.Min(jobs, pieces.Count);
+        var shards = new List<List<(string Name, long Weight)>>();
+        for (var i = 0; i < shardCount; i++) shards.Add(new List<(string, long)>());
+        var load = new long[shardCount];
+
+        foreach (var piece in pieces
+                     .OrderByDescending(x => x.Weight)
+                     .ThenBy(x => x.Name, StringComparer.Ordinal))
+        {
+            // Lightest shard that does not already hold a piece of this bundle: two pieces on one
+            // worker would just be that worker claiming more of the bundle, which is not a split.
+            var target = -1;
+            for (var s = 0; s < shardCount; s++)
+            {
+                if (shards[s].Any(x => x.Name == piece.Name)) continue;
+                if (target < 0 || load[s] < load[target]) target = s;
+            }
+            // k <= jobs and shardCount = min(jobs, pieces), so a free shard always exists.
+            shards[target].Add(piece);
+            load[target] += piece.Weight;
+        }
+
+        var split = new HashSet<string>(
+            shards.SelectMany(s => s.Select(x => x.Name))
+                  .GroupBy(n => n, StringComparer.Ordinal)
+                  .Where(g => g.Count() > 1)
+                  .Select(g => g.Key),
+            StringComparer.Ordinal);
+        return new SplitPlan(shards, split);
+    }
 }
