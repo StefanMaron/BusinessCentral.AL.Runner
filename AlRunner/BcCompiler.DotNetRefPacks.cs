@@ -5,6 +5,7 @@
 // alias then fails AL0185 "DotNet '<type>' is missing" and is dropped — with a diagnostic that
 // points at the AL, not at the .NET install. Everything the runner reports about the drop is
 // true; what was missing is the cause, so this file supplies it. It never changes what binds.
+// see docs/limitations.md#dotnet-reference-packs
 namespace AlRunner;
 
 public sealed partial class BcCompiler
