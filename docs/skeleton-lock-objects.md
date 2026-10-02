@@ -54,4 +54,4 @@ session (depth 4) found these null `readonly object` fields beyond the ones abov
   `Dispose`) and `NavDatabase.appInformationSyncLock` (no reader in `Ncl.dll`).
 
 None has an in-process path, and each leads into a database or directory the skeleton lacks.
-Tracked, with the measurement, in the follow-up issue linked from #3932.
+Tracked, with the measurement, in #5221.
