@@ -1,5 +1,8 @@
 using System;
 using System.IO;
+using System.Reflection;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -321,5 +324,78 @@ public class Win32StubsLoudFailureTests
         Win32Stubs.Register(isWindows: false);
         Assert.True(Win32Stubs.IsRegisteredForTests,
             "Register(isWindows: false) must behave exactly as before #1673 and register normally.");
+    }
+
+    // ---- #3803: the resolver must reach Microsoft.Dynamics.Framework.UI, not only "Nav." names ----
+
+    private static Assembly EmitUser32Probe(string assemblyName)
+    {
+        var refs = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!)
+            .Split(Path.PathSeparator)
+            .Where(p => Path.GetFileName(p) is "System.Runtime.dll" or "System.Private.CoreLib.dll"
+                or "System.Runtime.InteropServices.dll")
+            .Select(p => (MetadataReference)MetadataReference.CreateFromFile(p))
+            .ToList();
+        const string source = @"
+            public static class Probe
+            {
+                [System.Runtime.InteropServices.DllImport(""user32.dll"")]
+                private static extern short GetKeyState(int nVirtKey);
+                public static short Call() => GetKeyState(0x41);
+            }";
+        var compilation = CSharpCompilation.Create(assemblyName,
+            new[] { CSharpSyntaxTree.ParseText(source) }, refs,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        using var ms = new MemoryStream();
+        var result = compilation.Emit(ms);
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        return Assembly.Load(ms.ToArray());
+    }
+
+    private static short CallProbe(Assembly asm) =>
+        (short)asm.GetType("Probe")!.GetMethod("Call")!.Invoke(null, null)!;
+
+    /// <summary>
+    /// The real defect, driven end to end: an assembly named like BC's client tier
+    /// (<c>Microsoft.Dynamics.Framework.UI</c>, whose KeyboardMapper imports user32's
+    /// GetKeyState) loaded AFTER <see cref="Win32Stubs.Register(bool)"/> must get the shim's
+    /// answer (0 = key not pressed) instead of a DllNotFoundException. Before the fix the
+    /// "Nav." substring filter skipped it.
+    /// </summary>
+    [SkippableFact]
+    public void Resolver_ReachesFrameworkUiAssemblies_NotOnlyNavNamed()
+    {
+        Skip.If(OperatingSystem.IsWindows(), "the shim exists only to fake Win32 on Linux/macOS");
+        Win32Stubs.ResetForTests();
+        Win32Stubs.Register(isWindows: false);
+        var asm = EmitUser32Probe("Microsoft.Dynamics.Framework.UI.Probe3803");
+        Assert.Equal((short)0, CallProbe(asm));
+    }
+
+    /// <summary>The pre-existing "Nav." coverage must survive the widening (positive control).</summary>
+    [SkippableFact]
+    public void Resolver_StillReachesNavNamedAssemblies()
+    {
+        Skip.If(OperatingSystem.IsWindows(), "the shim exists only to fake Win32 on Linux/macOS");
+        Win32Stubs.ResetForTests();
+        Win32Stubs.Register(isWindows: false);
+        var asm = EmitUser32Probe("Microsoft.Dynamics.Nav.Probe3803");
+        Assert.Equal((short)0, CallProbe(asm));
+    }
+
+    /// <summary>
+    /// Negative control: the widening is a vendor-prefix match, not "every assembly". A
+    /// third-party assembly importing user32 must still hit the default loader — otherwise the
+    /// positive tests above would pass for an <c>return true</c> filter too.
+    /// </summary>
+    [SkippableFact]
+    public void Resolver_DoesNotReachUnrelatedAssemblies()
+    {
+        Skip.If(OperatingSystem.IsWindows(), "the shim exists only to fake Win32 on Linux/macOS");
+        Win32Stubs.ResetForTests();
+        Win32Stubs.Register(isWindows: false);
+        var asm = EmitUser32Probe("Contoso.Unrelated.Probe3803");
+        var ex = Assert.Throws<System.Reflection.TargetInvocationException>(() => CallProbe(asm));
+        Assert.IsType<DllNotFoundException>(ex.InnerException);
     }
 }
