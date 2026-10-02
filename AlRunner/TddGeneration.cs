@@ -56,6 +56,9 @@ public sealed record TddGeneratedMember(string ObjectDisplayName, string MemberK
 public static class TddGeneration
 {
     private const string MemberNotFoundDiagnosticId = "AL0132";
+    // #5228: "No overload for method 'X' takes N arguments" — the procedure exists, the call has an
+    // argument count none of its overloads takes.
+    private const string NoOverloadForArgumentCountDiagnosticId = "AL0126";
 
     // NavTypeKind values this file will use as a FIELD type or a PROCEDURE parameter/return
     // type without needing anything beyond the bare type name — every one of these is fixed-
@@ -109,7 +112,7 @@ public static class TddGeneration
         foreach (var diag in emitResult.Diagnostics)
         {
             if (diag.Severity != NavDiag.DiagnosticSeverity.Error) continue;
-            if (diag.Id != MemberNotFoundDiagnosticId) continue;
+            if (diag.Id != MemberNotFoundDiagnosticId && diag.Id != NoOverloadForArgumentCountDiagnosticId) continue;
             if (!diag.Location.IsInSource || diag.Location.SourceTree == null) continue;
 
             try
@@ -118,8 +121,8 @@ public static class TddGeneration
                 if (target == null) continue; // unrecognized shape / unresolvable qualifier — refuse
 
                 var key = target.Value.CrossFile != null
-                    ? CrossKey(target.Value.CrossFile, target.Value.Kind, target.Value.MemberName)
-                    : $"{target.Value.TargetTreeIdx}|{target.Value.Kind}|{target.Value.MemberName}";
+                    ? CrossKey(target.Value.CrossFile, target.Value.Kind, target.Value.MemberKey)
+                    : $"{target.Value.TargetTreeIdx}|{target.Value.Kind}|{target.Value.MemberKey}";
                 if (!generatedByKey.TryGetValue(key, out var member))
                 {
                     member = target.Value.CrossFile != null
@@ -170,21 +173,31 @@ public static class TddGeneration
     /// unrecognized syntax shape, unresolvable qualifier, or a qualifier declared outside this
     /// compile's own trees (a precompiled dependency, out of scope).
     /// </summary>
-    private static (string Kind, int TargetTreeIdx, string TargetObjectName, string MemberName,
-        NavSyntax.MemberAccessExpressionSyntax? Mae, string? CrossFile)? ResolveTarget(
+    private static Target? ResolveTarget(
         NavCA.Compilation compilation, NavSyntax.SyntaxTree[] originalTrees, NavDiag.Diagnostic diag)
     {
         var tree = diag.Location.SourceTree!;
         var root = tree.GetRoot();
         var token = root.FindToken(diag.Location.SourceSpan.Start);
-        if (token.Parent is not NavSyntax.IdentifierNameSyntax idNode) return null;
+        var overload = diag.Id == NoOverloadForArgumentCountDiagnosticId;
+        // AL0126 names the call, not the identifier: the invocation holding the diagnostic is the
+        // call site, and its member name is the existing procedure.
+        var overloadCall = overload
+            ? token.Parent?.AncestorsAndSelf().OfType<NavSyntax.InvocationExpressionSyntax>()
+                .FirstOrDefault(i => i.Expression is NavSyntax.MemberAccessExpressionSyntax)
+            : null;
+        if (overload && overloadCall == null) return null;
+        var idNode = overload
+            ? ((NavSyntax.MemberAccessExpressionSyntax)overloadCall!.Expression).Name as NavSyntax.IdentifierNameSyntax
+            : token.Parent as NavSyntax.IdentifierNameSyntax;
+        if (idNode == null) return null;
         var memberName = Unquote(idNode.Identifier.ValueText ?? idNode.Identifier.Text ?? "");
         if (memberName.Length == 0) return null;
 
         NavSyntax.CodeExpressionSyntax qualifierExpr;
         bool isEnumValueAccess;
         NavSyntax.MemberAccessExpressionSyntax? mae = null;
-        if (idNode.Parent is NavSyntax.OptionAccessExpressionSyntax oae && SpanEq(oae.Name, idNode))
+        if (!overload && idNode.Parent is NavSyntax.OptionAccessExpressionSyntax oae && SpanEq(oae.Name, idNode))
         {
             qualifierExpr = oae.Expression;
             isEnumValueAccess = true;
@@ -225,6 +238,15 @@ public static class TddGeneration
             kind = "field";
         }
 
+        // An overload is told apart by what the call passes: two call sites with the same argument
+        // count but different argument types are two overloads (#5228).
+        string? overloadKey = null;
+        if (overload)
+        {
+            overloadKey = string.Join(",", overloadCall!.ArgumentList.Arguments
+                .Select(a => InferAlTypeText(compilation, a) ?? "?"));
+        }
+
         // Precompiled-dependency / genuinely-unresolvable guard: only a symbol declared in ONE
         // OF THIS COMPILE'S OWN TREES can be generated into — see this file's header comment.
         var declLoc = qualType.Location;
@@ -234,12 +256,22 @@ public static class TddGeneration
             // run declares it (#5037). A precompiled dependency matches no registered source.
             var cross = TddCrossBundle.FindObject(SyntaxTypeFor(kind), qualType.Name);
             if (cross == null) return null;
-            return (kind, -1, qualType.Name, memberName, mae, cross.Value.FilePath);
+            return new Target(kind, -1, qualType.Name, memberName, mae, cross.Value.FilePath, overloadKey);
         }
         var targetTreeIdx = Array.IndexOf(originalTrees, declLoc.SourceTree);
         if (targetTreeIdx < 0) return null;
 
-        return (kind, targetTreeIdx, qualType.Name, memberName, mae, null);
+        return new Target(kind, targetTreeIdx, qualType.Name, memberName, mae, null, overloadKey);
+    }
+
+    /// <summary>What an AL0132 / AL0126 asks for. <see cref="OverloadKey"/> is set for an AL0126:
+    /// the procedure exists and the call needs another overload of it.</summary>
+    private readonly record struct Target(
+        string Kind, int TargetTreeIdx, string TargetObjectName, string MemberName,
+        NavSyntax.MemberAccessExpressionSyntax? Mae, string? CrossFile, string? OverloadKey = null)
+    {
+        public bool IsOverload => OverloadKey != null;
+        public string MemberKey => OverloadKey == null ? MemberName : $"{MemberName}({OverloadKey})";
     }
 
     private static Type SyntaxTypeFor(string kind) => kind switch
@@ -261,8 +293,7 @@ public static class TddGeneration
     /// </summary>
     private static TddGeneratedMember? TryGenerateCrossBundle(
         NavCA.Compilation compilation,
-        (string Kind, int TargetTreeIdx, string TargetObjectName, string MemberName,
-            NavSyntax.MemberAccessExpressionSyntax? Mae, string? CrossFile) target,
+        Target target,
         string key)
     {
         if (!TddCrossBundle.TryBeginAttempt(key)) return null;
@@ -291,7 +322,7 @@ public static class TddGeneration
         (NavSyntax.ObjectSyntax NewObj, TddGeneratedMember Member)? result = target.Kind switch
         {
             "field" => TryGenerateField(compilation, parseOptions, targetObj, target.MemberName, target.Mae!, TypeAllowed),
-            "procedure" => TryGenerateProcedure(compilation, parseOptions, targetObj, target.MemberName, target.Mae!, TypeAllowed),
+            "procedure" => TryGenerateProcedure(compilation, parseOptions, targetObj, target.MemberName, target.Mae!, target.IsOverload, TypeAllowed),
             "enum-value" => TryGenerateEnumValue(parseOptions, targetObj, target.MemberName),
             _ => null,
         };
@@ -308,8 +339,7 @@ public static class TddGeneration
 
     private static TddGeneratedMember? TryGenerate(
         NavCA.Compilation compilation, NavSyntax.SyntaxTree[] trees, NavCA.ParseOptions parseOptions,
-        (string Kind, int TargetTreeIdx, string TargetObjectName, string MemberName,
-            NavSyntax.MemberAccessExpressionSyntax? Mae, string? CrossFile) target)
+        Target target)
     {
         var currentRoot = (NavSyntax.CompilationUnitSyntax)trees[target.TargetTreeIdx].GetRoot();
         var objects = currentRoot.Objects;
@@ -320,7 +350,7 @@ public static class TddGeneration
         (NavSyntax.ObjectSyntax NewObj, TddGeneratedMember Member)? result = target.Kind switch
         {
             "field" => TryGenerateField(compilation, parseOptions, targetObj, target.MemberName, target.Mae!),
-            "procedure" => TryGenerateProcedure(compilation, parseOptions, targetObj, target.MemberName, target.Mae!),
+            "procedure" => TryGenerateProcedure(compilation, parseOptions, targetObj, target.MemberName, target.Mae!, target.IsOverload),
             "enum-value" => TryGenerateEnumValue(parseOptions, targetObj, target.MemberName),
             _ => null,
         };
@@ -373,10 +403,16 @@ public static class TddGeneration
     private static (NavSyntax.ObjectSyntax, TddGeneratedMember)? TryGenerateProcedure(
         NavCA.Compilation compilation, NavCA.ParseOptions parseOptions,
         NavSyntax.ObjectSyntax targetObj, string procName, NavSyntax.MemberAccessExpressionSyntax mae,
-        Func<NavCA.ITypeSymbol, bool>? typeAllowed = null)
+        bool overload, Func<NavCA.ITypeSymbol, bool>? typeAllowed = null)
     {
         if (targetObj is not NavSyntax.CodeunitSyntax codeunitSyntax) return null;
         if (mae.Parent is not NavSyntax.InvocationExpressionSyntax inv) return null;
+        // #5228: an overload is generated only next to a procedure of that name this codeunit
+        // declares. AL0126 also names a call to a built-in method (Codeunit.Run) with the wrong
+        // argument count, and nothing here may add a member with a built-in's name.
+        if (overload && !codeunitSyntax.Members.OfType<NavSyntax.MethodDeclarationSyntax>()
+                .Any(m => Unquote(IdentTextOf(m.Name)).Equals(procName, StringComparison.OrdinalIgnoreCase)))
+            return null;
 
         var paramTypes = new List<string>();
         foreach (var arg in inv.ArgumentList.Arguments)
@@ -529,11 +565,36 @@ public static class TddGeneration
                 ?? SingleCandidate(symInfo2) as NavCA.IMethodSymbol;
             if (outerSymbol == null || ordinal >= outerSymbol.Parameters.Length) return null;
             var paramType = outerSymbol.Parameters[ordinal].ParameterType;
+            // #5146: a Variant parameter (Library Assert's AreEqual) fixes no type, so the other
+            // Variant arguments of the same call do.
+            if (paramType?.NavTypeKind == NavCA.NavTypeKind.Variant)
+                return InferFromVariantSiblings(compilation, argList, outerSymbol, ordinal, typeAllowed);
             if (paramType != null && typeAllowed != null && !typeAllowed(paramType)) return null;
             return TypeSymbolToAlText(paramType);
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// The type of a missing call passed where the outer procedure takes a Variant: the type of
+    /// the OTHER arguments bound to Variant parameters, <c>Assert.AreEqual(25, Cu.CalcPoints(250),
+    /// '...')</c> giving Integer. Refuses (null) when any of them fixes no type, or when they
+    /// do not agree — a Text literal needs a length, a sibling that is itself missing has no type.
+    /// </summary>
+    private static string? InferFromVariantSiblings(NavCA.Compilation compilation,
+        NavSyntax.ArgumentListSyntax argList, NavCA.IMethodSymbol outer, int ordinal,
+        Func<NavCA.ITypeSymbol, bool>? typeAllowed)
+    {
+        string? inferred = null;
+        for (var i = 0; i < argList.Arguments.Count && i < outer.Parameters.Length; i++)
+        {
+            if (i == ordinal || outer.Parameters[i].ParameterType?.NavTypeKind != NavCA.NavTypeKind.Variant) continue;
+            var t = InferAlTypeText(compilation, argList.Arguments[i], typeAllowed);
+            if (t == null || (inferred != null && inferred != t)) return null;
+            inferred = t;
+        }
+        return inferred;
     }
 
     private static NavCA.ISymbol? SingleCandidate(NavCA.SymbolInfo info)

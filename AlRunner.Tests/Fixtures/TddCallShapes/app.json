@@ -1,0 +1,15 @@
+{
+  "id": "5146a0c1-7b3d-4e8f-9a2c-6d4e8f0a1b52",
+  "name": "Runner Tests Fixture - Tdd Call Shapes",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves --tdd (#5146, #5228, #5161) generates a member whose call is nested in an Assert with Variant parameters, generates an overload for an existing procedure called with more arguments, and annotates a test that reaches a generated member through an event subscriber.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65200,
+      "to": 65299
+    }
+  ],
+  "runtime": "14.0"
+}
