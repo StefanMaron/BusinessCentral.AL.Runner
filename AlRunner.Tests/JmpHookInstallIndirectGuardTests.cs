@@ -41,6 +41,7 @@ namespace AlRunner.Tests;
 /// native memory write, for the same reason <see cref="JmpHookRegionSizeTests"/> pins the page
 /// arithmetic: the behavioural proof is a process kill, which is not CI-runnable.
 /// </summary>
+[Collection(JmpHookAuditSerialCollection.Name)]
 public class JmpHookInstallIndirectGuardTests
 {
     // A real MethodBase/MethodInfo pair to hand the decision function. Nothing is patched --
