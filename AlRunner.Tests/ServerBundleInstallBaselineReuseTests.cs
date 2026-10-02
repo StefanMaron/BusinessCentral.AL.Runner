@@ -156,10 +156,15 @@ public sealed class ServerBundleInstallBaselineReuseTests : IClassFixture<Shared
         await using var server = await CliServer.StartAsync(
             extraArgs: new[] { "--package-cache", TestArtifacts.PlatformAppsDir() }, extraEnv: PerfEnv);
 
+        // Every [Test] in the fixture's codeunit, counted from source so a test added there
+        // (#5206 added the audit-field one) is required to pass rather than breaking a literal.
+        var expectedPassed = Count(File.ReadAllText(Path.Combine(fixture, "ItsiTests.Codeunit.al")), "[Test]");
+        Assert.True(expectedPassed >= 7, $"the fixture's codeunit declares only {expectedPassed} [Test]s");
+
         // All three first: a reuse fails the fixture's own AL assertions on requests 2 and 3.
         var slices = new List<string>();
         for (var request = 1; request <= 3; request++)
-            slices.Add(await RunAsync(server, new[] { fixture }, "codeunit", expectedPassed: 6));
+            slices.Add(await RunAsync(server, new[] { fixture }, "codeunit", expectedPassed: expectedPassed));
         Assert.All(slices, stderr =>
         {
             Assert.Contains("not-stored: the seed changed the session identity", stderr);
