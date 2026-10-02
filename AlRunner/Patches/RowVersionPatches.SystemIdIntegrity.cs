@@ -417,8 +417,8 @@ public static partial class RowVersionPatches
 
     /// <summary>
     /// #5203: SystemCreatedAt/By of the row a Modify targets stay that row's own. BC writes a
-    /// Modify as the changeset of the buffer against <c>ReadOnlyBuffer</c>
-    /// (<c>MutableRecordBuffer.ComputeChangeset</c>), and after a key change that read-only
+    /// Modify as only the slots that differ from <c>ReadOnlyBuffer</c>
+    /// (<c>MutableRecordBuffer.OptimizeChanges</c>, from <c>RecordImplementation.ModifyRecordAsync</c>), and after a key change that read-only
     /// buffer still holds the READ row's audit fields, so an untouched one is no change and the
     /// target keeps its own (corpus 60061
     /// <c>Record_Modify_AfterKeySetToAnotherRow_TargetKeepsItsOwnSystemCreatedAt</c>).
