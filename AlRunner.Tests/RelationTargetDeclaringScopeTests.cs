@@ -116,7 +116,8 @@ public class RelationTargetDeclaringScopeTests
             {
                 var resolved = RecordPatches.ResolveTableNameInDeclaringScope(TargetName, writer);
                 Assert.Equal(DepTargetId, resolved?.TableId);
-            });
+            },
+            freshParsedTables: true);
     }
 
     [Fact]
@@ -161,9 +162,8 @@ public class RelationTargetDeclaringScopeTests
             });
     }
 
-    // Two apps of one bundle can each declare the name (one app cannot: AL0197). Both in scope is
-    // a case the corpus has not measured; the resolver prefers the writer's own namespace, as C#
-    // does, and this pins that choice rather than claiming BC's.
+    // Own namespace before imported is the compiler's order; dependency candidates are not
+    // namespace-checked yet (#5224).
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -280,8 +280,26 @@ public class RelationTargetDeclaringScopeTests
     private static ParsedTable SymbolTable(int id) =>
         ((Dictionary<int, (string AppPath, ParsedTable Table)>)IndexField().GetValue(null)!)[id].Table;
 
-    private static void WithState(ParsedTable[] parsed, (string App, ParsedTable Table)[] index, Action act)
+    // freshParsedTables: Clear() resets the Dictionary's free list, so the staged tables enumerate in
+    // the order they were added whatever other classes of this collection left behind. A test whose
+    // answer would otherwise depend on which table _parsedTables enumerates first says so here.
+    private static void WithState(ParsedTable[] parsed, (string App, ParsedTable Table)[] index, Action act,
+        bool freshParsedTables = false)
     {
+        if (freshParsedTables)
+        {
+            var map = ParsedTables();
+            var saved = map.Keys.Cast<object>().Select(k => (k, map[k])).ToList();
+            map.Clear();
+            try { WithState(parsed, index, act); }
+            finally
+            {
+                map.Clear();
+                foreach (var (k, v) in saved) map[k] = v;
+            }
+            return;
+        }
+
         var ids = parsed.Select(t => t.TableId).Concat(index.Select(e => e.Table.TableId)).ToArray();
         var parsedTables = ParsedTables();
         var previousIndex = IndexField().GetValue(null);

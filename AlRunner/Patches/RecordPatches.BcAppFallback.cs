@@ -809,10 +809,9 @@ public static partial class RecordPatches
     /// name means a dependency's table, looked up in the symbol index directly because
     /// <see cref="TryPopulateParsedTableByName"/> would hand back the out-of-scope table.
     /// Null means "no verdict" (no source-parsed table of that name, or no dependency one
-    /// either) and the caller keeps its by-name lookup. Adjudicated on a service tier by corpus
-    /// codeunit 69210 "Test Relation Target NS Scope"; the preference for the writer's own
-    /// namespace over an imported one is the one tier that test does not reach (one app cannot
-    /// declare the name twice, AL0197).
+    /// either) and the caller keeps its by-name lookup. Adjudicated by corpus codeunit 69210
+    /// "Test Relation Target NS Scope". Own namespace before imported is the compiler's order;
+    /// dependency candidates are not namespace-checked yet (#5224).
     /// </summary>
     private static ParsedTable? ResolveInFileScope(string tableName, ParsedTable referencingTable)
     {
