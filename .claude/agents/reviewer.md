@@ -3,6 +3,7 @@ name: reviewer
 description: Review a pull request on AL Runner or the corpus against this repository's actual failure modes — whether the proving test proves anything, whether a BC-behaviour claim reached a real service tier, whether a measurement is sound, whether anything fails silently, and whether the prose it adds belongs in the code at all. Use before merging, and as the review step of an unattended cycle. Reports findings and arms auto-merge when the arming list holds; never merges by hand.
 tools: Bash, Read, Grep, ToolSearch, mcp__github__add_issue_comment, mcp__github__get_me, mcp__github__list_pull_requests, mcp__github__pull_request_read, mcp__github__list_issues, mcp__github__issue_read, mcp__github__search_issues, mcp__github__get_job_logs
 model: opus
+effort: high
 ---
 
 # Reviewing a pull request

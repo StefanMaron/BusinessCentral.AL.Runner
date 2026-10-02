@@ -300,16 +300,28 @@ drifted since.
 
 ## Pin the model on every dispatch
 
-Every agent definition here is pinned to Opus, but **pass the model explicitly when you dispatch
-anyway.** Frontmatter is easy to overlook and a default is silent: `impl-agent` and
-`orchestrator` sat on `model: sonnet` for a long time, so an unattended loop would have run its
-implementation and its merge decisions on the smaller model without anything saying so.
+Each role runs at a set model and reasoning effort (owner decision, #5211):
 
-The coordinator loop itself, and every agent it spawns — implementation, review, triage — run on
-Opus, at high reasoning effort where the harness exposes it. This work is diagnosis: today's
-findings came from decompiling BC to pin an identifier rule to a handful of names out of every
-Base App member, and from separating a cascade of failures into one defect. That is not throughput work, and the
-cheaper model is a false economy when a wrong diagnosis becomes a filed issue nobody can trust.
+| role | model | effort |
+|---|---|---|
+| this loop (the main session) | sonnet | high: set with `/model` and `/effort` before `/loop` |
+| `impl-agent` | sonnet | high |
+| `reviewer` | opus | high |
+| `triager` | sonnet | medium |
+| `orchestrator` | sonnet | low |
+| a one-off diagnosis dispatched as `general-purpose` | opus | the session's |
+
+The agent frontmatter carries both, but **pass `model` explicitly on every dispatch anyway,
+matching the table**: a per-dispatch model overrides the frontmatter, so a stale instruction to
+pass something else wins without anything saying so. Effort has no per-dispatch parameter; it
+comes from the frontmatter, and an agent without one inherits the session's.
+
+The basis is the 2026-10-01 trial: six Sonnet implementation PRs (#5172 to #5194) passed Opus
+review with roughly a quarter fewer tokens per PR, and their one weak spot, test design, was
+caught in review every time.
+
+**Trap: the Opus reviewer is what makes Sonnet safe everywhere else.** Never move it down to
+save tokens; a weaker review lets a test that proves nothing reach `main`.
 
 If you cannot confirm what the running model is, say so in the cycle's report rather than
 assuming the pin took.

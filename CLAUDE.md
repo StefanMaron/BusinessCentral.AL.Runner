@@ -33,7 +33,7 @@ Operating rules live in `.claude/rules/` and are auto-loaded. Task-specific refe
 - Fixing gaps by reusing BC's service tier / patching the runtime engine (proven: BC's compiler runs headless on Linux) → [`docs/service-tier-reuse.md`](docs/service-tier-reuse.md)
 - Writing AL tests, bucket layout, running the matrix → skill `al-runner-tests`
 - `--guide` flag, full agent workflow contract → skill `al-runner-workflow`
-- Triage new untriaged issues → sub-agent `triager` (Opus, runs once at the start of a cycle)
+- Triage new untriaged issues → sub-agent `triager` (Sonnet, runs once at the start of a cycle)
 - Run a coordinator session (delegation, identity reuse, corpus-PR authority, the merge bar,
   measurement rules, environment traps) → skill `orchestrating-a-session` — **invoke it at the
   start of any session that drives work through subagents**
