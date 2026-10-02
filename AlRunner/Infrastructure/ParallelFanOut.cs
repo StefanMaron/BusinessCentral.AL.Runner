@@ -265,15 +265,53 @@ internal static class ParallelFanOut
         return env;
     }
 
+    /// <summary>A bundle lighter than this many AL files (per piece) is never split across
+    /// workers: each extra worker pays startup, bundle load and test-data company load again.
+    /// A judgement, not a measurement (#5130); override with <see cref="MinSplitFilesEnvVar"/>.</summary>
+    public const long DefaultMinSplitFiles = 100;
+
+    public const string MinSplitFilesEnvVar = "AL_RUNNER_JOBS_SPLIT_MIN_FILES";
+
+    private static long MinSplitFiles()
+        => long.TryParse(Environment.GetEnvironmentVariable(MinSplitFilesEnvVar), out var n) && n > 0
+            ? n : DefaultMinSplitFiles;
+
+    /// <summary>
+    /// Why this run may not hand one bundle's test codeunits to several workers, or null when it
+    /// may (#5130). Splitting is only sound where isolation says one codeunit leaves nothing
+    /// behind for the next, and where nothing judges a bundle's own tests from inside one worker.
+    /// </summary>
+    public static string? SplitRefusal(TestIsolation isolation, bool countBaseline, bool expectationsRequireMatch)
+    {
+        if (isolation == TestIsolation.Disabled)
+            return "--isolation disabled keeps state across every test, so a bundle stays in order on one worker";
+        if (countBaseline)
+            return "--count-baseline compares a bundle's whole test count inside one worker";
+        if (expectationsRequireMatch)
+            return "--expectations-require-match audits every entry against the tests one worker discovered";
+        return null;
+    }
+
+    /// <summary>The shard plan: bundles balanced by weight, and (unless refused) heavy bundles cut
+    /// across workers. See <see cref="ShardPlanner.PlanSplit"/>.</summary>
+    public static ShardPlanner.SplitPlan PlanBundles(IReadOnlyList<string> bundles, int jobs, string? splitRefusal)
+    {
+        var weighted = bundles.Select(b => (Name: b, Weight: WeighBundle(b))).ToList();
+        return splitRefusal == null
+            ? ShardPlanner.PlanSplit(weighted, jobs, MinSplitFiles())
+            : new ShardPlanner.SplitPlan(ShardPlanner.Plan(weighted, jobs), new HashSet<string>());
+    }
+
     /// <summary>
     /// Run <paramref name="bundles"/> across <paramref name="jobs"/> worker processes and print
     /// one aggregate summary. Returns the exit code: the worst any worker returned, so a green
     /// aggregate cannot hide a shard that failed.
     /// </summary>
-    public static int Run(IReadOnlyList<string> bundles, IReadOnlyList<string> originalArgs, int jobs)
+    public static int Run(IReadOnlyList<string> bundles, IReadOnlyList<string> originalArgs, int jobs,
+        string? splitRefusal = null)
     {
-        var weighted = bundles.Select(b => (Name: b, Weight: WeighBundle(b))).ToList();
-        var shards = ShardPlanner.Plan(weighted, jobs);
+        var plan = PlanBundles(bundles, jobs, splitRefusal);
+        var shards = plan.Shards;
 
         // ScratchDirs (#2706): the delete at the end of this method only runs on a clean exit,
         // and a --jobs run is exactly the kind that gets killed; the sidecar lets the next
@@ -292,6 +330,19 @@ internal static class ParallelFanOut
         Console.WriteLine($"jobs: {bundles.Count} bundle(s) across {shards.Count} worker process(es)");
         for (var i = 0; i < shards.Count; i++)
             Console.WriteLine($"jobs:   shard {i}: {shards[i].Count} bundle(s), weight {shards[i].Sum(x => x.Weight)}");
+        foreach (var name in plan.SplitBundles.OrderBy(n => n, StringComparer.Ordinal))
+            Console.WriteLine($"jobs:   {name} is shared by {shards.Count(sh => sh.Any(x => x.Name == name))} "
+                + "worker(s): they claim its test codeunits first come, first served");
+        if (splitRefusal != null && PlanBundles(bundles, jobs, null).SplitBundles.Count > 0)
+            Console.WriteLine($"jobs: not splitting a bundle across workers: {splitRefusal}");
+
+        // The claim directory lives under tempDir so ScratchDirs reclaims it with everything else.
+        string? claimDir = null;
+        if (plan.SplitBundles.Count > 0)
+        {
+            claimDir = Path.Combine(tempDir, "claims");
+            Directory.CreateDirectory(claimDir);
+        }
 
         var procs = new List<(System.Diagnostics.Process P, string Junit, Task<string> Out, Task<string> Err)>();
         for (var i = 0; i < shards.Count; i++)
@@ -322,6 +373,12 @@ internal static class ParallelFanOut
                          Environment.GetEnvironmentVariable("AL_RUNNER_TEST_TIMEOUT_SEC")))
                 psi.Environment[kv.Key] = kv.Value;
             psi.Environment[TestSelectionAudit.WorkerEnvVar] = "1";
+            if (claimDir != null)
+            {
+                psi.Environment[UnitClaimQueue.DirEnvVar] = claimDir;
+                psi.Environment[UnitClaimQueue.BundlesEnvVar] =
+                    string.Join("|", plan.SplitBundles.Select(b => Normalize(b)));
+            }
             if (viaDotnet && asm != null) psi.ArgumentList.Add(asm);
             foreach (var a in childArgs) psi.ArgumentList.Add(a);
 
@@ -334,9 +391,11 @@ internal static class ParallelFanOut
         }
 
         var worst = 0;
-        long tests = 0, failures = 0, errors = 0, skipped = 0, notRun = 0, partial = 0;
+        long tests = 0, failures = 0, errors = 0, skipped = 0;
         long selected = 0;
         var selectionUnreported = false;
+        long notRun = 0, partial = 0;
+        var shardOutput = new string[procs.Count];
         for (var i = 0; i < procs.Count; i++)
         {
             var (p, junit, so, se) = procs[i];
@@ -371,6 +430,7 @@ internal static class ParallelFanOut
             // silent loss for every execution failure.
             foreach (var header in NotRunHeaders)
                 notRun += CountOccurrences(stdout, header) + CountOccurrences(stderr, header);
+            shardOutput[i] = stdout + "\n" + stderr;
 
             // #2762: the sibling shape. A bundle that lost SOME suites and still produced tests
             // is not "not run" — its survivors ARE in the totals above, so counting it as
@@ -379,6 +439,18 @@ internal static class ParallelFanOut
             // reprints a clean total for a run in which whole suites never compiled.
             partial += CountOccurrences(stdout, PartialLossHeader)
                      + CountOccurrences(stderr, PartialLossHeader);
+        }
+
+        // A bundle several workers share prints its COMPILE FAIL / EXEC FAIL / SUITE ERRORS header
+        // once per worker. It is one missing bundle, so take the extra sightings back out.
+        foreach (var name in plan.SplitBundles)
+        {
+            var sharing = Enumerable.Range(0, shards.Count)
+                .Where(sh => shards[sh].Any(x => x.Name == name)).ToList();
+            var label = Reporter.BundleLabel(name);
+            foreach (var header in NotRunHeaders)
+                notRun -= ExtraSightings(shardOutput, sharing, $"=== {label}{header}");
+            partial -= ExtraSightings(shardOutput, sharing, $"=== {label}{PartialLossHeader}");
         }
 
         Console.WriteLine();
@@ -404,6 +476,23 @@ internal static class ParallelFanOut
         {
             Console.Error.WriteLine("test-selection: " + TestSelectionAudit.Describe(testFilter));
             worst = TestSelectionAudit.ExitCode;
+        }
+
+        // #5129: BuildChildArgs hands every worker its own file, so the path the caller named is
+        // written here from those files or not at all.
+        var callerJunit = LastValueOf(originalArgs, "--output-junit");
+        if (callerJunit != null)
+        {
+            try
+            {
+                JUnitReport.WriteMergedJUnit(callerJunit, procs.Select(x => x.Junit).ToList());
+                Console.WriteLine($"JUnit XML -> {callerJunit} (merged from {procs.Count} worker(s))");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"jobs: could not write the merged JUnit report to {callerJunit}: {ex.Message}");
+                if (worst < 2) worst = 2;
+            }
         }
 
         // The run's one `Result:` line, after every escalation above; the shards label theirs.
@@ -494,6 +583,17 @@ internal static class ParallelFanOut
     /// bundle's surviving tests are counted in the JUnit totals, so it is under-reported, not
     /// absent. Matched without the count so any number of lost suites is found.</summary>
     internal const string PartialLossHeader = " — SUITE ERRORS (";
+
+    /// <summary>The sightings of <paramref name="needle"/> beyond the first, when EVERY worker in
+    /// <paramref name="sharing"/> printed it: that is one bundle failing identically on each of
+    /// them. A worker that did not print it did not fail on it, and nothing is taken back.</summary>
+    internal static int ExtraSightings(IReadOnlyList<string> shardOutput, IReadOnlyList<int> sharing, string needle)
+    {
+        if (sharing.Count < 2) return 0;
+        var perShard = sharing.Select(sh => CountOccurrences(shardOutput[sh], needle)).ToList();
+        var common = perShard.Min();
+        return common * (sharing.Count - 1);
+    }
 
     /// <summary>How many times a bundle reported COMPILE FAIL or EXEC FAIL in a shard's captured
     /// output — used to tell the aggregate summary how many bundles are missing from its totals,

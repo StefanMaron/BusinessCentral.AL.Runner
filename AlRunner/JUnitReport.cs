@@ -169,6 +169,72 @@ public static class JUnitReport
     }
 
     /// <summary>
+    /// The report a `--jobs` run owes the caller's `--output-junit` path: one `testsuites` document
+    /// holding every shard's suites, in shard order (#5129, #5130). Each shard's own XML comments
+    /// (suites that did not compile, company-init failures) are kept, because a merged report
+    /// without them would read as a complete run. A shard that wrote no file, or a file that is
+    /// not JUnit, is named in a comment rather than skipped silently: its tests are missing from
+    /// the totals above it, and the reader has to be able to tell that from a shard that ran none.
+    /// </summary>
+    public static void WriteMergedJUnit(string outputPath, IReadOnlyList<string> shardFiles)
+    {
+        var shards = new List<(int Index, string File, XElement? Root)>();
+        for (var i = 0; i < shardFiles.Count; i++)
+        {
+            XElement? root = null;
+            try { if (File.Exists(shardFiles[i])) root = XDocument.Load(shardFiles[i]).Root; }
+            catch { /* named in a comment below, like a missing file */ }
+            shards.Add((i, shardFiles[i], root));
+        }
+
+        IEnumerable<XElement> SuitesOf(XElement root) =>
+            root.Name.LocalName == "testsuite" ? new[] { root } : root.Elements("testsuite");
+
+        long tests = 0, failures = 0, errors = 0, skipped = 0;
+        double seconds = 0;
+        foreach (var (_, _, root) in shards)
+        {
+            if (root == null) continue;
+            foreach (var suite in SuitesOf(root))
+            {
+                tests += Attr(suite, "tests");
+                failures += Attr(suite, "failures");
+                errors += Attr(suite, "errors");
+                skipped += Attr(suite, "skipped");
+                seconds += Seconds(suite);
+            }
+        }
+
+        var dir = Path.GetDirectoryName(Path.GetFullPath(outputPath));
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        using var writer = XmlWriter.Create(outputPath, new XmlWriterSettings
+        {
+            Indent = true,
+            Encoding = new UTF8Encoding(false)
+        });
+        writer.WriteStartDocument();
+        writer.WriteStartElement("testsuites");
+        writer.WriteAttributeString("tests", tests.ToString());
+        writer.WriteAttributeString("failures", failures.ToString());
+        writer.WriteAttributeString("errors", errors.ToString());
+        writer.WriteAttributeString("skipped", skipped.ToString());
+        writer.WriteAttributeString("time", seconds.ToString("F3", CultureInfo.InvariantCulture));
+        foreach (var (index, _, root) in shards)
+        {
+            if (root == null)
+            {
+                writer.WriteComment($" shard {index} wrote no readable JUnit file: its tests are MISSING from this report ");
+                continue;
+            }
+            writer.WriteComment($" shard {index} ");
+            foreach (var comment in root.Nodes().OfType<XComment>())
+                writer.WriteComment(comment.Value);
+            foreach (var suite in SuitesOf(root)) suite.WriteTo(writer);
+        }
+        writer.WriteEndElement(); // testsuites
+    }
+
+    /// <summary>
     /// The <c>testsuite</c> elements of each carried file, in the order the files were given
     /// (attempt order). A file that is missing, truncated — what an attempt killed mid-write
     /// leaves behind — or not JUnit-shaped yields no suites. Only DIRECT children of a

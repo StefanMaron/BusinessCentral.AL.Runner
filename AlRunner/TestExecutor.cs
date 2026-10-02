@@ -175,6 +175,13 @@ public sealed class TestExecutor
     public IReadOnlySet<string>? ExactTestFilter { get; set; }
 
     /// <summary>
+    /// Set while this process is one of several `--jobs` workers sharing a bundle (#5130): each
+    /// test codeunit is run only by the worker that claims it, and codeunits are offered largest
+    /// first so the last claim is a small one. Null = run every codeunit, in object-id order.
+    /// </summary>
+    internal Infrastructure.UnitClaimQueue? UnitClaim { get; set; }
+
+    /// <summary>
     /// Per-test timeout, in seconds. v1's `--test-timeout &lt;seconds&gt;` CLI flag
     /// (see #1648); wired from Program.cs. Null = use the
     /// AL_RUNNER_TEST_TIMEOUT_SEC env var if set, else DefaultTestTimeoutSeconds.
@@ -524,6 +531,7 @@ public sealed class TestExecutor
         // #2801: Assembly.GetTypes() has no defined order, and this loop's order IS the
         // test-execution order. Pin it before anything reads `types`.
         types = OrderTestCodeunitsByObjectId(types);
+        if (UnitClaim != null) types = OrderLargestFirst(types);
         PerfTrace.Log($"TestExecutor.GetTypes {types.Length} type(s) {typeSw.ElapsedMilliseconds}ms");
         // #1861: reflecting over the freshly-loaded module's types is one of the issue's
         // named candidates for the flat per-app-group tax. Marked directly (not via
@@ -902,6 +910,9 @@ public sealed class TestExecutor
             scanMs += stageSw.ElapsedMilliseconds;
             if (!isTestCu) continue;
             if (filter != null && !CodeunitMatchesFilter(t, filter)) continue;
+            // After the filter, so a codeunit --test deselects is never claimed, and before the
+            // selected count so the workers' counts sum to the run's (#5130).
+            if (UnitClaim != null && !UnitClaim.TryClaim(assembly.GetName().Name ?? "", t.Name)) continue;
             if (filter != null)
                 FilterSelectedCount += t.GetMethods(BindingFlags.Public | BindingFlags.Instance)
                     .Count(m => IsTestMethod(m) && MethodMatchesFilter(t.Name, m.Name, filter));
@@ -2218,6 +2229,22 @@ public sealed class TestExecutor
     // to be answered for protocol-v2's `errorKind` too. One source of truth.
     private static bool IsTimeout(TestResult result) => result.TimedOut;
 
+    /// <summary>Test codeunits by test-method count, most first, ties by type name; non-test types
+    /// keep their relative order after them. Deterministic, because every worker sharing a bundle
+    /// derives the same order independently and claims down it (#5130).</summary>
+    internal static Type[] OrderLargestFirst(Type[] types)
+    {
+        int Count(Type t) => IsTestCodeunit(t)
+            ? t.GetMethods(BindingFlags.Public | BindingFlags.Instance).Count(IsTestMethod)
+            : -1;
+        return types
+            .Select(t => (Type: t, Count: Count(t)))
+            .OrderByDescending(x => x.Count)
+            .ThenBy(x => x.Type.Name, StringComparer.Ordinal)
+            .Select(x => x.Type)
+            .ToArray();
+    }
+
     // #2415: called right before the timeout path's early `return results;`. Counts
     // every [Test] method this abort abandons — the rest of THIS codeunit (methods
     // after `mi` in source-declaration order) plus every later test codeunit the
@@ -2231,6 +2258,7 @@ public sealed class TestExecutor
         MethodInfo[] orderedMethodsInHungType, int hungMethodIndex,
         Type[] allTypes, int hungTypeIndex, string? filter, IReadOnlySet<string>? exactFilter)
     {
+        var assemblyName = hungType.Assembly.GetName().Name ?? "";
         int remainingInCodeunit = 0;
         for (int mi = hungMethodIndex + 1; mi < orderedMethodsInHungType.Length; mi++)
         {
@@ -2248,6 +2276,10 @@ public sealed class TestExecutor
             var t2 = allTypes[ti];
             if (!IsTestCodeunit(t2)) continue;
             if (filter != null && !CodeunitMatchesFilter(t2, filter)) continue;
+            // Sharing a bundle, a later codeunit another worker already claimed is not lost to
+            // this abort; one still unclaimed is counted, because it runs only if another worker
+            // or a resumed attempt gets to it (#5130).
+            if (UnitClaim != null && UnitClaim.IsClaimed(assemblyName, t2.Name)) continue;
             var count = t2.GetMethods(BindingFlags.Public | BindingFlags.Instance)
                 .Count(mm => IsTestMethod(mm)
                              && (filter == null || MethodMatchesFilter(t2.Name, mm.Name, filter))
@@ -2267,7 +2299,11 @@ public sealed class TestExecutor
             (remainingCodeunits > 0
                 ? $" and {remainingInOtherCodeunits} in {remainingCodeunits} subsequent codeunit(s)"
                 : "") +
-            $" did not run ({total} total)";
+            $" did not run ({total} total)"
+            + (UnitClaim != null
+                ? "; of those, the codeunit(s) no worker has claimed yet run only if another "
+                  + "worker or a resumed attempt reaches them"
+                : "");
         Console.Error.WriteLine($"[test-exec] SUITE ABORTED: {reason}");
         AbortReasons = AbortReasons.Append(reason).ToList();
     }

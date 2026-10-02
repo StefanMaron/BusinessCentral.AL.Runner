@@ -1813,7 +1813,18 @@ if (ProvisionTestDataBackup(AlRunner.Infrastructure.BcArtifacts.SelectedVersion.
 // Only the plain multi-bundle CLI path. --watch, --server and --dap are long-lived single
 // processes whose whole contract is warm in-process state, and one bundle cannot be split
 // across processes without splitting it by test, which this does not do yet.
-if (jobs > 1 && bundles.Count > 1 && !watchMode && !serverMode && !dapMode)
+// #5130: ONE bundle is also fanned out when it is heavy enough to be shared by several workers,
+// each claiming test codeunits first come, first served (docs/jobs-unit-claiming.md).
+var jobsSplitRefusal = AlRunner.Infrastructure.ParallelFanOut.SplitRefusal(
+    isolation, countBaselinePath != null, expectationsRequireMatch);
+// A single bundle did not fan out before, so it must not start refusing (--count-out, --coverage)
+// or losing its report (--out and --output-json are written by each worker, not merged; #5129).
+var singleBundleMaySplit = outPath == null && !outputJson && countOutPath == null
+    && !coverageEnabled && !countBaselineRequireAll;
+if (jobs > 1 && !watchMode && !serverMode && !dapMode
+    && (bundles.Count > 1
+        || (singleBundleMaySplit
+            && AlRunner.Infrastructure.ParallelFanOut.PlanBundles(bundles, jobs, jobsSplitRefusal).SplitBundles.Count > 0)))
 {
     // --count-out reports what THE RUN executed, and a fan-out has no such number to report:
     // the parent hands every bundle to a worker and never runs one itself, so each worker
@@ -1873,7 +1884,7 @@ if (jobs > 1 && bundles.Count > 1 && !watchMode && !serverMode && !dapMode)
             + "Run the covering invocation without --jobs, or drop the flag.");
         return 2;
     }
-    return AlRunner.Infrastructure.ParallelFanOut.Run(bundles, args, jobs);
+    return AlRunner.Infrastructure.ParallelFanOut.Run(bundles, args, jobs, jobsSplitRefusal);
 }
 
 // #4905: refuse a misspelled AL_RUNNER_DEFAULT_TEST_TOOL here, before any work, rather than
@@ -4281,6 +4292,8 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
 
         void RunLoadedApps()
         {
+        // Per bundle, and here rather than above because a deferred run (#4931) comes back later.
+        executor.UnitClaim = AlRunner.Infrastructure.UnitClaimQueue.ForBundle(bundleAbs);
         // Every app's assembly is now in the AppDomain, so this single walk resolves
         // every table's Record CLR type in one pass — including tables belonging to
         // apps that loaded LATER than the app that first registered their NCLMetaTable
@@ -4360,6 +4373,7 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
     }
     else
     {
+        executor.UnitClaim = AlRunner.Infrastructure.UnitClaimQueue.ForBundle(bundleAbs);
         int si = 0;
         foreach (var suite in suites)
         {
