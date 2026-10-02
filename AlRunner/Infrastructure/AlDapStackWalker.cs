@@ -5,8 +5,8 @@
 namespace AlRunner.Infrastructure;
 
 /// <summary>One live AL call-stack frame at a paused breakpoint. <c>Id</c> is a dense
-/// small int (0 = innermost/paused frame), reused directly as the DAP
-/// `stackTrace`/`scopes`/`variables` frame id — no separate id allocator needed.</summary>
+/// small int (0 = innermost/paused frame), used as the DAP `stackTrace` frame id and the `scopes`
+/// `frameId`; never as a `variablesReference` (see AlDapVariableHandles, #3906).</summary>
 public readonly record struct AlDapFrame(
     int Id, string ScopeName, string? SourcePath, int Line, Microsoft.Dynamics.Nav.Runtime.NavMethodScope Scope);
 

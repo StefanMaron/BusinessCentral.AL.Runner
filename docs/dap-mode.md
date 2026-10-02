@@ -112,15 +112,14 @@ Session lifecycle is identical to the TCP transport from here on:
    way in and back into the client's on the way out — at the `setBreakpoints`
    request (`breakpoints[].line`, `breakpoints[].column`, and the legacy `lines[]`
    array), the breakpoint response's `line` and `column`, the `stopped` event's
-   `line`, and every `stackTrace` frame's `line` and `column`. A line of 0 is the
-   sentinel for a frame that could not be mapped, not a coordinate, so it is passed
-   through rather than converted; #3901 carries what that costs a 0-based client.
+   `line`, and every `stackTrace` frame's `line` and `column`. A frame with no location
+   (object not in the source map, or line unresolved) is kept with `source` omitted and
+   `line`/`column` 0, which DAP says a client ignores (#3901). The `stopped` event's `line`
+   is an **adapter extension** (DAP's `StoppedEvent` has none), omitted when the walk
+   failed or the top frame has no location.
 
-   Two things to keep straight about that sentinel. The `stopped` event's `line` is an
-   **adapter extension** — DAP's own `StoppedEvent` has no such property, and a
-   specification-following client reads the location from `stackTrace`. And the
-   sentinel is **internal** line 0: for a client that counts from 0, client line 0 is a
-   real coordinate, which is exactly the collision #3901 records.
+   **Locals handles** (#3906) count up from 1 rather than reusing the frame id (0 is DAP's
+   "no children") and are cleared at every stop; an unknown or stale one is an error.
 
    **A second `initialize` is refused**, with a message saying why. DAP allows it
    only as the first request and only once, and the two bases are negotiated there

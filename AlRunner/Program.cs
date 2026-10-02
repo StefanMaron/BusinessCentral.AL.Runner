@@ -7066,7 +7066,7 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
     // this one) from "the step never fired" or "the client was never scheduled to
     // read it". Per .claude/rules/loud-failures.md: a handler that cannot report a
     // stop must never leave the client waiting with nothing sent. Walk failing now
-    // degrades (empty frame list, line 0) rather than aborting the whole report, and
+    // degrades (empty frame list) rather than aborting the whole report, and
     // the client is told WHY via a DAP `output` event instead of silently getting
     // nothing — the session stays alive and the developer sees the cause instead of
     // an unexplained hang.
