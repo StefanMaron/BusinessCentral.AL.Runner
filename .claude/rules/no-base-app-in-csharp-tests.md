@@ -46,10 +46,13 @@ enforces it for fixtures and generated manifests, with a reason per allowlist en
 entry failing the run. Trap: an entry resting on "fails without it" can stop being true when the
 AL changes, and nothing fails when it does; re-run the removal before trusting one.
 
-Measure per manifest, not per class: a class that fails without the floor usually fails on ONE of its
-manifests (a dep that reads a System table, a `using System...` bundle), and the rest pass. A source
-entry pins how many literals still declare it (`SourceDeclarationCounts`), so a stripped-down file
-cannot take a new floor under its old entry.
+Measure per manifest, not per class: a class that fails without the floor often fails on only some of
+its manifests (a dep that reads a System table, a `using System...` bundle), and the rest pass
+(#5112). A source entry pins how many string literals still declare it (`SourceDeclarationCounts`), so
+a stripped-down file cannot take a new floor literal under its old entry; a writer that takes the floor
+as an argument is pinned once however many calls pass it. Measure under the suite's own configuration:
+it pins `AL_RUNNER_DEFAULT_TEST_TOOL=off` (`DefaultTestToolPin`, #4905), and a bundle hand-run without
+that setting compiled where the same bundle failed with it.
 
 ## Do not conclude a failure set from a run that has not finished
 

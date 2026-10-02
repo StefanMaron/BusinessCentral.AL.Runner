@@ -84,9 +84,9 @@ public sealed class PlatformFloorFixtureGuardTests
         }
     }
 
-    private const string Measured =
-        "measured on #5112: with the floor removed the class fails (bundle exits 3 / EMIT-EXCLUDED) because " +
-        "its AL needs System symbols";
+    // The mechanism differs per entry (a compile error, a bundle that never runs, a request that
+    // returns no events), so it belongs in the entry's own reason, never in this shared text.
+    private const string Measured = "measured on #5112: a completed run with the floor removed fails the class";
 
     /// <summary>Checked-in fixture manifests that keep the floor, with the reason. Paths relative to AlRunner.Tests/.</summary>
     private static readonly Dictionary<string, string> AllowedFixtures = new()
@@ -130,10 +130,9 @@ public sealed class PlatformFloorFixtureGuardTests
         ["PlaceholderFloorProvisioningTests.cs"] = "the floor is the subject: the placeholder 1.0.0.0 floor",
         ["NestedBundleManifestDiscoveryTests.cs"] = "the floor is a parameter of the test: one app declares a future 999.0.0.0 floor",
         ["PhaseLogIntegrationTests.cs"] = "its platformRoots parameter toggles the floor on purpose, to see the phase log with and without it",
-        ["ServerAffectedSelectionUnrecordedStateTests.cs"] = "the bundles that load the Test Runner app need the 27.0.0.0 floor; the other bundles pass without it, so both writers emit it only for those",
 
         // Measured: fails without the floor because the AL needs System symbols.
-        ["AllObjPopulateCostTests.cs"] = "the WriteFixture manifest's AL reads the System virtual tables AllObj and AllObjWithCaption, and its server-mode test returns no events without the floor (" + Measured + "); the file's other two manifests pass without it",
+        ["AllObjPopulateCostTests.cs"] = "only the manifest the server-mode test writes (WriteFixture with systemSymbols: true) keeps it: the server test's AL reads the System virtual tables AllObj and AllObjWithCaption and returns no events without the floor (" + Measured + "); the CLI tests on the same fixture pass without it, as do the file's other two manifests",
         ["AppGroupObjectVisibilityTests.cs"] = "AL reads the System tables AllObj, Table Metadata and XmlPort Metadata (AL0185 Table is missing), and both the WriteApp and the WriteGroup manifests fail without the floor (" + Measured + ")",
         ["InstallBaselineVirtualTableExclusionTests.cs"] = "AL reads AllObj, Field, Table Metadata and Page Metadata (" + Measured + ")",
         ["ObjectSystemTableEmptyRowSetTests.cs"] = "AL reads the System tables Object and AllObj (" + Measured + ")",
@@ -148,9 +147,9 @@ public sealed class PlatformFloorFixtureGuardTests
         ["MissingTestDataDiagnosisTests.cs"] = "--test-data maps the backup onto the System symbols, and without the floor the run resolves none (EXEC-FAIL: no Microsoft/ISV .app dependencies carrying a SymbolReference.json; " + Measured + ")",
         ["MissingTestDataSeededSingletonTests.cs"] = "--test-data maps the backup onto the System symbols, and without the floor the run resolves none (EXEC-FAIL: no Microsoft/ISV .app dependencies carrying a SymbolReference.json; " + Measured + ")",
         ["ReportLayoutFileResolutionTests.cs"] = "AL reads the System table Integer (" + Measured + "; AL0185 Table 'Integer' is missing)",
-        ["ServerAffectedSelectionObjectKindTests.cs"] = Measured,
-        ["ServerAffectedSelectionUnknownRecordTests.cs"] = Measured,
-        ["ServerBundleInstallBaselineReuseTests.cs"] = Measured,
+        ["ServerAffectedSelectionObjectKindTests.cs"] = "its Report reads the System table Integer as a data item, so every manifest in the class fails without the floor (AL0185 Table 'Integer' is missing, EMIT-EXCLUDED; " + Measured + ")",
+        ["ServerAffectedSelectionUnknownRecordTests.cs"] = "the TriggerBundle manifest's trigger store subscribes to the System codeunit Global Triggers (AL0118 the name does not exist; " + Measured + "); the other manifests pass without it",
+        ["ServerBundleInstallBaselineReuseTests.cs"] = "the PublishedVersionIsTheManifestVersion variant reads the System table Published Application and its test fails without the floor (" + Measured + "); the other variants pass without it",
         ["TestPageSourceTableTemporaryIntegerTests.cs"] = "its page fixtures take the System table Integer as SourceTable (" + Measured + "; AL0185 Table 'Integer' is missing)",
         ["WriteTransactionTestBoundaryTests.cs"] = "the report-and-page-field fixture reads the System table Integer (" + Measured + "; AL0185 Table 'Integer' is missing); the file's other three manifests pass without it",
 
@@ -169,7 +168,6 @@ public sealed class PlatformFloorFixtureGuardTests
         ["BaseAppFloorFixtureGuardTests.cs"] = 4,
         ["CoverageMultiObjectFileTests.cs"] = 2,
         ["InstallSeedClosure.cs"] = 2,
-        ["ServerAffectedSelectionUnrecordedStateTests.cs"] = 2,
     };
 
     [Fact]

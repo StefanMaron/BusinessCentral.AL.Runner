@@ -256,9 +256,8 @@ public sealed class ServerBundleInstallBaselineReuseTests : IClassFixture<Shared
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{id(0)}}, "to": {{id(4)}} } ],
-          "runtime": "14.0"{{(checkPublishedVersion ? ",\n          \"target\": \"OnPrem\"" : "")}}
+          "runtime": "14.0"{{(checkPublishedVersion ? ",\n          \"platform\": \"1.0.0.0\",\n          \"target\": \"OnPrem\"" : "")}}
         }
         """);
         var sequenceInstall = useNumberSequence
@@ -267,7 +266,8 @@ public sealed class ServerBundleInstallBaselineReuseTests : IClassFixture<Shared
         var sequenceCheck = useNumberSequence
             ? "if not NumberSequence.Exists('IBRSeq') then Error('the install trigger''s number sequence is missing');"
             : "";
-        // Published Application is OnPrem-scoped, hence the target above for this variant.
+        // Published Application is an OnPrem System table, hence the target and the platform floor
+        // above for this variant; every other variant declares neither.
         var publishedVersionTest = checkPublishedVersion ? """
 
             [Test]
