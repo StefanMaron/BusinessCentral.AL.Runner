@@ -19,6 +19,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **record:** SystemCreatedBy and SystemModifiedBy stamp UserSecurityId(), not a random per-process GUID
 - **records:** a key-change Modify keeps the target row's SystemCreatedAt/By
 - **record:** Modify after setting the key to another row keeps that row's own SystemId
 - **events:** an event declared with a quoted name reaches its subscribers
