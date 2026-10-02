@@ -18,22 +18,31 @@ public class TddRunResult : IDisposable
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
     private readonly string _scratch = TestScratch.Dir("al-runner-tdd-call-shapes");
-    public string StdErr { get; private set; } = "";
-    public int Exit { get; private set; }
-    public List<JsonElement> Tests { get; private set; } = new();
-    private JsonDocument? _doc;
+    private readonly string[] _folders;
+    private readonly Lazy<(string StdErr, int Exit, JsonDocument Doc)> _run;
 
     protected static readonly string ShapesFixture =
         Path.Combine(RepoRoot, "AlRunner.Tests", "Fixtures", "TddCallShapes");
 
+    // The run happens on first read, which is after the test's own TestArtifacts.SkipIfMissing():
+    // a box without artifacts skips visibly there (and fails on a CI leg), never reaching the run.
     public TddRunResult(params string[] folders)
     {
-        if (!TestArtifacts.Present()) return; // the tests skip (or, on CI, fail) in SkipIfMissing
+        _folders = folders;
+        _run = new Lazy<(string, int, JsonDocument)>(Execute);
+    }
+
+    public string StdErr => _run.Value.StdErr;
+    public int Exit => _run.Value.Exit;
+    public List<JsonElement> Tests => _run.Value.Doc.RootElement.GetProperty("tests").EnumerateArray().ToList();
+
+    private (string, int, JsonDocument) Execute()
+    {
         Directory.CreateDirectory(_scratch);
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
         args.Append($" --tdd --cache \"{Path.Combine(_scratch, "cache")}\" --output-json");
-        foreach (var f in folders) args.Append($" \"{f}\"");
+        foreach (var f in _folders) args.Append($" \"{f}\"");
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet", Arguments = args.ToString(),
@@ -50,12 +59,7 @@ public class TddRunResult : IDisposable
         if (!p.WaitForExit(240_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
         p.WaitForExit();
         lock (outSb) lock (errSb)
-        {
-            StdErr = errSb.ToString();
-            Exit = p.ExitCode;
-            _doc = JsonDocument.Parse(outSb.ToString().Trim());
-        }
-        Tests = _doc.RootElement.GetProperty("tests").EnumerateArray().ToList();
+            return (errSb.ToString(), p.ExitCode, JsonDocument.Parse(outSb.ToString().Trim()));
     }
 
     public JsonElement Find(string name) =>
@@ -77,7 +81,7 @@ public class TddRunResult : IDisposable
 
     public void Dispose()
     {
-        _doc?.Dispose();
+        if (_run.IsValueCreated) _run.Value.Doc.Dispose();
         try { Directory.Delete(_scratch, recursive: true); } catch { }
     }
 }
