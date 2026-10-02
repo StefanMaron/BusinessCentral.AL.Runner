@@ -535,8 +535,16 @@ internal static partial class ProgramSupport
         w.WriteLine("                          bundles therefore do not fit in one process, and splitting");
         w.WriteLine("                          them across workers is what makes the run possible at all.");
         w.WriteLine("                          A hung test also ends only its own shard, not the whole run.");
+        w.WriteLine("                          A bundle far above one worker's share is SHARED by several");
+        w.WriteLine("                          workers, which claim its test codeunits first come, first");
+        w.WriteLine("                          served (largest first); this includes a single heavy bundle.");
+        w.WriteLine("                          Not with --isolation disabled, --count-baseline or");
+        w.WriteLine("                          --expectations-require-match, and a single bundle that also");
+        w.WriteLine("                          passes --out, --output-json, --count-out or --coverage stays");
+        w.WriteLine("                          in one process. Every worker loads the shared bundle, so");
+        w.WriteLine("                          memory grows with N. See docs/jobs-unit-claiming.md.");
         w.WriteLine("                          Ignored by --watch/--server/--dap (long-lived warm state)");
-        w.WriteLine("                          and by a single-bundle run. Default: 1.");
+        w.WriteLine("                          and by a single-bundle run that is not shared. Default: 1.");
         w.WriteLine("                          Each worker also gets its own AL_RUNNER_EMIT_TIMEOUT_SEC,");
         w.WriteLine("                          scaled by the shard count: N workers sharing cores can run");
         w.WriteLine("                          a bundle's emit phase roughly N times slower in wall time,");

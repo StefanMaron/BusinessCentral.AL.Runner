@@ -117,6 +117,31 @@ public sealed class JobsUnitClaimEndToEndTests
         Assert.Contains($"Tests: {ClaimFixtureTests}   passed {ClaimFixtureTests}", output);
     }
 
+    /// <summary>One bundle never fanned out before, so it must not start losing a report (`--out`,
+    /// `--output-json` are written by each worker and not merged) or refusing a flag (`--count-out`
+    /// is refused under a fan-out). With any of them the bundle stays in one process.</summary>
+    [SkippableTheory]
+    [InlineData("--out")]
+    [InlineData("--count-out")]
+    [InlineData("--output-json")]
+    public void AFlagAFanOutCannotHonour_KeepsOneBundleInOneProcess(string flag)
+    {
+        TestArtifacts.SkipIfMissing();
+        var scratch = TestScratch.Dir("al-runner-jobs-unit-claim-flag" + flag.TrimStart('-').Replace("-", ""));
+        var target = Path.Combine(scratch, "report.json");
+        var flagArgs = flag == "--output-json" ? flag : $"{flag} \"{target}\"";
+
+        var (exit, output) = RunRunner(
+            $"--cache \"{Path.Combine(scratch, "cache")}\" --jobs 2 {flagArgs} \"{Path.Combine(Fixtures, "JobsUnitClaim")}\"",
+            lowSplitFloor: true);
+
+        Assert.True(exit == 0, $"expected exit 0, got {exit}.\n{output}");
+        Assert.DoesNotContain("is shared by", output);
+        Assert.DoesNotContain("worker process(es)", output);
+        if (flag != "--output-json") Assert.True(File.Exists(target), $"{flag} wrote nothing.\n{output}");
+        else Assert.Matches($"\"total\":\\s*{ClaimFixtureTests}\\b", output);
+    }
+
     /// <summary>#5129 item 1: with several bundles the parent used to hand each worker a private
     /// JUnit path and never write the caller's. It must exist, and hold every worker's tests.</summary>
     [SkippableFact]
