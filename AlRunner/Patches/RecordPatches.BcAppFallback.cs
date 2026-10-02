@@ -795,9 +795,56 @@ public static partial class RecordPatches
                 }
             }
         }
+        if (referencingTable is { Usings: not null } && ResolveInFileScope(tableName, referencingTable) is { } inScope)
+            return inScope;
         return InAppGroupScope("table", _parsedTables).FirstOrDefault(t =>
                    string.Equals(t.TableName, tableName, StringComparison.OrdinalIgnoreCase))
                ?? TryPopulateParsedTableByName(tableName);
+    }
+
+    /// <summary>
+    /// A name written in AL source resolves in the file that wrote it: the file's own namespace
+    /// first, then the global namespace and the namespaces it imports with <c>using</c> (#4133).
+    /// Answers when a source-parsed table carries the name; when none of them is in scope the
+    /// name means a dependency's table, looked up in the symbol index directly because
+    /// <see cref="TryPopulateParsedTableByName"/> would hand back the out-of-scope table.
+    /// Null means "no verdict" (no source-parsed table of that name, or no dependency one
+    /// either) and the caller keeps its by-name lookup. Adjudicated on a service tier by corpus
+    /// codeunit 69210 "Test Relation Target NS Scope"; the preference for the writer's own
+    /// namespace over an imported one is the one tier that test does not reach (one app cannot
+    /// declare the name twice, AL0197).
+    /// </summary>
+    private static ParsedTable? ResolveInFileScope(string tableName, ParsedTable referencingTable)
+    {
+        var named = InAppGroupScope("table", _parsedTables)
+            .Where(t => t.Usings != null
+                && string.Equals(t.TableName, tableName, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (named.Count == 0) return null;
+
+        bool SameNamespace(ParsedTable t) =>
+            string.Equals(t.Namespace, referencingTable.Namespace, StringComparison.OrdinalIgnoreCase);
+        bool Imported(ParsedTable t) =>
+            t.Namespace == null
+            || referencingTable.Usings!.Contains(t.Namespace, StringComparer.OrdinalIgnoreCase);
+
+        var inScope = named.FirstOrDefault(SameNamespace) ?? named.FirstOrDefault(Imported);
+        if (inScope != null) return inScope;
+
+        lock (_bcTableIndexLock)
+        {
+            EnsureBcSymbolTableIndex();
+            if (_bcSymbolTableIndex == null) return null;
+            foreach (var (id, entry) in _bcSymbolTableIndex)
+            {
+                if (!string.Equals(entry.Table.TableName, tableName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (!_parsedTables.ContainsKey(id))
+                    _parsedTables[id] = entry.Table;
+                return _parsedTables[id];
+            }
+        }
+        return null;
     }
 
     private static readonly Regex _rxAnyTableId = new(

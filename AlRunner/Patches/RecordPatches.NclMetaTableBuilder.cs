@@ -608,9 +608,14 @@ public static partial class RecordPatches
         var ps = ctor.GetParameters();
         var args = new object?[ps.Length];
 
+        // A tableextension field writes its names in the extension's file (#4133).
+        var nameScope = parentTable != null && f.ScopeUsings != null
+            ? parentTable with { Namespace = f.ScopeNamespace, Usings = f.ScopeUsings }
+            : parentTable;
+
         // Build calcFormula object up-front if needed (FlowField).
-        object? calcFormulaObj = (f.IsFlowField && f.CalcFormula != null && parentTable != null)
-            ? BuildMetaCalcFormula(f.CalcFormula, parentTable, f.FieldId)
+        object? calcFormulaObj = (f.IsFlowField && f.CalcFormula != null && nameScope != null)
+            ? BuildMetaCalcFormula(f.CalcFormula, nameScope, f.FieldId)
             : null;
         // #3121 — the diagnostic whose absence cost a diagnosis. Every failure INSIDE
         // BuildMetaCalcFormula already logs, but the three-clause gate above could refuse the
@@ -627,7 +632,7 @@ public static partial class RecordPatches
         // turns each into the NCLMetaFieldRelation that GetReferencingRelations' reverse
         // index — and therefore Rename propagation (#1730, #1737) — is built from.
         object? relationsObj = f.RelationArms is { Count: > 0 }
-            ? BuildMetaFieldRelations(f.RelationArms, parentTable, f.FieldName, f.FieldId)
+            ? BuildMetaFieldRelations(f.RelationArms, nameScope, f.FieldName, f.FieldId)
             : null;
         // #3306: a rebuild that NOW resolves must drop any note the previous build left, or the
         // guard would keep refusing a field the runner has since learned to resolve. This is the
