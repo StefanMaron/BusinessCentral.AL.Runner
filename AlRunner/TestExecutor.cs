@@ -2301,7 +2301,7 @@ public sealed class TestExecutor
                 : "") +
             $" did not run ({total} total)"
             + (UnitClaim != null
-                ? "; of those, the codeunit(s) no worker has claimed yet run only if another "
+                ? "; none of those codeunits was claimed yet, so they run only if another "
                   + "worker or a resumed attempt reaches them"
                 : "");
         Console.Error.WriteLine($"[test-exec] SUITE ABORTED: {reason}");

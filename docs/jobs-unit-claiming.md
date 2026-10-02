@@ -11,11 +11,13 @@ load it and each runs only the test codeunits it claims.
   that a piece is lighter than `AL_RUNNER_JOBS_SPLIT_MIN_FILES` files (default 100). That default
   is a judgement, not a measurement: every extra worker pays startup, bundle load and test-data
   company load again.
-- **Isolation** is what makes it sound. Under `Codeunit` (the default) or `Test` isolation the
-  database is rolled back between codeunits, so nothing one codeunit does reaches the next, and
-  a test codeunit is the smallest piece that can run anywhere (its tests share state through the
-  one instance). With `--isolation disabled` state carries across every test, so the bundle stays
-  in order on one worker.
+- **Isolation** is what makes it possible. Under `Codeunit` (the default) or `Test` isolation the
+  database is rolled back between codeunits, and a test codeunit is the smallest piece that can
+  run anywhere (its tests share state through the one instance). SingleInstance state is NOT
+  reset at a codeunit boundary (#4781), so sharing a bundle changes which codeunits a codeunit
+  follows, and with it what it inherits: a serial/split difference can be real order dependence
+  as well as a runner defect. With `--isolation disabled` state carries across every test, so
+  the bundle stays in order on one worker.
 - **Not shared** with `--count-baseline` (each worker would compare its fraction of the bundle
   against the whole bundle's count) or `--expectations-require-match` (each worker discovers only
   the codeunits it claimed, so every other entry would read as unmatched). The plan line says so.

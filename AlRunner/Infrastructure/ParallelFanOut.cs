@@ -278,8 +278,9 @@ internal static class ParallelFanOut
 
     /// <summary>
     /// Why this run may not hand one bundle's test codeunits to several workers, or null when it
-    /// may (#5130). Splitting is only sound where isolation says one codeunit leaves nothing
-    /// behind for the next, and where nothing judges a bundle's own tests from inside one worker.
+    /// may (#5130). Splitting needs the database rolled back between codeunits (SingleInstance
+    /// state still is not, #4781; docs/jobs-unit-claiming.md), and nothing judging a bundle's own
+    /// tests from inside one worker.
     /// </summary>
     public static string? SplitRefusal(TestIsolation isolation, bool countBaseline, bool expectationsRequireMatch)
     {
@@ -308,7 +309,7 @@ internal static class ParallelFanOut
     /// aggregate cannot hide a shard that failed.
     /// </summary>
     public static int Run(IReadOnlyList<string> bundles, IReadOnlyList<string> originalArgs, int jobs,
-        string? splitRefusal = null)
+        string? splitRefusal)
     {
         var plan = PlanBundles(bundles, jobs, splitRefusal);
         var shards = plan.Shards;
