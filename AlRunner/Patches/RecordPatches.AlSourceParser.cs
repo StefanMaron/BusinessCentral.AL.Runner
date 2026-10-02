@@ -862,9 +862,28 @@ public static partial class RecordPatches
             reasonRaw == null ? null : ConstValueText(reasonRaw));
     }
 
+    /// <summary>The namespace a file declares (null when it declares none) and the namespaces it
+    /// imports. A file-scoped <c>namespace</c> and every <c>using</c> are siblings of the objects
+    /// in the compilation unit's children.</summary>
+    private static (string? Namespace, IReadOnlyList<string> Usings) FileScope(IReadOnlyList<NavCA.SyntaxNode> nodes)
+    {
+        string? ns = null;
+        var usings = new List<string>();
+        foreach (var n in nodes)
+        {
+            if (n is NavSyntax.NamespaceDeclarationSyntax nd)
+                ns = string.Join(".", NameParts(nd.Name));
+            else if (n is NavSyntax.UsingDirectiveSyntax ud)
+                usings.Add(string.Join(".", NameParts(ud.Name)));
+        }
+        return (ns, usings);
+    }
+
     private static void TryParseTableFile(string text, string? filePath = null)
     {
-        foreach (var obj in ParseAlObjects(text))
+        var nodes = ParseAlObjects(text);
+        var (fileNamespace, fileUsings) = FileScope(nodes);
+        foreach (var obj in nodes)
         {
             if (obj is not NavSyntax.TableSyntax table) continue;
             if (table.ObjectId?.Value.Value is not int tableId) continue;
@@ -959,13 +978,16 @@ public static partial class RecordPatches
                 DataClassificationName: string.IsNullOrWhiteSpace(dataClassification) ? null : dataClassification,
                 ExternalName: string.IsNullOrWhiteSpace(externalName) ? null : externalName,
                 OwningAppId: filePath != null ? ResolveOwningApp(filePath)?.AppId : null,
-                PrimaryKey: primaryKey);
+                PrimaryKey: primaryKey,
+                Namespace: fileNamespace, Usings: fileUsings);
         }
     }
 
     private static void TryParseTableExtensionFile(string text, string? filePath = null)
     {
-        foreach (var obj in ParseAlObjects(text))
+        var nodes = ParseAlObjects(text);
+        var (fileNamespace, fileUsings) = FileScope(nodes);
+        foreach (var obj in nodes)
         {
             if (obj is not NavSyntax.TableExtensionSyntax ext) continue;
             if (ext.ObjectId?.Value.Value is not int extId) continue;
@@ -983,7 +1005,9 @@ public static partial class RecordPatches
             if (ext.Fields != null)
                 foreach (var f in ext.Fields.Fields.OfType<NavSyntax.FieldSyntax>())
                     if (ParseFieldSyntax(f) is { } pf)
-                        fields.Add(pf);
+                        // The names an extension field writes resolve in the EXTENSION's file,
+                        // not the base table's (#4133).
+                        fields.Add(pf with { ScopeNamespace = fileNamespace, ScopeUsings = fileUsings });
 
             // #3600 — a modify(...) block changes an existing field's properties only in the
             // extension's OWN delta document (BC's <FieldChange>), never in the base table's
@@ -1686,7 +1710,8 @@ internal record ParsedRelationArm(string TableName, string? FieldName, List<Pars
 /// reading is in place when it is.</param>
 /// <param name="EnumTypeName">The enum's name, paired with <see cref="EnumTypeId"/>; null when
 /// the field is not enum-typed.</param>
-internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null, List<ParsedRelationArm>? RelationArms = null, bool RelationValidate = true, bool IsFlowFilter = false, string ObsoleteState = "No", string? ObsoleteReason = null, string? MinValue = null, string? MaxValue = null, bool? Editable = null, string? DataClassificationName = null, int EnumTypeId = 0, string? EnumTypeName = null, string? OptionCaption = null);
+internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null, List<ParsedRelationArm>? RelationArms = null, bool RelationValidate = true, bool IsFlowFilter = false, string ObsoleteState = "No", string? ObsoleteReason = null, string? MinValue = null, string? MaxValue = null, bool? Editable = null, string? DataClassificationName = null, int EnumTypeId = 0, string? EnumTypeName = null, string? OptionCaption = null,
+    string? ScopeNamespace = null, IReadOnlyList<string>? ScopeUsings = null);
 /// <param name="Name">The key's declared AL name (<c>Key1</c>, <c>PrimaryKey</c>, <c>UniqueID</c>),
 /// which is what BC states as <c>MetaKey.KeyName</c> and propagates into the live
 /// <c>NCLMetaKey</c>. NOT <c>MetaKey.Name</c>, which BC derives separately as the positional
@@ -1764,6 +1789,12 @@ internal record ParsedColumnFilter(string FieldName, ParsedColumnFilterKind Kind
 /// <c>TryParseTableFile</c>) or no app.json was found above it. #3600's table-metadata-source
 /// guard uses this to tell a same-app tableextension from a cross-app one; see
 /// <see cref="RecordPatches._extensionSourceInfo"/>.</param>
+/// <param name="Namespace">The namespace the declaring file states, null for the global one.
+/// Only meaningful when <paramref name="Usings"/> is non-null (#4133).</param>
+/// <param name="Usings">The namespaces the declaring file imports with <c>using</c>. Non-null
+/// exactly when the table was parsed from AL source, which is what lets a name it writes be
+/// resolved in that file's scope; null for a table read from a dependency's symbols, whose
+/// names are resolved by the app that compiled them (#4106).</param>
 /// <param name="PrimaryKey">The table's FIRST declared key, with its name and properties —
 /// <see cref="PkFieldIds"/> carries the same field ids and stays for its existing consumers,
 /// which want only the ids. Null when the table declares no key at all, in which case
@@ -1775,4 +1806,5 @@ internal record ParsedTable(int TableId, string TableName,
     string? LookupPageName = null, string? DrillDownPageName = null,
     string? TableTypeName = null,
     string? DataClassificationName = null, string? ExternalName = null,
-    Guid? OwningAppId = null, ParsedKey? PrimaryKey = null);
+    Guid? OwningAppId = null, ParsedKey? PrimaryKey = null,
+    string? Namespace = null, IReadOnlyList<string>? Usings = null);
