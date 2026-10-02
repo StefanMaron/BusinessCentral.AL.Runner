@@ -86,7 +86,9 @@ public sealed class PlatformFloorFixtureGuardTests
 
     // The mechanism differs per entry (a compile error, a bundle that never runs, a request that
     // returns no events), so it belongs in the entry's own reason, never in this shared text.
-    private const string Measured = "measured on #5112: a completed run with the floor removed fails the class";
+    private const string Subject = "the floor is the subject";
+
+    private const string Measured ="measured on #5112: a completed run with the floor removed fails the class";
 
     /// <summary>Checked-in fixture manifests that keep the floor, with the reason. Paths relative to AlRunner.Tests/.</summary>
     private static readonly Dictionary<string, string> AllowedFixtures = new()
@@ -95,23 +97,23 @@ public sealed class PlatformFloorFixtureGuardTests
         ["Fixtures/BcFloorSkip/future-suite/app.json"] = "the floor is the subject (BcVersionFloorSkipTests)",
         ["Fixtures/CrossMajorNote/app.json"] = "the floor is the subject (CrossMajorNoteTests, #2210)",
         ["Fixtures/SubscriberScanAudit/app.json"] = "the floor is the subject (EventSubscriberScanEquivalenceTests)",
-        ["Fixtures/ActiveSessionTable/app.json"] = "AL reads the System tables Active Session and Session",
-        ["Fixtures/SessionVirtualTable/app.json"] = "AL reads the System tables Session and Active Session",
-        ["Fixtures/TimeZoneVirtualTable/app.json"] = "AL reads the System table Time Zone",
-        ["Fixtures/WindowsLanguageVirtualTable/app.json"] = "AL reads the System table Windows Language",
-        ["Fixtures/FeatureKeyVirtualTable/app.json"] = "AL reads the System table Feature Key",
-        ["Fixtures/EventSubscriptionVirtualTable/app.json"] = "AL reads the System table Event Subscription",
-        ["Fixtures/CodeunitMetadataVirtualTable/app.json"] = "AL reads the System tables Metadata and CodeUnit Metadata",
-        ["Fixtures/AggregatePermissionSet/app.json"] = "AL reads Aggregate Permission Set and Tenant Permission Set and declares a PermissionSet",
-        ["Fixtures/ReportLayoutObsoleteExcelSource/app.json"] = "AL reads the System table Report Layout List",
-        ["Fixtures/WatchEmitRegistriesReload/app.json"] = "AL reads the System table Report Layout List",
-        ["Fixtures/EventSubscriptionMultiBundle/AppA/app.json"] = "AL reads the System tables Event Subscription and AllObj",
-        ["Fixtures/EventSubscriptionMultiBundle/AppB/app.json"] = "AL reads the System tables Event Subscription and AllObj",
-        ["Fixtures/SessionUserRowAlreadyPresent/dep/app.json"] = "AL reads the System table User and the session identity",
-        ["Fixtures/SessionUserRowNameCollision/dep/app.json"] = "AL reads the System tables User and User Property",
-        ["Fixtures/InstallTriggerSessionIdentity/dep/app.json"] = "AL reads the System tables User and Access Control",
-        ["Fixtures/DepInstallTriggerSessionIdentity/dep/app.json"] = "AL reads the System tables User, Access Control, Company and NAV App Installed App",
-        ["Fixtures/BundleInstallTriggerSeedVisibility/main/app.json"] = "AL reads the System tables Access Control, Company and Published Application",
+        ["Fixtures/ActiveSessionTable/app.json"] = "AL reads the System tables Active Session and Session (" + Measured + "; ActiveSessionTableTests: AL0185 Table 'Active Session' is missing)",
+        ["Fixtures/SessionVirtualTable/app.json"] = "AL reads the System tables Session and Active Session (" + Measured + "; SessionVirtualTableTests: AL0185 Table 'Session' and Table 'Active Session' are missing)",
+        ["Fixtures/TimeZoneVirtualTable/app.json"] = "AL reads the System table Time Zone (" + Measured + "; TimeZoneVirtualTableTests: AL0185 Table 'Time Zone' is missing)",
+        ["Fixtures/WindowsLanguageVirtualTable/app.json"] = "AL reads the System table Windows Language (" + Measured + "; WindowsLanguageVirtualTableTests: AL0185 Table 'Windows Language' is missing)",
+        ["Fixtures/FeatureKeyVirtualTable/app.json"] = "AL reads the System table Feature Key (" + Measured + "; FeatureKeyVirtualTableTests: AL0185 Table 'Feature Key' is missing)",
+        ["Fixtures/EventSubscriptionVirtualTable/app.json"] = "AL reads the System table Event Subscription (" + Measured + "; EventSubscriptionVirtualTableTests and EventSubscriptionInventoryLazinessTests: AL0185 Table 'Event Subscription' is missing)",
+        ["Fixtures/CodeunitMetadataVirtualTable/app.json"] = "AL reads the System table CodeUnit Metadata (" + Measured + "; CodeunitMetadataVirtualTableTests: AL0185 Table 'CodeUnit Metadata' is missing)",
+        ["Fixtures/AggregatePermissionSet/app.json"] = "AL reads Aggregate Permission Set and Tenant Permission Set and declares a PermissionSet (" + Measured + "; AggregatePermissionSetVirtualTableTests and PermissionMetadataPopulationTests: AL0185 Table 'Aggregate Permission Set' and Table 'Tenant Permission Set' are missing)",
+        ["Fixtures/ReportLayoutObsoleteExcelSource/app.json"] = "AL reads the System table Report Layout List (" + Measured + "; ReportLayoutObsoleteExcelSourceTests: AL0185 Table 'Report Layout List' is missing)",
+        ["Fixtures/WatchEmitRegistriesReload/app.json"] = "AL reads the System table Report Layout List (" + Measured + "; WatchEmitRegistriesReloadTests: AL0185 Table 'Report Layout List' is missing)",
+        ["Fixtures/EventSubscriptionMultiBundle/AppA/app.json"] = "AL reads the System tables Event Subscription and AllObj (" + Measured + "; EventSubscriptionMultiBundleScopeTests, with the floor removed from AppA alone: AL0185 Table 'Event Subscription' is missing)",
+        ["Fixtures/EventSubscriptionMultiBundle/AppB/app.json"] = "AL reads the System tables Event Subscription and AllObj (" + Measured + "; EventSubscriptionMultiBundleScopeTests, with the floor removed from AppB alone: AL0185 Table 'Event Subscription' is missing)",
+        ["Fixtures/SessionUserRowAlreadyPresent/dep/app.json"] = "AL reads the System table User and the session identity (" + Measured + "; SessionUserRowRefusalTests: AL0185 Table 'User' is missing, a source dependency that does not compile)",
+        ["Fixtures/SessionUserRowNameCollision/dep/app.json"] = "AL reads the System tables User and User Property (" + Measured + "; SessionUserRowRefusalTests: AL0185 Table 'User' and Table 'User Property' are missing, a source dependency that does not compile)",
+        ["Fixtures/InstallTriggerSessionIdentity/dep/app.json"] = "AL reads the System tables User and Access Control (" + Measured + "; InstallTriggerSessionIdentityTests and ServerBundleInstallBaselineReuseTests.SeedThatAdoptsAnotherSessionUser_IsNotReused fail; the seed app does not compile, AL0185 Table 'User' is missing)",
+        ["Fixtures/DepInstallTriggerSessionIdentity/dep/app.json"] = "AL reads the System tables User, Access Control, Company and NAV App Installed App (" + Measured + "; DepInstallTriggerSessionIdentityTests fails; the observer app does not compile, AL0185 Table 'User', 'Company', 'Access Control' and 'NAV App Installed App' are missing)",
+        ["Fixtures/BundleInstallTriggerSeedVisibility/main/app.json"] = "AL reads the System tables Access Control, Company and Published Application (" + Measured + "; BundleInstallTriggerSeedVisibilityTests: AL0185 Table 'Company', 'Access Control' and 'Published Application' are missing, EMIT-EXCLUDED)",
     };
 
     /// <summary>
@@ -121,15 +123,15 @@ public sealed class PlatformFloorFixtureGuardTests
     private static readonly Dictionary<string, string> AllowedSources = new()
     {
         // The floor is the subject.
-        ["BaseAppFloorFixtureGuardTests.cs"] = "its synthetic manifests exercise the floor matcher itself",
+        ["BaseAppFloorFixtureGuardTests.cs"] = "the floor is the subject: its synthetic manifests exercise the floor matcher itself",
         ["DefaultBcVersionFloorTests.cs"] = "the floor is the subject: the default BC version follows the declared floor",
         ["DefaultBcVersionSupportedVariantTests.cs"] = "the floor is the subject: the default BC version follows the declared floor",
         ["DeferredPlatformAppsProvisioningTests.cs"] = "the floor is the subject: deferred platform-app provisioning",
         ["DeferredPlatformAppsWithholdTests.cs"] = "the floor is the subject: a platform-only bundle withholds the Microsoft closure",
         ["DependencyResolverTests.cs"] = "the floor is the subject: the packaged floor is read back by DependencyResolver (#3719)",
         ["PlaceholderFloorProvisioningTests.cs"] = "the floor is the subject: the placeholder 1.0.0.0 floor",
-        ["NestedBundleManifestDiscoveryTests.cs"] = "the floor is a parameter of the test: one app declares a future 999.0.0.0 floor",
-        ["PhaseLogIntegrationTests.cs"] = "its platformRoots parameter toggles the floor on purpose, to see the phase log with and without it",
+        ["NestedBundleManifestDiscoveryTests.cs"] = "the floor is the subject: one app declares a future 999.0.0.0 floor, a parameter of the test",
+        ["PhaseLogIntegrationTests.cs"] = "the floor is the subject: its platformRoots parameter toggles the floor on purpose, to see the phase log with and without it",
 
         // Measured: fails without the floor because the AL needs System symbols.
         ["AllObjPopulateCostTests.cs"] = "only the manifest the server-mode test writes (WriteFixture with systemSymbols: true) keeps it: the server test's AL reads the System virtual tables AllObj and AllObjWithCaption and returns no events without the floor (" + Measured + "); the CLI tests on the same fixture pass without it, as do the file's other two manifests",
@@ -236,6 +238,28 @@ public sealed class PlatformFloorFixtureGuardTests
             "A source's allowlist entry covers exactly the manifests that need the floor. Remove the property from the extra "
             + "manifest, or pin the new count in SourceDeclarationCounts WITH the reason it needs it:\n  "
             + string.Join("\n  ", wrong));
+    }
+
+    /// <summary>
+    /// "AL reads the System table X" was first judged by reading (#5112) and
+    /// a read answer is not enough: a hand-run can pass without the floor while the suite's own run
+    /// (DefaultTestToolPin) fails. An entry keeps the floor only because a completed run under
+    /// <c>dotnet test</c> failed without it, or because the floor is the subject.
+    /// </summary>
+    [Fact]
+    public void EveryAllowlistEntry_SaysTheFloorIsTheSubject_OrCarriesAMeasuredBasis()
+    {
+        var unbased = AllowedFixtures.Concat(AllowedSources)
+            .Where(e => !e.Value.Contains(Subject, StringComparison.Ordinal)
+                        && !e.Value.Contains(Measured, StringComparison.Ordinal))
+            .Select(e => $"{e.Key} ({e.Value})")
+            .ToList();
+
+        Assert.True(unbased.Count == 0,
+            "These allowlist entries keep the floor on a reading, not a measurement. Strip the property, run the class "
+            + "to completion under dotnet test (engine bootstrapped, never a hand-run), and either drop the floor or "
+            + "add the object and diagnostic that failed together with Measured:\n  "
+            + string.Join("\n  ", unbased));
     }
 
     [Fact]
