@@ -21,7 +21,7 @@ public sealed class CacheCompileLockTests : IDisposable
 
     private string LockPath(string key = "k1") => Path.Combine(_dir, key + ".lock");
 
-    private static readonly TimeSpan Long = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan Long = TimeSpan.FromSeconds(20);
 
     [Fact]
     public void Uncontended_TakesTheLockWithoutWaiting()

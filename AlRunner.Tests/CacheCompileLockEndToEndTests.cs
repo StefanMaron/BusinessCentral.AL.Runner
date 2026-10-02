@@ -46,7 +46,7 @@ public sealed class CacheCompileLockEndToEndTests
     /// compiling, or a missing gate reads as a pass.</summary>
     private const int BundleCodeunits = 40;
 
-    private static string MainTestAl(int i) => $$"""
+    private static string MainTestAl(int i, int sleepMs) => $$"""
         codeunit {{70900 + i}} "CCL Main Tests {{i}}"
         {
             Subtype = Test;
@@ -57,6 +57,7 @@ public sealed class CacheCompileLockEndToEndTests
                 Total: Integer;
                 n: Integer;
             begin
+                {{(sleepMs > 0 ? $"Sleep({sleepMs});" : "")}}
                 for n := 1 to 3 do
                     Total += n;
                 if Total <> 6 then
@@ -75,13 +76,15 @@ public sealed class CacheCompileLockEndToEndTests
         }
         """;
 
-    private static string BuildFixture(string root)
+    /// <param name="testSleepMs">Makes each test take that long, so a bundle's tests outlast the
+    /// compile phase of the worker that started them.</param>
+    private static string BuildFixture(string root, int testSleepMs = 0)
     {
         var main = Path.Combine(root, "main");
         var packages = Path.Combine(main, ".alpackages");
         Directory.CreateDirectory(packages);
         for (var i = 0; i < BundleCodeunits; i++)
-            File.WriteAllText(Path.Combine(main, $"CclMainTests{i}.Codeunit.al"), MainTestAl(i));
+            File.WriteAllText(Path.Combine(main, $"CclMainTests{i}.Codeunit.al"), MainTestAl(i, testSleepMs));
         File.WriteAllText(Path.Combine(main, "app.json"), $$"""
             {
               "id": "d2e3f4a5-6b7c-4809-9a1b-2c3d4e5f6071",
@@ -144,13 +147,17 @@ public sealed class CacheCompileLockEndToEndTests
     {
         public required System.Diagnostics.Process Process { get; init; }
         public required System.Text.StringBuilder Output { get; init; }
+        public required System.Text.StringBuilder Stdout { get; init; }
+        public required System.Text.StringBuilder Stderr { get; init; }
     }
 
-    private static Spawned Start(string bundlePath, string cacheDir)
+    private static Spawned Start(string bundlePath, string cacheDir,
+        string extraArgs = "", IReadOnlyDictionary<string, string>? env = null)
     {
         var args = new System.Text.StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
         args.Append(" --verbose");
+        args.Append(extraArgs);
         args.Append($" --cache \"{cacheDir}\"");
         args.Append($" \"{bundlePath}\"");
         var psi = new System.Diagnostics.ProcessStartInfo
@@ -159,13 +166,16 @@ public sealed class CacheCompileLockEndToEndTests
             RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
         };
+        foreach (var kv in env ?? new Dictionary<string, string>()) psi.Environment[kv.Key] = kv.Value;
         var sb = new System.Text.StringBuilder();
+        var so = new System.Text.StringBuilder();
+        var se = new System.Text.StringBuilder();
         var p = System.Diagnostics.Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
+        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) { sb.AppendLine(e.Data); so.AppendLine(e.Data); } };
+        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) { sb.AppendLine(e.Data); se.AppendLine(e.Data); } };
         p.BeginOutputReadLine();
         p.BeginErrorReadLine();
-        return new Spawned { Process = p, Output = sb };
+        return new Spawned { Process = p, Output = sb, Stdout = so, Stderr = se };
     }
 
     private static (string Output, int Exit) Finish(Spawned s)
@@ -225,6 +235,132 @@ public sealed class CacheCompileLockEndToEndTests
             var bundleHit = Count(both, "[cache] HIT  key=");
             Assert.True(bundleMiss == 1 && bundleHit == 1,
                 $"bundle: expected 1 compile + 1 HIT across both processes, saw {bundleMiss} MISS(es) + {bundleHit} HIT(s):\n{both}");
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// The same fixture through `--jobs 2`, where the two workers SHARE the bundle: one of them
+    /// compiles everything and the other compiles nothing, and both still run tests. Per-key locks
+    /// alone leave the first to chance (the workers race for each key, so one may compile the
+    /// dependency and the other the bundle, and both then carry the compiler's footprint), which is
+    /// the memory half of #5238.
+    /// </summary>
+    [SkippableFact]
+    public void JobsWorkersSharingABundle_OneCompilesEverything_TheOtherCompilesNothing()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = TestScratch.FlatDir("al-runner-cache-phase-");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var bundle = BuildFixture(root, testSleepMs: 150);
+            var cacheDir = Path.Combine(root, "cache");
+            Directory.CreateDirectory(cacheDir);
+
+            var run = Start(bundle, cacheDir, " --jobs 2",
+                new Dictionary<string, string> { ["AL_RUNNER_JOBS_SPLIT_MIN_FILES"] = "1" });
+            var (output, exit) = Finish(run);
+            Assert.True(exit == 0, $"exit {exit}:\n{output}");
+            var total = 2 * BundleCodeunits;
+            Assert.Contains($"Tests: {total}   passed {total}", run.Stdout.ToString(), StringComparison.Ordinal);
+            Assert.Contains("is shared by 2 worker(s)", run.Stdout.ToString(), StringComparison.Ordinal);
+
+            // The parent prints each worker's stderr in turn, and the parent itself never loads BC's
+            // runtime: this line appears once per worker and nowhere else.
+            const string WorkerStart = "[BcRuntime] Ncl in AppDomain";
+            var blocks = run.Stderr.ToString().Split(WorkerStart).Skip(1).ToArray();
+            Assert.True(blocks.Length == 2, $"expected 2 worker stderr blocks, saw {blocks.Length}:\n{output}");
+
+            int Compiles(string b) => Count(b, "[deps] source-cache WROTE:") + Count(b, "[cache] MISS key=");
+            int Hits(string b) => Count(b, "[deps] source-cache HIT:") + Count(b, "[cache] HIT  key=");
+            var compiling = blocks.Where(b => Compiles(b) > 0).ToArray();
+            var loading = blocks.Where(b => Compiles(b) == 0).ToArray();
+            Assert.True(compiling.Length == 1 && loading.Length == 1,
+                $"expected one worker to compile and one to compile nothing, saw compile counts "
+                + $"[{string.Join(", ", blocks.Select(Compiles))}]:\n{output}");
+            Assert.Equal(2, Compiles(compiling[0]));          // the dependency and the bundle, both here
+            Assert.Equal(2, Hits(loading[0]));                // and both read back by the other
+
+            // The compile phase ends before the tests start, so the worker that waited for it is
+            // not made to wait for the other's tests as well: it joins in, and each ran some.
+            var perWorker = System.Text.RegularExpressions.Regex.Matches(run.Stdout.ToString(), @"^Tests: (\d+) ",
+                System.Text.RegularExpressions.RegexOptions.Multiline).Select(m => int.Parse(m.Groups[1].Value)).ToArray();
+            Assert.True(perWorker.Length >= 3 && perWorker.Take(2).All(n => n > 0),
+                $"expected both workers to run tests, saw per-run counts [{string.Join(", ", perWorker)}]:\n{output}");
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// The mechanism, pinned without a race: a worker of a shared bundle that misses must wait for
+    /// whoever holds the bundle's compile phase and compile nothing meanwhile. The test is the
+    /// holder. With the phase wired in, the worker prints that it is waiting (after
+    /// <see cref="CacheCompileLock.AnnounceAfter"/>) and has compiled nothing; once the test lets
+    /// go it finishes, having compiled everything itself. Without it the worker never waits, so
+    /// the line never comes and the process exits first.
+    /// </summary>
+    [SkippableFact]
+    public void AWorkerOfASharedBundle_WaitsForTheCompilePhaseBeforeCompilingAnything()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = TestScratch.FlatDir("al-runner-cache-phase-hold-");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var bundle = BuildFixture(root);
+            var cacheDir = Path.Combine(root, "cache");
+            var claimDir = Path.Combine(root, "claims");
+            Directory.CreateDirectory(cacheDir);
+            Directory.CreateDirectory(claimDir);
+
+            // The same hand-off ParallelFanOut gives a worker, for a bundle this one worker shares.
+            var queue = new AlRunner.Infrastructure.UnitClaimQueue(claimDir, bundle);
+            var phaseLock = AlRunner.Infrastructure.CacheCompileLock.Acquire(
+                queue.CompilePhaseLockPath, "the phase", TimeSpan.FromSeconds(5), _ => { });
+            Assert.True(phaseLock.HoldsLock);
+
+            var worker = Start(bundle, cacheDir, "", new Dictionary<string, string>
+            {
+                [AlRunner.Infrastructure.UnitClaimQueue.DirEnvVar] = claimDir,
+                [AlRunner.Infrastructure.UnitClaimQueue.BundlesEnvVar] = bundle,
+            });
+            try
+            {
+                string Snapshot() { lock (worker.Output) return worker.Output.ToString(); }
+
+                var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(120);
+                while (DateTime.UtcNow < deadline && !worker.Process.HasExited
+                       && !Snapshot().Contains("another process is compiling", StringComparison.Ordinal))
+                    Thread.Sleep(200);
+
+                var waiting = Snapshot();
+                Assert.True(waiting.Contains("another process is compiling", StringComparison.Ordinal),
+                    $"the worker never waited for the compile phase (exited={worker.Process.HasExited}):\n{waiting}");
+                Assert.DoesNotContain("compiled-on-the-fly", waiting, StringComparison.Ordinal);
+                Assert.DoesNotContain("[cache] MISS", waiting, StringComparison.Ordinal);
+                Assert.False(worker.Process.HasExited, "the worker ended while the phase was held");
+
+                phaseLock.Dispose();
+                var (output, exit) = Finish(worker);
+                Assert.True(exit == 0, $"exit {exit}:\n{output}");
+                Assert.Equal(1, Count(output, "[deps] source-cache WROTE:"));
+                Assert.Equal(1, Count(output, "[cache] MISS key="));
+                Assert.Equal(1, Count(output, $"Tests: {2 * BundleCodeunits}   passed {2 * BundleCodeunits}"));
+            }
+            finally
+            {
+                phaseLock.Dispose();
+                if (!worker.Process.HasExited) { try { worker.Process.Kill(true); } catch { } }
+            }
         }
         finally
         {

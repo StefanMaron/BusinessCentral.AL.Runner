@@ -2949,6 +2949,10 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
     var bundleAbs = Path.GetFullPath(bundle);
     var rel = AlRunner.Infrastructure.WorkingDirectory.DisplayPath(bundleAbs, AlRunner.Infrastructure.WorkingDirectory.TryGet());
     AlRunner.Infrastructure.PhaseLog.BeginBundle(rel, i2);
+    // #5238: null unless this process is one of several workers sharing this bundle. Released at
+    // the end of the per-app compile loop below (before any test runs); `using` covers the paths
+    // that leave the iteration earlier.
+    using var compilePhase = AlRunner.Infrastructure.CompilePhase.Open(bundleAbs);
 
     // Forget the previous bundle's install-trigger registrations so a bundle
     // without deps doesn't inherit a sibling bundle's Install codeunits.
@@ -3577,11 +3581,18 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
             // --print-cache-key compiles nothing, so it never waits.
             if (cachedBytes == null && !printCacheKeyOnly)
             {
-                compileGate = AlRunner.Infrastructure.CacheCompileLock.Acquire(
-                    Path.Combine(alCacheDir, cacheKey + ".compile.lock"), $"{moduleName} ({rel})",
-                    AlRunner.Infrastructure.CacheCompileLock.MaxWaitFromEnvironment(line => Console.Error.WriteLine(line)),
-                    line => Console.Error.WriteLine(line));
-                if (compileGate.WaitedForSibling) ReadCompleteEntry(reportIncomplete: false);
+                void Say(string line) => Console.Error.WriteLine(line);
+                var gateWait = AlRunner.Infrastructure.CacheCompileLock.MaxWaitFromEnvironment(Say);
+                var gateWhat = $"{moduleName} ({rel})";
+                // Among the workers of a shared bundle, one takes the whole compile phase.
+                if (compilePhase != null && compilePhase.EnterToCompile(gateWhat, gateWait, Say))
+                    ReadCompleteEntry(reportIncomplete: false);
+                if (cachedBytes == null)
+                {
+                    compileGate = AlRunner.Infrastructure.CacheCompileLock.Acquire(
+                        Path.Combine(alCacheDir, cacheKey + ".compile.lock"), gateWhat, gateWait, Say);
+                    if (compileGate.WaitedForSibling) ReadCompleteEntry(reportIncomplete: false);
+                }
             }
             }
         }
@@ -3652,12 +3663,14 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                 // Nothing left to compile, so nothing left to hold back.
                 compileGate?.Dispose();
                 compileGate = null;
+                compilePhase?.ReleaseIfNotCompiling();
             }
         }
         if (needCompile && assemblyBytes == null)
         {
             // Released when this block ends, after the publish below, and on any exception.
             using var compileGateScope = compileGate;
+            compilePhase?.NoteCompiling();
             // cacheKey == null with alCacheDir set is #2954's do-not-cache path: there is no key
             // to miss against, and counting it as a MISS would put it in the same bucket as a
             // cold entry that the next run will HIT. It never will — nothing was written.
@@ -4321,6 +4334,8 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
         // test run below is a SEPARATE pass, and leaving this row open would bank the
         // whole pass onto it.
         AlRunner.Infrastructure.PhaseLog.EndApp();
+        // #5238: this bundle's compile phase is over; the workers waiting on it load what it wrote.
+        compilePhase?.Dispose();
 
         if (deferBundleRuns)
         {

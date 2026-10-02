@@ -779,16 +779,28 @@ public sealed class DependencyLoader
         if (TryServeFromSourceCache() is { } cacheHit) return cacheHit;
 
         // #5238: a miss is a compile, and `--jobs` workers sharing a bundle all miss together, so
-        // without this every one of them compiles every dependency. One process compiles; the rest
-        // wait here, then read what it published. Held to the end of the method: through the
-        // compile and the publish below.
+        // without this every one of them compiles every dependency. Among those workers one takes
+        // the whole compile phase (CompilePhase) and the rest wait for it here; for any other
+        // process sharing the cache directory the per-key lock makes one compile the key.
+        // Both are held through the compile and the publish below.
+        void Say(string line) => Console.Error.WriteLine(line);
+        var what = $"dependency {m.Name} v{m.Version}";
+        var phase = CompilePhase.Current;
+        if (phase != null && phase.EnterToCompile(what, CacheCompileLock.MaxWaitFromEnvironment(Say), Say)
+            && TryServeFromSourceCache() is { } cacheHitAfterPhase)
+        {
+            phase.ReleaseIfNotCompiling();
+            return cacheHitAfterPhase;
+        }
         using var compileGate = CacheCompileLock.Acquire(
-            Path.Combine(cacheDir, cacheKey + ".compile.lock"),
-            $"dependency {m.Name} v{m.Version}",
-            CacheCompileLock.MaxWaitFromEnvironment(line => Console.Error.WriteLine(line)),
-            line => Console.Error.WriteLine(line));
+            Path.Combine(cacheDir, cacheKey + ".compile.lock"), what,
+            CacheCompileLock.MaxWaitFromEnvironment(Say), Say);
         if (compileGate.WaitedForSibling && TryServeFromSourceCache() is { } cacheHitAfterWait)
+        {
+            phase?.ReleaseIfNotCompiling();
             return cacheHitAfterWait;
+        }
+        phase?.NoteCompiling();
 
         // Per-process, NOT the machine-wide identity-only path this used to be (#2696): the
         // delete-then-rewrite below raced two runners resolving the same dependency, and one
