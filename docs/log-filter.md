@@ -38,7 +38,7 @@ elsewhere (`[provision-gap]`, `[test-exec]` warnings), and exception messages (`
 
 - **Loud:** `al-locals`, `bc-floor`, `count-baseline`, `count-out`, `dep-load-fail`,
   `dep-metadata` (bad switch value, cache write failure), `dep-metadata-fail`,
-  `install-trigger`, `oos-in-try`, `page-control-field`, `phase-log`, `provision-gap`,
+  `dotnet-ref-packs` (#5134), `install-trigger`, `oos-in-try`, `page-control-field`, `phase-log`, `provision-gap`,
   `report-metadata` (document parse fallback), `servicetier-dll` (load failure, index skip),
   `source-dep`, `source-map`, `test-data`, `test-exec`, `type-index` (subscribers not
   registered).

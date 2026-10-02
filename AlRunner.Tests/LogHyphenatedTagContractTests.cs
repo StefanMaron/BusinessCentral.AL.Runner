@@ -41,6 +41,8 @@ public sealed class LogHyphenatedTagContractTests
         new("AlRunner/DependencyLoader.cs", "dep-metadata", Kind.Loud),
         new("AlRunner/DependencyMetadataProducer.cs", "dep-metadata", Kind.Loud, Anchor: "cache write failed"),
         new("AlRunner/DependencyMetadataProducer.cs", "dep-metadata-fail", Kind.Loud),
+        // The up-front missing-reference-pack warning (#5134), printed unconditionally before the first compile; at default verbosity it is the only account of why DotNet objects drop.
+        new("AlRunner/BcCompiler.DotNetRefPacks.cs", "dotnet-ref-packs", Kind.Loud),
         new("AlRunner/InstallTriggerRunner.cs", "install-trigger", Kind.Loud),
         new("AlRunner/Patches/ApplicationObjectBasePatches.cs", "oos-in-try", Kind.Loud),
         new("AlRunner/Patches/RecordPatches.PageControlFieldFromBcDocument.cs", "page-control-field", Kind.Loud),
