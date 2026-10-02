@@ -222,7 +222,6 @@ public sealed class CoverageMultiObjectFileTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 63600, "to": 63619 } ],
           "runtime": "14.0"
         }
@@ -353,7 +352,6 @@ public sealed class CoverageMultiObjectFileTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 63670, "to": 63689 } ],
           "runtime": "14.0"
         }
@@ -554,7 +552,6 @@ public sealed class CoverageMultiObjectFileTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 63700, "to": 63739 } ],
           "runtime": "14.0"
         }

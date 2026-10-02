@@ -162,6 +162,22 @@ internal static class CSharpSource
         return false;
     }
 
+    /// <summary>
+    /// How many string-literal tokens satisfy <paramref name="match"/> (same <c>Text</c> /
+    /// <c>ValueText</c> rule as <see cref="AnyStringLiteral"/>). Each token counts once.
+    /// </summary>
+    internal static int CountStringLiterals(string sourceText, Func<string, bool> match)
+    {
+        var count = 0;
+        foreach (var token in CSharpSyntaxTree.ParseText(sourceText).GetRoot().DescendantTokens())
+        {
+            if (!IsLiteralContent(token.Kind())) continue;
+            if (match(token.Text) || match(token.ValueText)) count++;
+        }
+
+        return count;
+    }
+
     /// <summary>Every .cs file under <paramref name="dir"/>, refusing rather than returning an
     /// empty list: a scan with nothing to scan reporting zero violations is the worst property a
     /// guard can have.</summary>

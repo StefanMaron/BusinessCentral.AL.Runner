@@ -35,7 +35,6 @@ public class WriteTransactionTestBoundaryTests
           "publisher": "Repro3468",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62470, "to": 62479 } ],
           "runtime": "14.0"
         }
@@ -208,7 +207,6 @@ public class WriteTransactionTestBoundaryTests
           "publisher": "Repro3480",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62480, "to": 62489 } ],
           "runtime": "14.0"
         }
@@ -628,7 +626,6 @@ public class WriteTransactionTestBoundaryTests
           "publisher": "Repro3586",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62550, "to": 62559 } ],
           "runtime": "14.0"
         }

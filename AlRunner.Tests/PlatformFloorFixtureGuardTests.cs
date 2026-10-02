@@ -60,6 +60,9 @@ public sealed class PlatformFloorFixtureGuardTests
             ? ManifestDeclaresPlatform(text)
             : CSharpSource.AnyStringLiteral(text, t => PlatformProperty.IsMatch(t));
 
+    internal static int CountDeclaringLiterals(string csSource) =>
+        CSharpSource.CountStringLiterals(csSource, t => PlatformProperty.IsMatch(t));
+
     private static bool DeclaresPlatformFloor(string path) =>
         DeclaresPlatformFloor(path, File.ReadAllText(path));
 
@@ -105,13 +108,9 @@ public sealed class PlatformFloorFixtureGuardTests
         ["Fixtures/EventSubscriptionMultiBundle/AppA/app.json"] = "AL reads the System tables Event Subscription and AllObj",
         ["Fixtures/EventSubscriptionMultiBundle/AppB/app.json"] = "AL reads the System tables Event Subscription and AllObj",
         ["Fixtures/SessionUserRowAlreadyPresent/dep/app.json"] = "AL reads the System table User and the session identity",
-        ["Fixtures/SessionUserRowAlreadyPresent/main/app.json"] = "AL reads the System table User and the session identity",
         ["Fixtures/SessionUserRowNameCollision/dep/app.json"] = "AL reads the System tables User and User Property",
-        ["Fixtures/SessionUserRowNameCollision/main/app.json"] = "AL reads the System tables User and User Property",
         ["Fixtures/InstallTriggerSessionIdentity/dep/app.json"] = "AL reads the System tables User and Access Control",
-        ["Fixtures/InstallTriggerSessionIdentity/main/app.json"] = "AL reads the session identity the install trigger keys on (System User and Access Control)",
         ["Fixtures/DepInstallTriggerSessionIdentity/dep/app.json"] = "AL reads the System tables User, Access Control, Company and NAV App Installed App",
-        ["Fixtures/DepInstallTriggerSessionIdentity/main/app.json"] = "depends on the dep fixture that reads System tables; both bundles are one install closure",
         ["Fixtures/BundleInstallTriggerSeedVisibility/main/app.json"] = "AL reads the System tables Access Control, Company and Published Application",
     };
 
@@ -131,33 +130,46 @@ public sealed class PlatformFloorFixtureGuardTests
         ["PlaceholderFloorProvisioningTests.cs"] = "the floor is the subject: the placeholder 1.0.0.0 floor",
         ["NestedBundleManifestDiscoveryTests.cs"] = "the floor is a parameter of the test: one app declares a future 999.0.0.0 floor",
         ["PhaseLogIntegrationTests.cs"] = "its platformRoots parameter toggles the floor on purpose, to see the phase log with and without it",
-        ["ServerAffectedSelectionUnrecordedStateTests.cs"] = "the test-runner variant needs the 27.0.0.0 floor and a second test bumps the floor as the edit under test",
+        ["ServerAffectedSelectionUnrecordedStateTests.cs"] = "the bundles that load the Test Runner app need the 27.0.0.0 floor; the other bundles pass without it, so both writers emit it only for those",
 
         // Measured: fails without the floor because the AL needs System symbols.
-        ["AllObjPopulateCostTests.cs"] = "AL reads the System virtual tables AllObj and AllObjWithCaption (" + Measured + ")",
-        ["AppGroupObjectVisibilityTests.cs"] = "AL reads AllObj, Table Metadata, Page Metadata, Report Metadata and Event Subscription (" + Measured + ")",
+        ["AllObjPopulateCostTests.cs"] = "the WriteFixture manifest's AL reads the System virtual tables AllObj and AllObjWithCaption, and its server-mode test returns no events without the floor (" + Measured + "); the file's other two manifests pass without it",
+        ["AppGroupObjectVisibilityTests.cs"] = "AL reads the System tables AllObj, Table Metadata and XmlPort Metadata (AL0185 Table is missing), and both the WriteApp and the WriteGroup manifests fail without the floor (" + Measured + ")",
         ["InstallBaselineVirtualTableExclusionTests.cs"] = "AL reads AllObj, Field, Table Metadata and Page Metadata (" + Measured + ")",
         ["ObjectSystemTableEmptyRowSetTests.cs"] = "AL reads the System tables Object and AllObj (" + Measured + ")",
-        ["ParentManifestNotReadSubprocessTests.cs"] = "AL reads the System table AllObj (" + Measured + ")",
+        ["ParentManifestNotReadSubprocessTests.cs"] = "the parent manifest's folder fixture reads the System table AllObj and fails without the floor (" + Measured + "); the own-manifest manifest passes without it",
         ["RecordLinkColumnsEndToEndTests.cs"] = "AL reads the System table Record Link (" + Measured + ")",
         ["RecordLinkCompanyFilterEndToEndTests.cs"] = "AL reads the System table Record Link (" + Measured + ")",
-        ["InstallSeedClosure.cs"] = "the install-seed closure writes rows through the System table Record Link (" + Measured + ")",
-        ["BackupReaderFailureReportingTests.cs"] = Measured,
-        ["CliMultiPathBundleRunTests.cs"] = Measured,
-        ["CoverageMultiObjectFileTests.cs"] = Measured,
-        ["CurrPageUpdateRefreshTests.cs"] = Measured,
-        ["MissingTestDataDiagnosisTests.cs"] = Measured,
-        ["MissingTestDataSeededSingletonTests.cs"] = Measured,
-        ["PartialCompanyInitAcceptanceEscalationTests.cs"] = Measured,
-        ["ReportLayoutFileResolutionTests.cs"] = Measured,
+        ["InstallSeedClosure.cs"] = "the seed app's install trigger writes the System table Record Link and the bundle reads it (" + Measured + "); the two extra-dependency manifests pass without it",
+        ["BackupReaderFailureReportingTests.cs"] = "--test-data maps the backup onto the System symbols, and without the floor the run resolves none (EXEC-FAIL: no Microsoft/ISV .app dependencies carrying a SymbolReference.json; " + Measured + ")",
+        ["CliMultiPathBundleRunTests.cs"] = "AL reads AllObj, Table Metadata and XmlPort Metadata (" + Measured + "; AL0185 Table is missing)",
+        ["CoverageMultiObjectFileTests.cs"] = "two of its manifests belong to bundles whose AL has `using System.Utilities;`, which fails AL0791 (namespace unknown) without the floor (" + Measured + "); the other three pass without it",
+        ["CurrPageUpdateRefreshTests.cs"] = "its page fixture takes the System table Integer as SourceTable (" + Measured + "; AL0185 Table 'Integer' is missing)",
+        ["MissingTestDataDiagnosisTests.cs"] = "--test-data maps the backup onto the System symbols, and without the floor the run resolves none (EXEC-FAIL: no Microsoft/ISV .app dependencies carrying a SymbolReference.json; " + Measured + ")",
+        ["MissingTestDataSeededSingletonTests.cs"] = "--test-data maps the backup onto the System symbols, and without the floor the run resolves none (EXEC-FAIL: no Microsoft/ISV .app dependencies carrying a SymbolReference.json; " + Measured + ")",
+        ["ReportLayoutFileResolutionTests.cs"] = "AL reads the System table Integer (" + Measured + "; AL0185 Table 'Integer' is missing)",
         ["ServerAffectedSelectionObjectKindTests.cs"] = Measured,
         ["ServerAffectedSelectionUnknownRecordTests.cs"] = Measured,
         ["ServerBundleInstallBaselineReuseTests.cs"] = Measured,
-        ["TestPageSourceTableTemporaryIntegerTests.cs"] = Measured,
-        ["WriteTransactionTestBoundaryTests.cs"] = Measured,
+        ["TestPageSourceTableTemporaryIntegerTests.cs"] = "its page fixtures take the System table Integer as SourceTable (" + Measured + "; AL0185 Table 'Integer' is missing)",
+        ["WriteTransactionTestBoundaryTests.cs"] = "the report-and-page-field fixture reads the System table Integer (" + Measured + "; AL0185 Table 'Integer' is missing); the file's other three manifests pass without it",
 
         ["RecordLinkStoreEndToEndTests.cs"] = "AL reads the System table Record Link (" + Measured + ")",
-        ["StaleBundleSymbolAppOwnershipTests.cs"] = Measured,
+        ["StaleBundleSymbolAppOwnershipTests.cs"] = "AL reads the System tables AllObj and Published Application (" + Measured + "; AL0185 Table is missing)",
+    };
+
+    /// <summary>
+    /// How many string literals in an allowlisted source still declare the floor, when that is not
+    /// one. An entry that only said "this file may declare it" would let a re-added manifest ride
+    /// the entry of a file that had been stripped down to the one that genuinely needs it.
+    /// </summary>
+    private static readonly Dictionary<string, int> SourceDeclarationCounts = new()
+    {
+        ["AppGroupObjectVisibilityTests.cs"] = 2,
+        ["BaseAppFloorFixtureGuardTests.cs"] = 4,
+        ["CoverageMultiObjectFileTests.cs"] = 2,
+        ["InstallSeedClosure.cs"] = 2,
+        ["ServerAffectedSelectionUnrecordedStateTests.cs"] = 2,
     };
 
     [Fact]
@@ -207,6 +219,25 @@ public sealed class PlatformFloorFixtureGuardTests
         Assert.True(stale.Count == 0,
             "These allowlist entries no longer declare the platform floor (or no longer exist). Delete them:\n  "
             + string.Join("\n  ", stale));
+    }
+
+    [Fact]
+    public void EverySourceEntry_PinsHowManyManifestLiteralsStillDeclareTheFloor()
+    {
+        var wrong = new List<string>();
+        foreach (var rel in AllowedSources.Keys)
+        {
+            var path = Path.Combine(TestsDir, rel.Replace('/', Path.DirectorySeparatorChar));
+            if (!File.Exists(path)) continue; // reported by the stale-entry fact
+            var expected = SourceDeclarationCounts.GetValueOrDefault(rel, 1);
+            var actual = CountDeclaringLiterals(File.ReadAllText(path));
+            if (actual != expected) wrong.Add($"{rel}: {actual} literal(s) declare the floor, the allowlist pins {expected}");
+        }
+
+        Assert.True(wrong.Count == 0,
+            "A source's allowlist entry covers exactly the manifests that need the floor. Remove the property from the extra "
+            + "manifest, or pin the new count in SourceDeclarationCounts WITH the reason it needs it:\n  "
+            + string.Join("\n  ", wrong));
     }
 
     [Fact]
@@ -265,6 +296,21 @@ public sealed class PlatformFloorFixtureGuardTests
         Assert.True(DeclaresPlatformFloor("F.cs", Sub("""
             public class F { public string M(string v) => $"{{ EPROP: \"{v}\" }}"; }
             """)));
+    }
+
+    [Fact]
+    public void TwoManifestLiteralsInOneSource_CountAsTwoDeclarations()
+    {
+        Assert.Equal(2, CountDeclaringLiterals(Sub("""
+            public class F
+            {
+                public string A() => "{ \"id\": \"a\", EPROP: \"1.0.0.0\" }";
+                public string B() => "{ \"id\": \"b\" }";
+                public string C() => "{ \"id\": \"c\", EPROP: \"27.0.0.0\" }";
+                // No PROP: "1.0.0.0" here.
+            }
+            """)));
+        Assert.Equal(0, CountDeclaringLiterals("public class F { public string A() => \"{ }\"; }"));
     }
 
     [Fact]
