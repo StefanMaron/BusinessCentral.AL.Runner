@@ -166,8 +166,10 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             ["DefineSymbolsDependencyCacheTests"] = 43,
             // #5039: nine runner spawns on one cache root; 36-43s locally, not yet on CI.
             ["DependencyMetadataCacheKeyTests"] = 43,
-            // #5233: one runner spawn that compiles Test Runner against the closure; 44s locally, not yet on CI.
-            ["DeferredAttemptDependencyFloorTests"] = 44,
+            // #5233: one runner spawn that compiles Test Runner against the closure. LOCAL figure: 46s
+            // (load average about 6); a reviewer saw 67-69s under heavier load. Re-record from the
+            // first CI leg that reports it.
+            ["DeferredAttemptDependencyFloorTests"] = 46,
             // #4204: five collections absent from this table on run 35017043142's BC 28.4
             // leg. FloorOnlyBundleEnumFieldTests at 76.4s crossed the >= 75s band and failed
             // the leg; the other four sat in the >= 60s advisory band, and

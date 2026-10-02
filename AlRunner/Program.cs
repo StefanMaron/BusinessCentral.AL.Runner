@@ -3111,6 +3111,7 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                     Console.Error.WriteLine(
                         "[provision] this attempt withheld the platform apps and a loaded dependency needs one of them "
                         + "as a floor; it is not a measurement of the bundle, so it is not green (#5233).");
+                    Reporter.PrintActionNeededOnAbort(results, bundleProvisionGaps);
                     return 2;
                 }
                 // Compiler sees only non-workspace dirs in its .app scanner; the
