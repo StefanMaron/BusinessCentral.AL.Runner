@@ -2720,12 +2720,15 @@ List<string> TddClosingLines()
 // silence: they say "there is more, go get it" and send the reader somewhere that has
 // nothing. Three cases, three sentences, each decided by what the runner actually holds.
 static string ExclusionDiagnosticAdvice(IReadOnlyList<string> diagnostics, bool printedAlongside) =>
-    diagnostics.Count == 0
+    (diagnostics.Count == 0
         ? " No AL diagnostic was produced for them — BC's compiler failed without attributing " +
           "an error to a source line, so re-running changes nothing. Please report this bundle."
         : printedAlongside
             ? " The AL diagnostics that identified them follow."
-            : " Re-run with --verbose for the AL diagnostics that identified them.";
+            : " Re-run with --verbose for the AL diagnostics that identified them.")
+    // #5134: a runtime-only dotnet install makes every DotNet alias fail AL0185; say so.
+    + (AlRunner.BcCompiler.AttributeToMissingDotNetRefPack(diagnostics) is { } refPackCause
+        ? " " + refPackCause : "");
 
 // #3476: which refusal the EMIT-EXCLUDED branch made. "Refused because a survivor names a
 // dropped object" and "refused because nothing identified what was dropped" are different

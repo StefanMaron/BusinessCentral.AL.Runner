@@ -1256,6 +1256,14 @@ public sealed class DependencyLoader
         IReadOnlyList<string> excludedObjects,
         int emittedCount,
         IReadOnlyList<string> excludedDiagnostics)
+        => BuildDependencyEmitExcludedDetail(
+            excludedObjects, emittedCount, excludedDiagnostics, BcCompiler.RunningDotNetRefPackGap);
+
+    internal static string BuildDependencyEmitExcludedDetail(
+        IReadOnlyList<string> excludedObjects,
+        int emittedCount,
+        IReadOnlyList<string> excludedDiagnostics,
+        BcCompiler.DotNetRefPackGap? refPackGap)
     {
         var names = string.Join(", ", excludedObjects);
         var total = emittedCount + excludedObjects.Count;
@@ -1270,6 +1278,8 @@ public sealed class DependencyLoader
               .Append(string.Join(" | ", excludedDiagnostics));
         var attributed = AttributeToUnobtainableType(excludedDiagnostics);
         if (attributed != null) sb.Append(' ').Append(attributed);
+        var refPackCause = BcCompiler.AttributeToMissingDotNetRefPack(excludedDiagnostics, refPackGap);
+        if (refPackCause != null) sb.Append(' ').Append(refPackCause);
         return sb.ToString();
     }
 
