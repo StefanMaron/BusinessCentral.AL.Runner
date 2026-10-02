@@ -359,8 +359,9 @@ internal static partial class ProgramSupport
         w.WriteLine("  Every test that reaches a generated member, passed or failed, gets a line naming");
         w.WriteLine("  those members — reached in its own body or through procedures it calls in the");
         w.WriteLine("  same app (helpers, library codeunits, [HandlerFunctions] handlers, event");
-        w.WriteLine("  subscribers of a publisher procedure declared in the same app), read from the");
-        w.WriteLine("  code, not from what ran:");
+        w.WriteLine("  subscribers of a publisher procedure declared in the same app; a subscriber that");
+        w.WriteLine("  names its publisher by a bare object id adds no edge), read from the code, not");
+        w.WriteLine("  from what ran:");
         w.WriteLine("    reaches generated stub(s): Calc: procedure \"DoubleIt\"(Arg1: Integer): Integer");
         w.WriteLine("  (--output-json and --server test lines: a generatedStubs array), and the end of");
         w.WriteLine("  the run lists those tests with their results. Its status is still the test's own.");

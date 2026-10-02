@@ -37,4 +37,16 @@ codeunit 65204 "Tdd Shape Overload Tests"
     begin
         Assert.AreEqual(5, Target.Existing(5), 'the existing procedure still returns its argument');
     end;
+
+    [Test]
+    procedure SameArityDifferentTypes_GetTwoOverloads()
+    var
+        Target: Codeunit "Tdd Shape Target Cu";
+        Result: Integer;
+    begin
+        Result := Target.Existing(1, 2);
+        Assert.AreEqual(0, Result, 'the (Integer; Integer) overload returns 0');
+        Result := Target.Existing(1.5, 2);
+        Assert.AreEqual(0, Result, 'the (Decimal; Integer) overload returns 0');
+    end;
 }

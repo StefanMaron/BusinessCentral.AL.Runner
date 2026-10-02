@@ -139,6 +139,8 @@ public sealed class TddCallShapeTests : IClassFixture<TddCallShapeRun>
             ("NestedTextExpected_Refuses", "TierName"),
             ("BothSidesMissing_Refuses", "ExpectedOf"),
             ("VariantSiblingsDisagree_Refuses", "ValueOf"),
+            // 'a' fixes no type and 2 fixes Integer: one typed sibling must not decide it.
+            ("MixedTextAndIntegerSiblings_Refuses", "PMixed"),
         })
         {
             Assert.Equal("fail", _run.Find(test).GetProperty("status").GetString());
@@ -147,7 +149,7 @@ public sealed class TddCallShapeTests : IClassFixture<TddCallShapeRun>
             Assert.Empty(_run.StubsOf(test));
         }
         var summary = _run.StdErr[_run.StdErr.IndexOf("--tdd: generated", StringComparison.Ordinal)..];
-        foreach (var refused in new[] { "TierName", "ExpectedOf", "ActualOf", "ValueOf" })
+        foreach (var refused in new[] { "TierName", "ExpectedOf", "ActualOf", "ValueOf", "PMixed" })
             Assert.DoesNotContain(refused, summary);
     }
 
@@ -187,6 +189,16 @@ public sealed class TddCallShapeTests : IClassFixture<TddCallShapeRun>
         Assert.Contains("'Run'", _run.Failure("BuiltInMethodWithWrongArgumentCount_Refuses"));
         Assert.DoesNotContain("\"Run\"(", _run.StdErr);
 
+        // Same argument count, different argument types: two overloads, and the test calling both
+        // runs (one Integer overload would overflow converting 1.5).
+        var both = _run.Find("SameArityDifferentTypes_GetTwoOverloads");
+        Assert.Equal("pass", both.GetProperty("status").GetString());
+        Assert.Equal(new[]
+        {
+            $"{Target}: procedure \"Existing\"(Arg1: Decimal; Arg2: Integer): Integer",
+            $"{Target}: procedure \"Existing\"(Arg1: Integer; Arg2: Integer): Integer",
+        }, _run.StubsOf("SameArityDifferentTypes_GetTwoOverloads").OrderBy(x => x, StringComparer.Ordinal).ToArray());
+
         // Two tests share one overload: it is generated once.
         var generated = _run.StdErr[_run.StdErr.IndexOf("--tdd: generated", StringComparison.Ordinal)..];
         generated = generated[..generated.IndexOf("test(s) reach generated stubs", StringComparison.Ordinal)];
@@ -210,6 +222,11 @@ public sealed class TddCallShapeTests : IClassFixture<TddCallShapeRun>
 
         Assert.Equal("pass", _run.Find("RaisingAnotherEvent_IsNotAnnotated").GetProperty("status").GetString());
         Assert.Empty(_run.StubsOf("RaisingAnotherEvent_IsNotAnnotated"));
+
+        // A second publisher declares an event of the same name: its subscriber belongs to it alone.
+        Assert.Equal("pass", _run.Find("RaisingTheOtherPublisher_ReachesOnlyItsOwnSubscribersStub").GetProperty("status").GetString());
+        Assert.Equal(new[] { $"{Target}: procedure \"CountOtherEvent\"(Arg1: Integer): Integer" },
+            _run.StubsOf("RaisingTheOtherPublisher_ReachesOnlyItsOwnSubscribersStub"));
     }
 
     /// <summary>

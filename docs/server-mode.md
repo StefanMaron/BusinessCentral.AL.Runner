@@ -1249,11 +1249,12 @@ It runs the same generation as the CLI and `--watch --tdd` (`--guide`, "TDD MODE
   `"generatedStubs"`: one string per member, `"<Object>: <kind> <signature>"`, for example
   `"Calc: procedure \"DoubleIt\"(Arg1: Integer): Integer"`. It is present whatever the
   `status`, and is omitted for every other test. "Reaches" is read from the code, not observed
-  at run time: the member is named by an AL0132 in the test's own body, or in a procedure the
+  at run time: the member is named by an AL0132 (missing member) or AL0126 (missing overload) in the test's own body, or in a procedure the
   test calls directly or transitively — a helper in the test codeunit, a procedure of another
   codeunit in the same app, a handler the test names in `[HandlerFunctions(...)]`, or an
   `[EventSubscriber]` of a publisher procedure declared in the same app that a procedure the test
-  reaches calls (#5161). A branch that never ran still counts. An event a table raises itself
+  reaches calls (#5161); a subscriber that names its publisher by a bare object id, not
+  `Codeunit::"Name"`, adds no edge. A branch that never ran still counts. An event a table raises itself
   (`OnAfterInsertEvent` and the like) is not followed, and neither are procedures in another
   `sourcePaths` bundle (a test library app compiled separately): a test reaching a stub only that
   way carries no `generatedStubs`.
