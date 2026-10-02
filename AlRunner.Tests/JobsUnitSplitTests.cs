@@ -42,8 +42,9 @@ public sealed class JobsUnitSplitTests : IDisposable
         Directory.CreateDirectory(bundle);
         for (var i = 0; i < 300; i++) File.WriteAllText(Path.Combine(bundle, $"f{i}.al"), "");
 
-        Assert.NotEmpty(ParallelFanOut.PlanBundles(new[] { bundle }, 4, null).SplitBundles);
-        var refused = ParallelFanOut.PlanBundles(new[] { bundle }, 4, "reason");
+        // an unknown memory reading, so this test does not depend on how much the box has free
+        Assert.NotEmpty(ParallelFanOut.PlanBundles(new[] { bundle }, 4, null, null, JobsMemory.Model).SplitBundles);
+        var refused = ParallelFanOut.PlanBundles(new[] { bundle }, 4, "reason", null, JobsMemory.Model);
         Assert.Empty(refused.SplitBundles);
         Assert.Single(refused.Shards);
     }

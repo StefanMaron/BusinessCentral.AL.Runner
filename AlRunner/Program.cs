@@ -1821,10 +1821,12 @@ var jobsSplitRefusal = AlRunner.Infrastructure.ParallelFanOut.SplitRefusal(
 // or losing its report (--out and --output-json are written by each worker, not merged; #5129).
 var singleBundleMaySplit = outPath == null && !outputJson && countOutPath == null
     && !coverageEnabled && !countBaselineRequireAll;
+var jobsSingleBundlePlan = jobs > 1 && !watchMode && !serverMode && !dapMode
+    && bundles.Count == 1 && singleBundleMaySplit
+    ? AlRunner.Infrastructure.ParallelFanOut.PlanBundles(bundles, jobs, jobsSplitRefusal)
+    : null;
 if (jobs > 1 && !watchMode && !serverMode && !dapMode
-    && (bundles.Count > 1
-        || (singleBundleMaySplit
-            && AlRunner.Infrastructure.ParallelFanOut.PlanBundles(bundles, jobs, jobsSplitRefusal).SplitBundles.Count > 0)))
+    && (bundles.Count > 1 || jobsSingleBundlePlan is { SplitBundles.Count: > 0 }))
 {
     // --count-out reports what THE RUN executed, and a fan-out has no such number to report:
     // the parent hands every bundle to a worker and never runs one itself, so each worker
@@ -1886,6 +1888,10 @@ if (jobs > 1 && !watchMode && !serverMode && !dapMode
     }
     return AlRunner.Infrastructure.ParallelFanOut.Run(bundles, args, jobs, jobsSplitRefusal);
 }
+// A heavy single bundle that free memory cannot share runs in one process, as before #5130; say so,
+// because --jobs asked for more.
+if (jobsSingleBundlePlan is { SplitBundles.Count: 0, MemoryNote: not null })
+    Console.WriteLine($"jobs: {jobsSingleBundlePlan.MemoryNote}; the bundle runs in one process");
 
 // #4905: refuse a misspelled AL_RUNNER_DEFAULT_TEST_TOOL here, before any work, rather than
 // from inside a dependency resolve that reports it as that bundle's failure.

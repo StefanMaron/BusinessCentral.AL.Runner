@@ -266,9 +266,11 @@ internal static class ParallelFanOut
     }
 
     /// <summary>A bundle lighter than this many AL files (per piece) is never split across
-    /// workers: each extra worker pays startup, bundle load and test-data company load again.
-    /// A judgement, not a measurement (#5130); override with <see cref="MinSplitFilesEnvVar"/>.</summary>
-    public const long DefaultMinSplitFiles = 100;
+    /// workers: each extra worker pays startup, bundle load and test-data company load again, about
+    /// 20 s and 1.4 GB. Measured on Tests-SMB (45 files): two workers ran it 1.6x faster than one
+    /// (22-file pieces), three barely faster than two (15-file pieces); docs/jobs-unit-claiming.md
+    /// § Floor. Override with <see cref="MinSplitFilesEnvVar"/>.</summary>
+    public const long DefaultMinSplitFiles = 20;
 
     public const string MinSplitFilesEnvVar = "AL_RUNNER_JOBS_SPLIT_MIN_FILES";
 
@@ -294,13 +296,91 @@ internal static class ParallelFanOut
     }
 
     /// <summary>The shard plan: bundles balanced by weight, and (unless refused) heavy bundles cut
-    /// across workers. See <see cref="ShardPlanner.PlanSplit"/>.</summary>
+    /// across workers, as many as the free memory holds. See <see cref="ShardPlanner.PlanSplit"/>
+    /// and <see cref="JobsMemory"/>.</summary>
     public static ShardPlanner.SplitPlan PlanBundles(IReadOnlyList<string> bundles, int jobs, string? splitRefusal)
+        => PlanBundles(bundles, jobs, splitRefusal, JobsMemory.FreeBytes(), JobsMemory.Model);
+
+    /// <summary>
+    /// <see cref="PlanBundles(IReadOnlyList{string},int,string?)"/> over an explicit memory reading,
+    /// so the sizing is testable. Every extra worker of a shared bundle pays the model's base again
+    /// (the tests it runs are the same tests, shared out), so while the plan's estimate exceeds what
+    /// is free, the split bundle with the most workers loses one (the smallest slowdown per
+    /// worker given up), until it fits or nothing is shared. Only SHARING is limited: how many
+    /// workers an unshared run uses stays the caller's <c>--jobs</c>, exactly as before. A null
+    /// reading means unknown and sizes nothing.
+    /// </summary>
+    internal static ShardPlanner.SplitPlan PlanBundles(IReadOnlyList<string> bundles, int jobs,
+        string? splitRefusal, long? freeBytes, JobsMemory.WorkerModel model)
     {
         var weighted = bundles.Select(b => (Name: b, Weight: WeighBundle(b))).ToList();
-        return splitRefusal == null
-            ? ShardPlanner.PlanSplit(weighted, jobs, MinSplitFiles())
-            : new ShardPlanner.SplitPlan(ShardPlanner.Plan(weighted, jobs), new HashSet<string>());
+        if (splitRefusal != null)
+            return new ShardPlanner.SplitPlan(ShardPlanner.Plan(weighted, jobs), new HashSet<string>());
+
+        var plan = ShardPlanner.PlanSplit(weighted, jobs, MinSplitFiles());
+        if (freeBytes == null || plan.SplitBundles.Count == 0) return plan;
+
+        var weight = weighted.ToDictionary(w => w.Name, w => w.Weight, StringComparer.Ordinal);
+        var counted = bundles.ToDictionary(b => b, CountTests, StringComparer.Ordinal);
+        // A bundle whose tests cannot be counted is unknown, not empty: sizing from it would
+        // call the plan cheap exactly when it could not be measured.
+        if (counted.Values.Any(c => c == null)) return plan;
+        var tests = counted.ToDictionary(kv => kv.Key, kv => kv.Value!.Value, StringComparer.Ordinal);
+        var budget = (long)(freeBytes.Value * JobsMemory.Headroom);
+        var wanted = plan.SplitBundles.ToDictionary(b => b, b => SharingWorkers(plan, b), StringComparer.Ordinal);
+        var cap = new Dictionary<string, int>(StringComparer.Ordinal);
+        while (plan.SplitBundles.Count > 0 && EstimateBytes(plan, weight, tests, model) > budget)
+        {
+            var victim = plan.SplitBundles
+                .OrderByDescending(b => SharingWorkers(plan, b)).ThenByDescending(b => weight[b])
+                .ThenBy(b => b, StringComparer.Ordinal).First();
+            cap[victim] = SharingWorkers(plan, victim) - 1;
+            plan = ShardPlanner.PlanSplit(weighted, jobs, MinSplitFiles(), cap);
+        }
+        if (cap.Count == 0) return plan;
+
+        var changed = wanted.Where(kv => SharingWorkers(plan, kv.Key) < kv.Value)
+            .OrderBy(kv => kv.Key, StringComparer.Ordinal)
+            .Select(kv => $"{Reporter.BundleLabel(kv.Key)} by {SharingWorkers(plan, kv.Key)} worker(s), not {kv.Value}");
+        return plan with
+        {
+            MemoryNote = "free memory holds fewer workers per bundle than --jobs asked for: "
+                + string.Join("; ", changed)
+                + $" ({FormatGb(freeBytes.Value)} GB free; {JobsMemory.FreeMemoryEnvVar} overrides the reading)",
+        };
+    }
+
+    private static string FormatGb(long bytes)
+        => (bytes / (1024.0 * 1024 * 1024)).ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
+
+    private static int SharingWorkers(ShardPlanner.SplitPlan plan, string bundle)
+        => plan.Shards.Count(s => s.Any(x => x.Name == bundle));
+
+    /// <summary>What the plan's workers are expected to need together. Each worker costs the
+    /// model's base however little it runs, plus the tests it will run: a piece of a shared bundle
+    /// runs its share of the bundle's tests, by the piece's share of the bundle's files.</summary>
+    internal static long EstimateBytes(ShardPlanner.SplitPlan plan, IReadOnlyDictionary<string, long> fullWeight,
+        IReadOnlyDictionary<string, long> tests, JobsMemory.WorkerModel model)
+        => plan.Shards.Sum(shard => model.EstimateBytes(shard.Sum(piece =>
+            fullWeight[piece.Name] == 0 ? 0.0 : (double)tests[piece.Name] * piece.Weight / fullWeight[piece.Name])));
+
+    private static readonly System.Text.RegularExpressions.Regex TestAttribute =
+        new(@"^\s*\[Test\]", System.Text.RegularExpressions.RegexOptions.Multiline
+            | System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>How many <c>[Test]</c> methods a bundle declares, read from its AL text: the number
+    /// its workers will run between them. Null when it cannot be read.</summary>
+    public static long? CountTests(string dir)
+    {
+        long n = 0;
+        try
+        {
+            foreach (var f in SafeDirectoryScan.Files(dir, "*.al"))
+                n += TestAttribute.Matches(File.ReadAllText(f)).Count;
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+        return n;
     }
 
     /// <summary>
@@ -331,6 +411,7 @@ internal static class ParallelFanOut
         Console.WriteLine($"jobs: {bundles.Count} bundle(s) across {shards.Count} worker process(es)");
         for (var i = 0; i < shards.Count; i++)
             Console.WriteLine($"jobs:   shard {i}: {shards[i].Count} bundle(s), weight {shards[i].Sum(x => x.Weight)}");
+        if (plan.MemoryNote != null) Console.WriteLine($"jobs: {plan.MemoryNote}");
         foreach (var name in plan.SplitBundles.OrderBy(n => n, StringComparer.Ordinal))
             Console.WriteLine($"jobs:   {name} is shared by {shards.Count(sh => sh.Any(x => x.Name == name))} "
                 + "worker(s): they claim its test codeunits first come, first served");

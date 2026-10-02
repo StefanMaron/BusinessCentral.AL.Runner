@@ -534,6 +534,8 @@ internal static partial class ProgramSupport
         w.WriteLine("                          and 10x the tests inside ONE bundle cost only +0.4 GB. Many");
         w.WriteLine("                          bundles therefore do not fit in one process, and splitting");
         w.WriteLine("                          them across workers is what makes the run possible at all.");
+        w.WriteLine("                          (With --test-data, running tests grows a worker too: Tests-ERM");
+        w.WriteLine("                          went from 1.5 GB at 11 tests to 4.9 GB at 9,497.)");
         w.WriteLine("                          A hung test also ends only its own shard, not the whole run.");
         w.WriteLine("                          A bundle far above one worker's share is SHARED by several");
         w.WriteLine("                          workers, which claim its test codeunits first come, first");
@@ -541,8 +543,12 @@ internal static partial class ProgramSupport
         w.WriteLine("                          Not with --isolation disabled, --count-baseline or");
         w.WriteLine("                          --expectations-require-match, and a single bundle that also");
         w.WriteLine("                          passes --out, --output-json, --count-out or --coverage stays");
-        w.WriteLine("                          in one process. Every worker loads the shared bundle, so");
-        w.WriteLine("                          memory grows with N. See docs/jobs-unit-claiming.md.");
+        w.WriteLine("                          in one process. Every worker of a shared bundle pays a base");
+        w.WriteLine("                          of about 1.4 GB again, so free memory limits how many share");
+        w.WriteLine("                          one (AL_RUNNER_JOBS_FREE_MEMORY_MB overrides the reading).");
+        w.WriteLine("                          A bundle is shared only when each worker gets at least");
+        w.WriteLine("                          AL_RUNNER_JOBS_SPLIT_MIN_FILES AL files of it (default 20).");
+        w.WriteLine("                          See docs/jobs-unit-claiming.md.");
         w.WriteLine("                          Ignored by --watch/--server/--dap (long-lived warm state)");
         w.WriteLine("                          and by a single-bundle run that is not shared. Default: 1.");
         w.WriteLine("                          Each worker also gets its own AL_RUNNER_EMIT_TIMEOUT_SEC,");
