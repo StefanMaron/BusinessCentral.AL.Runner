@@ -1,0 +1,22 @@
+{
+  "id": "5228a0c1-3c4d-4e5f-8a9b-1c2d3e4f5a62",
+  "name": "Runner Tests Fixture - Tdd Overload Test",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "The test app of the #5228 two-folder --tdd overload reproducer.",
+  "dependencies": [
+    {
+      "id": "5228a0c1-3c4d-4e5f-8a9b-1c2d3e4f5a61",
+      "name": "Runner Tests Fixture - Tdd Overload App",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "idRanges": [
+    {
+      "from": 65320,
+      "to": 65339
+    }
+  ],
+  "runtime": "14.0"
+}
