@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AlRunner.Infrastructure;
+using Xunit;
 
 namespace AlRunner.Tests;
 
@@ -52,6 +53,21 @@ public abstract class DapClientBase : IAsyncDisposable
     }
 
     private readonly Queue<JsonElement> _pendingEvents = new();
+
+    /// <summary>The Locals scope's <c>variablesReference</c> out of a `scopes` response, asserted
+    /// positive on the way. DAP defines 0 as "no children" (`Variable.variablesReference`), so a
+    /// client never sends `variables` for it and the locals pane stays empty (#3906); reading the
+    /// number back and using it directly, as these tests did, exercises only the adapter's own
+    /// round trip and not whether a real client would have made the request.</summary>
+    public static int LocalsReference(JsonElement scopesResponse)
+    {
+        var reference = scopesResponse.GetProperty("body").GetProperty("scopes")[0]
+            .GetProperty("variablesReference").GetInt32();
+        Assert.True(reference > 0,
+            $"the Locals scope's variablesReference is {reference}; DAP defines 0 as 'no children', so a "
+            + $"client never requests it (#3906): {scopesResponse}");
+        return reference;
+    }
 
     /// <summary>Sends a DAP request and returns its seq (for matching against the
     /// eventual response's request_seq via <see cref="ReadUntilResponseAsync"/>).</summary>

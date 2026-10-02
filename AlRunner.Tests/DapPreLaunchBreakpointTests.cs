@@ -128,8 +128,7 @@ public class DapPreLaunchBreakpointTests
         var frameId = stResp.GetProperty("body").GetProperty("stackFrames")[0].GetProperty("id").GetInt32();
         var scSeq = dap.SendRequest("scopes", new { frameId });
         var scResp = await dap.ReadUntilResponseAsync(scSeq);
-        var variablesReference = scResp.GetProperty("body").GetProperty("scopes")[0]
-            .GetProperty("variablesReference").GetInt32();
+        var variablesReference = DapClientBase.LocalsReference(scResp);
         var varSeq = dap.SendRequest("variables", new { variablesReference });
         var varResp = await dap.ReadUntilResponseAsync(varSeq);
         var vars = varResp.GetProperty("body").GetProperty("variables").EnumerateArray()
