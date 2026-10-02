@@ -19,13 +19,8 @@ namespace AlRunner.Tests;
 
 public sealed class DotNetRefPackDiagnosisTests : IDisposable
 {
-    private readonly string _root = Path.Combine(
-        Path.GetTempPath(), "alr-refpack-" + Guid.NewGuid().ToString("N")[..8]);
-
-    public DotNetRefPackDiagnosisTests()
-    {
-        Directory.CreateDirectory(_root);
-    }
+    // Owned scratch (ScratchDirOwnershipGuardTests): a killed host's leftovers are reaped.
+    private readonly string _root = TestScratch.Dir("al-runner-5134-refpacks");
 
     public void Dispose()
     {
