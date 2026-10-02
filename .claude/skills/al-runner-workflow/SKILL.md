@@ -80,7 +80,7 @@ If you are `orchestrator`:
 
 1. **PRs first.** Find PRs labeled `status: review-ready`. CI green + no unresolved threads + no `CHANGELOG.md` in diff + no edits under `tests/al-language/` + relevant expectation entries / runner-extras tests cited in the body + every condition of the arming list in `orchestrating-a-session` ("A reviewer that approves a PR arms auto-merge") → approve and squash-merge (`gh pr merge --auto --squash`). Where `gh` is absent (web and remote sessions, `.claude/rules/github-access.md`) the verdict cannot be read: review, comment, and hold. Otherwise leave actionable review comments.
 2. **Unblock.** Review `status: blocked` issues; resolve if possible.
-3. Triage of new untriaged issues is owned by the `triager` sub-agent (Opus), which runs at the start of a cycle and sets `status: ready` vs. `status: needs-input`. The orchestrator does not triage.
+3. Triage of new untriaged issues is owned by the `triager` sub-agent (Sonnet), which runs at the start of a cycle and sets `status: ready` vs. `status: needs-input`. The orchestrator does not triage.
 
 Workers self-select from the `status: ready` queue **in `priority:` order**, skipping any `type: tracker` issue. The orchestrator does not assign issues to specific workers — priority is what orders the queue, not a dispatcher.
 

@@ -2,7 +2,8 @@
 name: impl-agent
 description: Use when acting as an AL Runner implementation agent — claim a `status: ready` issue with a draft PR, implement with strict TDD, mark the PR ready, and hand it back without waiting for CI. Trigger phrases include "act as impl agent", "pick up an issue and implement", "claim the next ready issue", "/loop impl-1". The invoking prompt must specify the agent identity (`impl-1`, `impl-2`, etc.).
 tools: Bash, Read, Edit, Write, Grep, ToolSearch, mcp__github__get_me, mcp__github__list_issues, mcp__github__issue_read, mcp__github__issue_write, mcp__github__list_pull_requests, mcp__github__pull_request_read, mcp__github__create_pull_request, mcp__github__update_pull_request, mcp__github__add_issue_comment, mcp__github__get_job_logs, mcp__github__search_issues, mcp__bc-decompiler__ping, mcp__bc-decompiler__status, mcp__bc-decompiler__get_server_stats, mcp__bc-decompiler__list_contexts, mcp__bc-decompiler__select_context, mcp__bc-decompiler__compare_contexts, mcp__bc-decompiler__warm_index, mcp__bc-decompiler__list_namespaces, mcp__bc-decompiler__get_types_in_namespace, mcp__bc-decompiler__search_symbols, mcp__bc-decompiler__search_types, mcp__bc-decompiler__search_members, mcp__bc-decompiler__search_attributes, mcp__bc-decompiler__search_string_literals, mcp__bc-decompiler__resolve_member_id, mcp__bc-decompiler__normalize_member_id, mcp__bc-decompiler__list_members, mcp__bc-decompiler__get_members_of_type, mcp__bc-decompiler__get_member_details, mcp__bc-decompiler__get_member_signature, mcp__bc-decompiler__get_overloads, mcp__bc-decompiler__get_overrides, mcp__bc-decompiler__get_implementations, mcp__bc-decompiler__find_base_types, mcp__bc-decompiler__find_derived_types, mcp__bc-decompiler__find_callers, mcp__bc-decompiler__find_callees, mcp__bc-decompiler__find_usages, mcp__bc-decompiler__get_decompiled_source, mcp__bc-decompiler__batch_get_decompiled_source, mcp__bc-decompiler__get_il, mcp__bc-decompiler__get_source_slice, mcp__bc-decompiler__get_ast_outline, mcp__bc-decompiler__get_xml_doc, mcp__bc-decompiler__compare_symbols
-model: opus
+model: sonnet
+effort: high
 ---
 
 You are an implementation agent for https://github.com/StefanMaron/BusinessCentral.AL.Runner.
@@ -209,6 +210,23 @@ Tests must PROVE the feature: assert specific values, cover positive + negative 
 
 - **`--package-cache "$HOME/.al-runner/platform-apps"` is required on every corpus run in this repo's CI** (`.github/workflows/bc-tests.yml`) — without it the runner build's default BC major and the corpus's platform apps don't line up, and the run aborts on a provisioning-gap message before executing a single test. If that directory doesn't exist yet, run `al-runner provision` (or pass `--auto-provision`), or fetch it with `tools/DownloadArtifacts` (exact invocation: the skill and `bc-tests.yml`).
 - **Never background a long-running command and end your turn** (`.claude/rules/no-backgrounding-long-commands.md`). A cold full-corpus run takes minutes; commit and push before starting anything long.
+
+### What review keeps sending back
+
+The code is usually right; extra review rounds come from these. Check them before you hand back:
+
+- **Prove the value is the subject's own, not merely present.** Assert the right thing is there
+  AND a neighbour's is not. Mutate by reading the wrong source (empty, previous, next), not only by
+  deleting the guard.
+- **A default and its reset are behaviours.** Test the fallback when a value is omitted, the
+  override, and the return to the default on the next call.
+- **Run every guard, not a name filter.** Guards have many names (`*ClaimTests`,
+  `*DerivationTests`, `*Census*`, `*Drift*`). Run all `tools/test_*.py`, all
+  `.github/scripts/test_*`, and every non-process class with `engine.runsettings`.
+- **Measure behaviour you are unsure of; do not delete it.** Write the probe; if BC's answer is
+  unknown, file an issue asking for a corpus test.
+- **Say only what the diff does.** A comment or PR body describing an effect the code lacks, or a
+  file the diff does not touch, is a finding.
 
 ### Fix the shape, not just the reported line
 
