@@ -607,6 +607,7 @@ public sealed partial class BcCompiler
             // ref pack) carry the same types as real TypeDefinitions, so probe those FIRST.
             // This is what lets the source-dependency compile of Microsoft's Tests-TestLibraries
             // (XmlDocument/XmlNode/etc. interop) emit instead of zeroing the whole module.
+            WarnOnceIfDotNetRefPacksMissing();
             var probingPaths = BuildDotNetProbingPaths();
 
             if (Environment.GetEnvironmentVariable("BCCOMPILER_DIAG") == "1")
@@ -723,14 +724,65 @@ public sealed partial class BcCompiler
     /// etc. used transitively). Highest version of each is preferred.
     /// </summary>
     private static IEnumerable<string> EnumerateDotNetRefAssemblyDirs()
+        => EnumerateDotNetRefAssemblyDirsUnder(
+            System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(),
+            Environment.GetEnvironmentVariable("DOTNET_ROOT"));
+
+    /// <summary>
+    /// The dotnet root the reference packs are read from: the directory above
+    /// <c>shared/</c> in the running runtime's path, else <c>DOTNET_ROOT</c>; null when neither
+    /// names an existing directory. Shared by the enumeration and the missing-pack diagnosis so
+    /// they can never disagree about where "the packs" are.
+    /// </summary>
+    internal static string? ResolveDotNetRoot(string runtimeDir, string? envDotnetRoot)
     {
-        // Resolve the dotnet root: shared-framework dir is …/dotnet/shared/Microsoft.NETCore.App/<v>.
-        var runtimeDir = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
         string? dotnetRoot = null;
         var idx = runtimeDir.Replace('\\', '/').IndexOf("/shared/", StringComparison.OrdinalIgnoreCase);
         if (idx > 0) dotnetRoot = runtimeDir.Substring(0, idx);
-        dotnetRoot ??= Environment.GetEnvironmentVariable("DOTNET_ROOT");
-        if (string.IsNullOrEmpty(dotnetRoot) || !Directory.Exists(dotnetRoot))
+        dotnetRoot ??= envDotnetRoot;
+        return string.IsNullOrEmpty(dotnetRoot) || !Directory.Exists(dotnetRoot) ? null : dotnetRoot;
+    }
+
+    /// <summary>
+    /// The shared-framework major the runner is executing on ("8.0.25" -> 8), or null when the
+    /// runtime directory's last segment is not a version.
+    /// </summary>
+    private static int? RunningRuntimeMajor(string runtimeDir)
+    {
+        var sfName = Path.GetFileName(runtimeDir.TrimEnd('/', '\\')); // "8.0.25"
+        return Version.TryParse(sfName, out var sfv) ? sfv.Major : null;
+    }
+
+    /// <summary>
+    /// The Microsoft.NETCore.App.Ref version directory to read, and whether it matches the
+    /// running major. Null when no version directory exists at all.
+    /// </summary>
+    private static (string Dir, bool MajorMatches)? SelectCoreRefPack(string coreRef, int? runtimeMajor)
+    {
+        var candidates = Directory.EnumerateDirectories(coreRef)
+            .Select(d => (Dir: d, Ver: Version.TryParse(Path.GetFileName(d), out var v) ? v : null))
+            .Where(t => t.Ver != null)
+            .ToList();
+        var matched = candidates
+            .Where(t => runtimeMajor == null || t.Ver!.Major == runtimeMajor.Value)
+            .OrderByDescending(t => t.Ver)
+            .Select(t => t.Dir)
+            .FirstOrDefault();
+        if (matched != null) return (matched, true);
+        var any = candidates.OrderByDescending(t => t.Ver).Select(t => t.Dir).FirstOrDefault();
+        return any == null ? null : (any, false);
+    }
+
+    /// <summary>The NETStandard.Library.Ref version directory the enumeration reads: the highest.</summary>
+    private static string? SelectNetStandardRefPack(string nsRef)
+        => Directory.EnumerateDirectories(nsRef)
+            .OrderByDescending(d => Version.TryParse(Path.GetFileName(d), out var v) ? v : new Version(0, 0))
+            .FirstOrDefault();
+
+    internal static IEnumerable<string> EnumerateDotNetRefAssemblyDirsUnder(string runtimeDir, string? envDotnetRoot)
+    {
+        var dotnetRoot = ResolveDotNetRoot(runtimeDir, envDotnetRoot);
+        if (dotnetRoot == null)
             yield break;
 
         var packs = Path.Combine(dotnetRoot, "packs");
@@ -753,20 +805,7 @@ public sealed partial class BcCompiler
         var coreRef = Path.Combine(packs, "Microsoft.NETCore.App.Ref");
         if (Directory.Exists(coreRef))
         {
-            int? runtimeMajor = null;
-            var sfName = Path.GetFileName(runtimeDir.TrimEnd('/', '\\')); // "8.0.25"
-            if (Version.TryParse(sfName, out var sfv)) runtimeMajor = sfv.Major;
-
-            var candidates = Directory.EnumerateDirectories(coreRef)
-                .Select(d => (Dir: d, Ver: Version.TryParse(Path.GetFileName(d), out var v) ? v : null))
-                .Where(t => t.Ver != null)
-                .ToList();
-            var best = candidates
-                .Where(t => runtimeMajor == null || t.Ver!.Major == runtimeMajor.Value)
-                .OrderByDescending(t => t.Ver)
-                .Select(t => t.Dir)
-                .FirstOrDefault()
-                ?? candidates.OrderByDescending(t => t.Ver).Select(t => t.Dir).FirstOrDefault();
+            var best = SelectCoreRefPack(coreRef, RunningRuntimeMajor(runtimeDir))?.Dir;
             if (best != null)
             {
                 var refSub = Path.Combine(best, "ref");
@@ -780,9 +819,7 @@ public sealed partial class BcCompiler
         var nsRef = Path.Combine(packs, "NETStandard.Library.Ref");
         if (Directory.Exists(nsRef))
         {
-            var best = Directory.EnumerateDirectories(nsRef)
-                .OrderByDescending(d => Version.TryParse(Path.GetFileName(d), out var v) ? v : new Version(0, 0))
-                .FirstOrDefault();
+            var best = SelectNetStandardRefPack(nsRef);
             if (best != null)
             {
                 var refSub = Path.Combine(best, "ref");

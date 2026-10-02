@@ -1104,7 +1104,8 @@ public sealed class DependencyLoader
     /// and a memo hit of the same bytes agree by construction).
     /// </summary>
     internal static string ComputeSourceDependencyCacheKeyCore(
-        AppManifest manifest, string appPath, Func<string, string> contentHashOf)
+        AppManifest manifest, string appPath, Func<string, string> contentHashOf,
+        string? refPackTerm = null)
     {
         using var sha = SHA256.Create();
         using var ms = new MemoryStream();
@@ -1127,6 +1128,10 @@ public sealed class DependencyLoader
         WriteLine(AlRunner.BcCompiler.RunnerEmitModeCacheTerm);
         // #4990: the source compile applies the --define symbols (BuildParseOptions).
         WriteLine($"defines:{string.Join(",", AlRunner.BcCompiler.GetExtraPreprocessorSymbols())}");
+        // #5134: the reference packs BC's binder is given decide which DotNet aliases bind, so a
+        // dependency compiled on a runtime-only install is a partial output that must not be
+        // replayed (with its "packs missing" report) once the packs are installed.
+        WriteLine(refPackTerm ?? AlRunner.BcCompiler.RunningDotNetRefPackCacheTerm);
         WriteLine($"app:{manifest.AppId}:{manifest.Publisher}:{manifest.Name}:{manifest.Version}");
         foreach (var dep in manifest.Dependencies.OrderBy(d => $"{d.Publisher}/{d.Name}/{d.Version}/{d.AppId}", StringComparer.OrdinalIgnoreCase))
             WriteLine($"dep:{dep.AppId}:{dep.Publisher}:{dep.Name}:{dep.Version}");
@@ -1256,6 +1261,14 @@ public sealed class DependencyLoader
         IReadOnlyList<string> excludedObjects,
         int emittedCount,
         IReadOnlyList<string> excludedDiagnostics)
+        => BuildDependencyEmitExcludedDetail(
+            excludedObjects, emittedCount, excludedDiagnostics, BcCompiler.RunningDotNetRefPackGap);
+
+    internal static string BuildDependencyEmitExcludedDetail(
+        IReadOnlyList<string> excludedObjects,
+        int emittedCount,
+        IReadOnlyList<string> excludedDiagnostics,
+        BcCompiler.DotNetRefPackGap? refPackGap)
     {
         var names = string.Join(", ", excludedObjects);
         var total = emittedCount + excludedObjects.Count;
@@ -1270,6 +1283,8 @@ public sealed class DependencyLoader
               .Append(string.Join(" | ", excludedDiagnostics));
         var attributed = AttributeToUnobtainableType(excludedDiagnostics);
         if (attributed != null) sb.Append(' ').Append(attributed);
+        var refPackCause = BcCompiler.AttributeToMissingDotNetRefPack(excludedDiagnostics, refPackGap);
+        if (refPackCause != null) sb.Append(' ').Append(refPackCause);
         return sb.ToString();
     }
 

@@ -46,6 +46,8 @@ This is the **precompiled-DLL contract** described in `.claude/rules/precompiled
 
 .NET SDK 9 or 10 — download from [https://aka.ms/dotnet/download](https://aka.ms/dotnet/download).
 
+Install the **SDK**, not only the runtime: BC's compiler binds `DotNet` aliases against the SDK's reference packs (`<dotnet root>/packs/`). Without them the runner prints a `[dotnet-ref-packs]` line and every object using a `DotNet` alias is dropped (`AL0185`); see [`docs/limitations.md`](docs/limitations.md#dotnet-reference-packs).
+
 **Linux:** none — the BC service-tier DLLs contain a handful of genuine Win32
 P/Invokes (e.g. `kernel32`'s locale APIs, reached by anything that evaluates a
 `TextConstant`, including the standard upgrade-tag install-trigger pattern) that

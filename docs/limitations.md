@@ -464,6 +464,42 @@ What still holds, and is BC's rule rather than the runner's:
 `docs/scope.md` §3.14 listed the AL `DotNet` surface as out of scope for the same stale
 reason; it is corrected alongside this section.
 
+### A dotnet install without the reference packs — `AL0185` on every `DotNet` alias
+
+<a id="dotnet-reference-packs"></a>
+
+BC's compiler binds a `DotNet` alias through the directories `BcCompiler.EnumerateDotNetRefAssemblyDirs`
+yields: `<dotnet root>/packs/Microsoft.NETCore.App.Ref/<8.x>/ref/*` and
+`<dotnet root>/packs/NETStandard.Library.Ref/<v>/ref/*`. A **runtime-only** .NET install has no
+`packs/` directory (an SDK install has), so nothing binds and every object using a `DotNet` alias
+fails `AL0185: DotNet '<type>' is missing` and is dropped (#5134). On Linux that is Microsoft's
+`Tests-TestLibraries`, `System Application Test Library` and many buckets' own codeunits, so a
+bucket reports fewer passing tests with diagnostics that point at the AL.
+
+**What the runner does.** Before the first compile it prints one `[dotnet-ref-packs]` line naming
+the dotnet root it searched, which pack is missing and the fix, and every EMIT-EXCLUDED report
+that carries a `DotNet` `AL0185` for a type the packs could supply ends with `Probable cause, not the AL`
+(a type in the #3890 list keeps its own attribution). It does **not** refuse
+the run: an app with no `DotNet` alias compiles fine without the packs, and refusing would break
+those runs. A dependency's dropped objects are reported and the run continues by design (#2247),
+so a run can still end `PASSED` with objects missing (#5233). The source-dependency cache key
+carries the probed pack directories, so installing the packs recompiles instead of replaying a
+partial output. The fix is to install the .NET SDK, or unpack the `microsoft.netcore.app.ref` and
+`netstandard.library.ref` NuGet packages under `<dotnet root>/packs/`.
+
+A runtime-only install can also abort the compile with a stack overflow in Cecil's `ExportedType`
+resolution before any object is dropped (#5232); the `[dotnet-ref-packs]` line is printed first.
+
+**A pack for another major is a different fault.** With only another major's
+`Microsoft.NETCore.App.Ref` present the enumeration still falls back to the highest one (the
+comment on the enumeration explains why that breaks `System.Uri` conversions, AL0133), and the
+`[dotnet-ref-packs]` line says so — but a drop is then not attributed to missing packs, because
+the alias does bind.
+
+On Windows the same runtime-only setup reportedly resolves `DotNet` types from elsewhere (#5134
+measured 740 passed on Tests-SMB); that is a different binding from Linux and from CI, so the
+line is printed there too rather than letting the two diverge silently.
+
 ### DotNet types Microsoft ships in no artifact — permanent `AL0185` drops
 
 <a id="unobtainable-dotnet-types"></a>
