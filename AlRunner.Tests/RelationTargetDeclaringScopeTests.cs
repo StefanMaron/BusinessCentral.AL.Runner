@@ -200,6 +200,25 @@ public class RelationTargetDeclaringScopeTests
             });
     }
 
+    // A dependency table already loaded into _parsedTables has no namespace (Namespace == null), so
+    // without the source-parsed filter it would read as global and be in scope from every file.
+    // Staged ahead of the bundle table on a fresh dictionary so enumeration order cannot hide it.
+    [Fact]
+    public void SourceDeclaredName_MaterialisedDependencyTable_IsNotTreatedAsGlobal()
+    {
+        var writer = SourceTable(BundleDeclaringId, "RTS Writer", "Test.Other", "Test.Dup");
+        var dep = Table(DepTargetId, TargetName);
+        WithState(
+            parsed: new[] { dep, SourceTable(BundleTargetId, TargetName, "Test.Dup"), writer },
+            index: new[] { (AppA, dep) },
+            act: () =>
+            {
+                var resolved = RecordPatches.ResolveTableNameInDeclaringScope(TargetName, writer);
+                Assert.Equal(BundleTargetId, resolved?.TableId);
+            },
+            freshParsedTables: true);
+    }
+
     [Fact]
     public void DependencyDeclaredName_NotInAnySymbolFile_FallsBackToParsedTables()
     {
