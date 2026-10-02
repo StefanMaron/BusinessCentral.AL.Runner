@@ -153,7 +153,6 @@ public sealed class ParentManifestNotReadSubprocessTests : IDisposable
               "publisher": "Repro4071",
               "version": "1.0.0.0",
               "dependencies": [],
-              "platform": "1.0.0.0",
               "idRanges": [ { "from": 64074, "to": 64079 } ],
               "runtime": "14.0",
               "preprocessorSymbols": [ "OWN_ONLY_4071" ]

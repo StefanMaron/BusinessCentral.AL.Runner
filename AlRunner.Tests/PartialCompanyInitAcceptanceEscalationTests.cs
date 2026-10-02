@@ -78,7 +78,6 @@ public sealed class PartialCompanyInitAcceptanceEscalationTests
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 70740, "to": 70759 } ],
           "runtime": "14.0"
         }

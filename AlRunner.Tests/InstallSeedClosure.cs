@@ -137,7 +137,6 @@ internal static class InstallSeedClosure
           "publisher": "AL Runner Install Seed",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{baseId}}, "to": {{baseId + 4}} } ],
           "runtime": "14.0"
         }
@@ -184,7 +183,6 @@ internal static class InstallSeedClosure
           "dependencies": [
             { "id": "{{seedId}}", "name": "{{seedName}}", "publisher": "AL Runner Install Seed", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{baseId}}, "to": {{baseId + 4}} } ],
           "runtime": "14.0"
         }

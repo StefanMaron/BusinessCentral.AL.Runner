@@ -290,7 +290,6 @@ public class AllObjPopulateCostTests
           "publisher": "IssueTest4859",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{BaseId + 20}}, "to": {{BaseId + 29}} } ],
           "runtime": "14.0"
         }
@@ -449,7 +448,6 @@ public class AllObjPopulateCostTests
           "publisher": "IssueTest4859",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{MatrixBase}}, "to": {{MatrixBase + 99}} } ],
           "runtime": "14.0"
         }
