@@ -21,7 +21,7 @@ public sealed class JobsMemorySizingTests : IDisposable
     /// <summary>A worker costs 1,000 MB to start and 1 MB per test it runs. A 400-file bundle of
     /// 10 tests a file is 4,000 tests: one worker running all of it costs 5,000 MB, and four
     /// sharing it cost 4 x 1,000 + 4,000 = 8,000 MB. 400 files is what lets four workers share a
-    /// bundle at the default floor of 20 files a piece.</summary>
+    /// bundle at the default floor of 100 files a piece.</summary>
     private static readonly JobsMemory.WorkerModel Model = new(BaseMb: 1000, CoeffMb: 1.0, Exponent: 1.0);
 
     private string Bundle(string name, int files, int testsPerFile = 10)
@@ -76,7 +76,7 @@ public sealed class JobsMemorySizingTests : IDisposable
             "/cg/user.slice/user-1000.slice/app.scope", "/cg/user.slice/user-1000.slice", "/cg/user.slice", "/cg",
         }, dirs);
         Assert.Equal(new[] { "/cg" }, JobsMemory.CgroupDirectories("0::/\n", "/cg"));
-        // cgroup v1 has no "0::" line: nothing to read, which is unknown rather than unlimited
+        // cgroup v1 has no "0::" line
         Assert.Empty(JobsMemory.CgroupDirectories("12:memory:/foo\n11:cpu:/foo\n", "/cg"));
     }
 
@@ -94,20 +94,78 @@ public sealed class JobsMemorySizingTests : IDisposable
 
     // ── how heavy a bundle must be before it is shared at all ────────────────────────────────
 
-    /// <summary>The default floor, from a measurement: Tests-SMB (45 files) ran 1.6x faster on two
-    /// workers (22-file pieces) and barely faster again on three (15-file pieces), so a 45-file
-    /// bundle is shared by two and not by three, and one a little under twice the floor is not
-    /// shared at all.</summary>
+    /// <summary>The default floor is 100 files a piece: 200 files are shared by two workers, 199 are
+    /// not. 20 is what slow-per-test bundles gain from (docs/jobs-unit-claiming.md § Floor), and on a
+    /// bundle of fast tests it costs more than it saves, so it is an override, not the default.</summary>
     [Fact]
-    public void TheDefaultFloor_SharesAFortyFiveFileBundleByTwoWorkers_NotThree_AndALighterOneNotAtAll()
+    public void TheDefaultFloor_Is100FilesAPiece()
     {
-        Assert.Equal(20, ParallelFanOut.DefaultMinSplitFiles);
-        var smb = Bundle("smb", 45);
-        var lighter = Bundle("lighter", 39);
+        Assert.Equal(100, ParallelFanOut.DefaultMinSplitFiles);
+        var enough = Bundle("enough", 200, testsPerFile: 1);
+        var short1 = Bundle("short", 199, testsPerFile: 1);
 
-        Assert.Equal(2, Sharing(ParallelFanOut.PlanBundles(new[] { smb }, 2, null, null, Model), smb));
-        Assert.Equal(2, Sharing(ParallelFanOut.PlanBundles(new[] { smb }, 3, null, null, Model), smb));
-        Assert.Empty(ParallelFanOut.PlanBundles(new[] { lighter }, 2, null, null, Model).SplitBundles);
+        Assert.Equal(2, Sharing(ParallelFanOut.PlanBundles(new[] { enough }, 2, null, null, Model), enough));
+        Assert.Empty(ParallelFanOut.PlanBundles(new[] { short1 }, 2, null, null, Model).SplitBundles);
+    }
+
+    // ── a free-memory override that is set but unusable ─────────────────────────────────────
+
+    [Theory]
+    [InlineData("8GB")]
+    [InlineData("8000MB")]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("1.5")]
+    public void ASetButUnusableOverride_IsIgnoredWithAWarningNamingIt(string value)
+    {
+        Assert.Null(JobsMemory.ParseFreeMemoryOverride(value, out var warning));
+
+        Assert.NotNull(warning);
+        Assert.Contains(JobsMemory.FreeMemoryEnvVar, warning);
+        Assert.Contains($"'{value}'", warning);
+    }
+
+    /// <summary>Empty is "not set" (a shell exporting an empty variable), not a typo: no warning.</summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void AnUnsetOrEmptyOverride_IsNotSet_AndSaysNothing(string? value)
+    {
+        Assert.Null(JobsMemory.ParseFreeMemoryOverride(value, out var warning));
+        Assert.Null(warning);
+    }
+
+    [Fact]
+    public void APositiveWholeNumberOverride_IsThatManyMegabytes()
+    {
+        Assert.Equal(8000L * Mb, JobsMemory.ParseFreeMemoryOverride("8000", out var warning));
+        Assert.Null(warning);
+        Assert.Equal(1L * Mb, JobsMemory.ParseFreeMemoryOverride("1", out _));
+    }
+
+    // ── combining the readings ──────────────────────────────────────────────────────────────
+
+    /// <summary>Either figure is where a worker hits the wall, so the smaller one is the free memory,
+    /// whichever side it comes from. An unknown cgroup leaves the host's reading; an unknown host
+    /// reading is unknown.</summary>
+    [Fact]
+    public void Combine_IsTheSmallerOfTheHostAndTheCgroup()
+    {
+        Assert.Equal(300L, JobsMemory.Combine(500, 300));
+        Assert.Equal(300L, JobsMemory.Combine(300, 500));
+        Assert.Equal(500L, JobsMemory.Combine(500, null));
+        Assert.Null(JobsMemory.Combine(null, 300));
+    }
+
+    /// <summary>A limit on any ancestor binds, so the tightest one along the path is taken, not the
+    /// first, the last or the loosest.</summary>
+    [Fact]
+    public void Tightest_IsTheSmallestKnownRemainingFigure()
+    {
+        Assert.Equal(300L, JobsMemory.Tightest(new long?[] { 900, 300, null, 700 }));
+        Assert.Equal(300L, JobsMemory.Tightest(new long?[] { null, 300, 900 }));
+        Assert.Null(JobsMemory.Tightest(new long?[] { null, null }));
+        Assert.Null(JobsMemory.Tightest(Array.Empty<long?>()));
     }
 
     // ── what the plan does with it ──────────────────────────────────────────────────────────

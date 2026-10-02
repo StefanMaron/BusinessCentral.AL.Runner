@@ -13,8 +13,10 @@ biggest worker" and not "what did the run cost". This samples /proc once a secon
                      other jobs on the machine, wall_s does)
   load1_mean         the machine's 1-minute load while it ran: say it with any wall time
 
-Memory is read from `smaps_rollup`, so this needs Linux; elsewhere it exits 3 ("could not
-measure") rather than printing zeros that read as a small run.
+Memory is read from `smaps_rollup`, so this needs Linux. It exits 3 ("could not measure"),
+printing no record, rather than zeros that read as a small run, when the platform cannot read it,
+when no sample saw the process alive (a command shorter than one interval), or when any read
+failed for a reason other than the process having exited.
 
 If the machine's available memory drops below --kill-below-mb the tree is killed and the record
 says `killed_low_memory: true`: a measurement must not take the box down with it.
@@ -71,6 +73,10 @@ def descendants(root: int) -> list[int]:
     return out
 
 
+class ReadFailure(Exception):
+    """A smaps_rollup read failed for a reason other than the process having exited."""
+
+
 def rss_pss_kb(pid: int) -> tuple[int, int]:
     rss = pss = 0
     try:
@@ -80,12 +86,15 @@ def rss_pss_kb(pid: int) -> tuple[int, int]:
                     rss = int(line.split()[1])
                 elif line.startswith("Pss:"):
                     pss = int(line.split()[1])
-    except OSError:
+    except (FileNotFoundError, ProcessLookupError):
         pass   # the process exited between listing and reading
+    except OSError as e:
+        raise ReadFailure(f"pid {pid}: {e}") from e
     return rss, pss
 
 
 def measure(cmd: list[str], label: str, kill_below_kb: int, interval: float = 1.0) -> dict:
+    """The record, with `samples` (how many times the tree was seen alive) and `read_failures`."""
     t0 = time.time()
     proc = subprocess.Popen(cmd, start_new_session=True)
     peak_rss = peak_pss = peak_single = 0
@@ -93,10 +102,18 @@ def measure(cmd: list[str], label: str, kill_below_kb: int, interval: float = 1.
     load_sum = 0.0
     samples = 0
     killed = False
+    read_failures: list[str] = []
+    seen = 0
     while proc.poll() is None:
         rss_sum = pss_sum = single = 0
         for pid in descendants(proc.pid):
-            r, p = rss_pss_kb(pid)
+            try:
+                r, p = rss_pss_kb(pid)
+            except ReadFailure as e:
+                read_failures.append(str(e))
+                continue
+            if pid == proc.pid and r > 0:
+                seen += 1   # the root itself was read alive: this sample measured something
             rss_sum += r
             pss_sum += p
             single = max(single, r)
@@ -119,6 +136,7 @@ def measure(cmd: list[str], label: str, kill_below_kb: int, interval: float = 1.
         "cpu_s": round(ru.ru_utime + ru.ru_stime, 1),
         "peak_tree_pss_mb": peak_pss // 1024, "peak_tree_rss_mb": peak_rss // 1024,
         "peak_single_rss_mb": peak_single // 1024,
+        "samples": seen, "read_failures": read_failures,
         "min_available_mb": min_avail // 1024, "load1_mean": round(load_sum / max(1, samples), 1),
         "cores": os.cpu_count(), "killed_low_memory": killed, "cmd": cmd,
     }
@@ -141,6 +159,12 @@ def main(argv: list[str]) -> int:
         print("process-tree-peak: needs Linux /proc/<pid>/smaps_rollup; nothing was measured.", file=sys.stderr)
         return 3
     rec = measure(cmd, args.label, args.kill_below_mb * 1024, args.interval)
+    if rec["samples"] == 0 or rec["read_failures"]:
+        why = (f"{len(rec['read_failures'])} read(s) failed, first: {rec['read_failures'][0]}"
+               if rec["read_failures"]
+               else "no sample saw the process alive (the command ended within one --interval)")
+        print(f"process-tree-peak: nothing was measured: {why}.", file=sys.stderr)
+        return 3
     line = json.dumps(rec)
     if args.out:
         with open(args.out, "a") as f:

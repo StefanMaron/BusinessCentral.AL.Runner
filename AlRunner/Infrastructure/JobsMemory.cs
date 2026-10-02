@@ -44,19 +44,52 @@ internal static class JobsMemory
 
     private static long? Read()
     {
-        if (long.TryParse(Environment.GetEnvironmentVariable(FreeMemoryEnvVar), out var mb) && mb > 0)
-            return mb * 1024 * 1024;
+        var overrideBytes = ParseFreeMemoryOverride(
+            Environment.GetEnvironmentVariable(FreeMemoryEnvVar), out var warning);
+        // A value that was set but is not usable is said, never silently dropped: the one who set it
+        // meant to change what the plan sees.
+        if (warning != null) Console.Error.WriteLine($"jobs: {warning}");
+        if (overrideBytes != null) return overrideBytes;
         if (!OperatingSystem.IsLinux()) return null;
         try
         {
-            var available = ParseMemAvailableBytes(File.ReadAllText("/proc/meminfo"));
-            if (available == null) return null;
-            // Inside a container the limit, not the host's MemAvailable, is what a worker hits.
-            var remaining = ReadCgroupRemainingBytes();
-            return remaining == null ? available : Math.Min(available.Value, remaining.Value);
+            return Combine(ParseMemAvailableBytes(File.ReadAllText("/proc/meminfo")), ReadCgroupRemainingBytes());
         }
         catch (IOException) { return null; }
         catch (UnauthorizedAccessException) { return null; }
+    }
+
+    /// <summary>The override in bytes. Unset or empty is simply "not set" (null, no warning); anything
+    /// else that is not a positive whole number of MB (<c>8GB</c>, <c>0</c>, <c>-1</c>) is null with a
+    /// warning naming it, because 0 and a typo would otherwise fall back to the machine's reading.</summary>
+    internal static long? ParseFreeMemoryOverride(string? value, out string? warning)
+    {
+        warning = null;
+        if (string.IsNullOrEmpty(value)) return null;
+        if (long.TryParse(value, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var mb)
+            && mb > 0)
+            return mb * 1024 * 1024;
+        warning = $"ignoring {FreeMemoryEnvVar}='{value}': it must be a positive whole number of MB. "
+            + "Reading the machine instead (on a platform that cannot, sharing is not sized).";
+        return null;
+    }
+
+    /// <summary>The host's available memory limited by the cgroup's remaining memory: the smaller of
+    /// the two, since either one is where a worker hits the wall. An unknown host reading is unknown
+    /// whatever the cgroup says; an unknown cgroup limit leaves the host reading.</summary>
+    internal static long? Combine(long? hostAvailable, long? cgroupRemaining)
+        => hostAvailable == null ? null
+            : cgroupRemaining == null ? hostAvailable
+            : Math.Min(hostAvailable.Value, cgroupRemaining.Value);
+
+    /// <summary>The tightest (smallest) of the remaining-memory figures along a cgroup path: a limit on
+    /// any ancestor binds the worker. Null when none of them is known.</summary>
+    internal static long? Tightest(IEnumerable<long?> remaining)
+    {
+        long? tightest = null;
+        foreach (var r in remaining)
+            if (r != null && (tightest == null || r < tightest)) tightest = r;
+        return tightest;
     }
 
     /// <summary><c>MemAvailable</c> from /proc/meminfo text, in bytes; null when absent or not a number.</summary>
@@ -106,20 +139,15 @@ internal static class JobsMemory
     {
         try
         {
-            long? tightest = null;
-            foreach (var dir in CgroupDirectories(File.ReadAllText("/proc/self/cgroup")))
+            return Tightest(CgroupDirectories(File.ReadAllText("/proc/self/cgroup")).Select(dir =>
             {
-                string max, current;
                 try
                 {
-                    max = File.ReadAllText(dir + "/memory.max");
-                    current = File.ReadAllText(dir + "/memory.current");
+                    return CgroupRemainingBytes(
+                        File.ReadAllText(dir + "/memory.max"), File.ReadAllText(dir + "/memory.current"));
                 }
-                catch (IOException) { continue; }   // the root cgroup has no such files
-                var remaining = CgroupRemainingBytes(max, current);
-                if (remaining != null && (tightest == null || remaining < tightest)) tightest = remaining;
-            }
-            return tightest;
+                catch (IOException) { return (long?)null; }   // the root cgroup has no such files
+            }));
         }
         catch (IOException) { return null; }
         catch (UnauthorizedAccessException) { return null; }

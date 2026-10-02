@@ -100,6 +100,20 @@ public sealed class JobsSharedBundleAbortTests : IDisposable
         Assert.False(AbortResumePlan.MakesProgress(new[] { reason }, Array.Empty<string>()));
     }
 
+    /// <summary>The smallest case that still names later codeunits: exactly ONE is unclaimed. The
+    /// clause and the "none of those codeunits" wording both belong to it, and a resume is worth it.</summary>
+    [Fact]
+    public void WithExactlyOneUnclaimedLaterCodeunit_TheAbortNamesIt_AndSaysNoneOfThemWasClaimed()
+    {
+        OtherWorkerClaims(typeof(Codeunit201), typeof(Codeunit203));
+
+        var reason = Abort(Worker());
+
+        Assert.Contains("and 1 in 1 subsequent codeunit(s)", reason);
+        Assert.Contains("none of those codeunits was claimed yet", reason);
+        Assert.True(AbortResumePlan.AbandonedLaterCodeunits(reason));
+    }
+
     /// <summary>The count is read at the moment of the abort and reflects the claims then: a
     /// codeunit claimed after it does not change what it said, and one claimed before it does.
     /// Asking twice with a claim made between them gives two different answers.</summary>

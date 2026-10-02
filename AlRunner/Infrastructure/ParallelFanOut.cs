@@ -266,11 +266,10 @@ internal static class ParallelFanOut
     }
 
     /// <summary>A bundle lighter than this many AL files (per piece) is never split across
-    /// workers: each extra worker pays startup, bundle load and test-data company load again, about
-    /// 20 s and 1.4 GB. Measured on Tests-SMB (45 files): two workers ran it 1.6x faster than one
-    /// (22-file pieces), three barely faster than two (15-file pieces); docs/jobs-unit-claiming.md
-    /// § Floor. Override with <see cref="MinSplitFilesEnvVar"/>.</summary>
-    public const long DefaultMinSplitFiles = 20;
+    /// workers: each extra worker pays startup, bundle load and test-data company load again.
+    /// 100 stays the default because it is right for bundles of fast tests; slow-per-test bundles
+    /// gain from 20 (docs/jobs-unit-claiming.md § Floor). Override with <see cref="MinSplitFilesEnvVar"/>.</summary>
+    public const long DefaultMinSplitFiles = 100;
 
     public const string MinSplitFilesEnvVar = "AL_RUNNER_JOBS_SPLIT_MIN_FILES";
 

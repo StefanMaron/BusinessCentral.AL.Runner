@@ -158,4 +158,20 @@ public sealed class JobsSharedBundleEndToEndTests
         Assert.DoesNotContain("worker process(es)", output);
         Assert.Contains("Tests: 10   passed 10", output);
     }
+
+    /// <summary>A free-memory override that is set but unusable is said, not dropped: the one who set
+    /// it meant to change what the plan sees, and the run goes on with the machine's reading.</summary>
+    [SkippableFact]
+    public void AnUnusableFreeMemoryOverride_IsNamedInTheOutput()
+    {
+        TestArtifacts.SkipIfMissing();
+        var scratch = TestScratch.Dir("al-runner-jobs-shared-memory-typo");
+
+        var (_, output) = JobsUnitClaimEndToEndTests.RunRunner(
+            $"--cache \"{Path.Combine(scratch, "cache")}\" --jobs 2 \"{FixtureDir()}\"",
+            lowSplitFloor: true, freeMemoryMb: "8GB");
+
+        Assert.Contains("jobs: ignoring AL_RUNNER_JOBS_FREE_MEMORY_MB='8GB'", output);
+        Assert.Contains("Tests: 10   passed 10", output);
+    }
 }

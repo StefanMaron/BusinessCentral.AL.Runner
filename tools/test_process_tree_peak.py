@@ -91,6 +91,29 @@ def main() -> int:
     check("a platform that cannot read smaps_rollup exits 3 and measures nothing",
           code == 3 and "nothing was measured" in err.getvalue())
 
+    err = io.StringIO()
+    with redirect_stdout(io.StringIO()) as out, redirect_stderr(err):
+        code = ptp.main(["--interval", "1.0", "--", "true"])
+    check("a command that ends before the first sample exits 3 and prints no record",
+          code == 3 and out.getvalue() == "" and "no sample saw the process alive" in err.getvalue(), err.getvalue())
+
+    real_open = ptp.open if hasattr(ptp, "open") else open
+
+    def denying_open(path, *a, **k):
+        if str(path).endswith("/smaps_rollup"):
+            raise PermissionError(13, "Permission denied", path)
+        return real_open(path, *a, **k)
+
+    ptp.open = denying_open
+    try:
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            code = ptp.main(["--interval", "0.2", "--", sys.executable, "-c", "import time; time.sleep(1)"])
+    finally:
+        del ptp.open
+    check("a PermissionError reading smaps_rollup exits 3, not a quiet zero",
+          code == 3 and "read(s) failed" in err.getvalue(), err.getvalue())
+
     print(f"{len(FAILURES)} failure(s)")
     return 1 if FAILURES else 0
 

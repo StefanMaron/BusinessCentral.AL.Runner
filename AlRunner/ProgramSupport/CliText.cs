@@ -545,9 +545,11 @@ internal static partial class ProgramSupport
         w.WriteLine("                          passes --out, --output-json, --count-out or --coverage stays");
         w.WriteLine("                          in one process. Every worker of a shared bundle pays a base");
         w.WriteLine("                          of about 1.4 GB again, so free memory limits how many share");
-        w.WriteLine("                          one (AL_RUNNER_JOBS_FREE_MEMORY_MB overrides the reading).");
+        w.WriteLine("                          one (Linux only; AL_RUNNER_JOBS_FREE_MEMORY_MB, a positive");
+        w.WriteLine("                          number of MB, overrides the reading).");
         w.WriteLine("                          A bundle is shared only when each worker gets at least");
-        w.WriteLine("                          AL_RUNNER_JOBS_SPLIT_MIN_FILES AL files of it (default 20).");
+        w.WriteLine("                          AL_RUNNER_JOBS_SPLIT_MIN_FILES AL files of it (default 100;");
+        w.WriteLine("                          20 pays for slow tests, e.g. --test-data BaseApp buckets).");
         w.WriteLine("                          See docs/jobs-unit-claiming.md.");
         w.WriteLine("                          Ignored by --watch/--server/--dap (long-lived warm state)");
         w.WriteLine("                          and by a single-bundle run that is not shared. Default: 1.");

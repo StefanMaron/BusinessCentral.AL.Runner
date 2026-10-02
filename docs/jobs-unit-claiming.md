@@ -8,8 +8,8 @@ load it and each runs only the test codeunits it claims.
 
 - **Weight** is the bundle's AL file count (`ParallelFanOut.WeighBundle`), known before anything
   compiles. A bundle gets `round(weight / (total / jobs))` workers, at most `N`, and never so many
-  that a piece is lighter than `AL_RUNNER_JOBS_SPLIT_MIN_FILES` files (default 20, measured:
-  [§ Floor](#floor)). Every extra worker pays startup, bundle load and test-data company load
+  that a piece is lighter than `AL_RUNNER_JOBS_SPLIT_MIN_FILES` files (default 100; 20 for slow
+  tests, measured: [§ Floor](#floor)). Every extra worker pays startup, bundle load and test-data company load
   again.
 - **Free memory** limits how many workers share one bundle ([§ Memory](#memory)).
 - **Isolation** is what makes it possible. Under `Codeunit` (the default) or `Test` isolation the
@@ -88,10 +88,15 @@ the backup-reader sidecar included), `--test-data`, BC 28.1.49838.53910, the wor
   1.25 GB. A first fit on the six ERM and SMB runs predicted Tests-VAT 5% under, Tests-Job 17% under
   and Tests-Workflow 21% under before those three were run (the predictions were computed first), so
   the fit was redone on all of them and no run is held out any more. `JobsMemoryModelTests` holds the
-  rows and a 20% band. A plan may claim 80% of the free memory, which covers the under-estimates.
+  rows, a 20% ceiling on over-estimates, and that a plan sized exactly to its budget would use at
+  most 97% of the free memory on every one of them. A plan may claim 80% of the free memory: that
+  covers the fitted runs (the worst, Tests-Workflow at -16%, would use 96%), and it is an
+  extrapolation beyond them, not a held-out margin. The one run the first fit had not seen and
+  missed by 21% would have used about 101%.
 - **The reading** of free memory is `MemAvailable` (and the tightest cgroup v2 limit on the way
   up). Where it cannot be read the plan is not sized at all; `AL_RUNNER_JOBS_FREE_MEMORY_MB`
-  overrides it. Linux only; elsewhere it is unknown, never zero.
+  overrides it, and a value that is set but is not a positive whole number of MB (`8GB`, `0`,
+  `-1`) is named in a `jobs:` line and ignored. Linux only; elsewhere it is unknown, never zero.
 - **Only sharing is limited.** How many workers an unshared run uses is still the caller's
   `--jobs`. When memory cuts the sharing of a bundle the plan prints why:
   `jobs: free memory holds fewer workers per bundle than --jobs asked for: ...`.
@@ -118,8 +123,12 @@ tools/process-tree-peak.py --label erm-jobs3 --out results.jsonl -- \
 
 ## Floor
 
-The 100-file default was a judgement. Measured on Tests-SMB (45 AL files, 1,027 tests), the same
-box, a warm cache, `AL_RUNNER_JOBS_SPLIT_MIN_FILES=1`:
+The default stays **100 files** a piece, and 20 is the setting for slow-per-test bundles
+(`AL_RUNNER_JOBS_SPLIT_MIN_FILES=20`, e.g. `--test-data` BaseApp buckets). Both ends were measured,
+on the same box.
+
+**Slow tests: a lower floor pays.** Tests-SMB (45 AL files, 1,027 tests, about 0.5 s a test),
+`--test-data`, warm cache, `AL_RUNNER_JOBS_SPLIT_MIN_FILES=1`:
 
 | workers | files per piece | wall | load1 mean | CPU |
 |---|---|---|---|---|
@@ -128,14 +137,26 @@ box, a warm cache, `AL_RUNNER_JOBS_SPLIT_MIN_FILES=1`:
 | 3 | 15 | 278 s | 7.6 | 930 s |
 
 Two workers ran it 1.6x to 2.0x faster than one (the two serial runs span the box's load); a third
-bought about 10% more for another 1 GB. Each extra worker's own fixed cost is its warm start:
-a warm run of one small codeunit took 17 to 30 s wall on the four buckets above. So the floor is **20 files**: a 45-file bundle is shared
-by two and not by three, and one under 40 files is not shared.
+bought about 10% more for another 1 GB. A worker's own fixed cost is its warm start: a warm run of
+one small codeunit took 17 to 30 s wall on the four buckets above.
 
-Not measured: pieces under 15 files, and the file count as a proxy for time. Seconds per test
-differ by two to three times between the two buckets here (0.22 s in ERM, 0.46 to 0.57 s in SMB)
-and tests per file from under 1 to 41 across the BaseApp buckets, so a floor in tests would be a better one. `CountTests`
-exists now (the memory model needs it); weighing by it is the next step.
+**Fast tests: a lower floor loses.** A synthetic bundle of 45 files and 90 trivial tests (two empty
+`[Test]`s a file), no `--test-data`, `--jobs 2`, `tools/process-tree-peak.py --interval 0.1`, load1
+about 2.5, floor 20 against floor 100 (the second does not share the bundle):
+
+| | floor 20 | floor 100 |
+|---|---|---|
+| warm, 3 runs each | 2.9 s wall, 5.1 to 5.2 s CPU, 461 to 468 MB | 2.3 s wall, 2.5 s CPU, 238 to 242 MB |
+| cold, 1 run each | 15.8 s wall, 45.8 s CPU, 1,048 MB | 13.2 s wall, 27.4 s CPU, 559 MB |
+
+So sharing a bundle of fast tests costs about a fifth more wall time warm, twice the CPU and twice
+the memory, and on a cold cache it is the compile-once-per-worker cost of #5238. Lowering the
+default would have charged that to every `--jobs` user for the benefit of the slow-test ones.
+
+No files-per-piece number is right for both. File count is a poor proxy for time: seconds per test
+differ two to three times between the two buckets here (0.22 s in ERM, 0.46 to 0.57 s in SMB) and
+tests per file run from under 1 to 41 across the BaseApp buckets. Weighing by test count or by a
+recorded duration, and measuring the weight itself, is #5239 (`CountTests` exists now).
 
 ## Speed and correctness on a large bucket
 
@@ -197,7 +218,8 @@ slowest codeunit (54 tests) is claimed late. A recorded per-codeunit duration is
 
 ## What it does not do yet
 
-- The weight is a file count, so the number of workers per bundle is only as good as that proxy.
+- The weight is a file count, so the number of workers per bundle is only as good as that proxy
+  (#5239).
 - Memory is not modelled for a cold cache, for abort-resume chains or for workers holding several
   bundles (§ Memory), and the reading exists on Linux only.
 - The caller's `--output-junit` is merged from the shard files; `--out` is still written by every

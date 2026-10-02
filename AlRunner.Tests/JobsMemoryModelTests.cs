@@ -31,18 +31,24 @@ public sealed class JobsMemoryModelTests
         new object[] { "Tests-SCM, one codeunit of 6 tests, warm", new[] { 6 }, 1549 },
     };
 
-    /// <summary>Within 20% of each measured peak, over and under. Buckets of about a thousand tests
-    /// differ from one another by that much for the same test count (they touch different tables), so
-    /// the plan keeps its own 20% headroom (<see cref="JobsMemory.Headroom"/>), which is what covers
-    /// the under-estimates.</summary>
+    /// <summary>The model never sits more than 20% above a measured peak, and under it only far
+    /// enough that a plan AT the budget still leaves room: sized exactly to the budget
+    /// (<see cref="JobsMemory.Headroom"/> of the free memory), a run that really used
+    /// <c>measured</c> would use <c>Headroom * measured / estimate</c> of the free memory, and that
+    /// stays at or under 97%. The worst fitted run (Tests-Workflow, -16%) uses 96%. This is
+    /// in-sample: the one run the first fit had not seen and missed by 21% would have used 101%, so
+    /// the headroom covers the fitted runs and is an extrapolation beyond them, not a held-out margin.</summary>
     [Theory]
     [MemberData(nameof(Measured))]
-    public void TheDefaultModel_StaysWithinTwentyPercentOfEachMeasuredRun(string run, int[] testsPerWorker, int measuredMb)
+    public void TheDefaultModel_KeepsAPlanAtItsBudgetUnder97PercentOfFreeMemory(string run, int[] testsPerWorker, int measuredMb)
     {
         var estimateMb = testsPerWorker.Sum(n => JobsMemory.Model.EstimateBytes(n)) / (1024.0 * 1024);
 
-        Assert.True(estimateMb / measuredMb is >= 0.80 and <= 1.20,
-            $"{run}: estimated {estimateMb:F0} MB against a measured {measuredMb} MB");
+        Assert.True(estimateMb / measuredMb <= 1.20,
+            $"{run}: estimated {estimateMb:F0} MB against a measured {measuredMb} MB, more than 20% over");
+        var useAtTheBudget = JobsMemory.Headroom * measuredMb / estimateMb;
+        Assert.True(useAtTheBudget <= 0.97,
+            $"{run}: a plan at the budget would use {useAtTheBudget:P0} of free memory");
     }
 
     /// <summary>The shape the fit rests on: tests grow a worker's memory, but less than in
