@@ -22,12 +22,18 @@ BC 28.5.54151.x), and the method bodies were read in `Microsoft.Dynamics.Nav.Ncl
 | `NavSession.childSessionsStateLock` | `ChildSessionsStates` getter and setter | getter builds a `NavChildSessionsState` from `ServerUserSettings.ChildSessionsMaxConcurrency` and caches it; two reads return one instance |
 | `NavTenant` — seven fields | see `BcRuntime.AuditedTenantLockFields` | #1883 |
 
-No AL path reaches `ChildSessionsStates` in-process: its only reader is
-`NavChildSessionTaskScheduler`, and the runner runs page background tasks inline, bypassing it
-(`RunnerPageBackgroundTaskGap.cs`). The seed is justified by the measured getter, not by an AL
-reproducer.
+No AL path reaches `ChildSessionsStates` in-process. Inside `Ncl.dll` its only readers are
+`NavChildSessionTaskScheduler.ScheduleChildSessionTaskRun` and `RunChildSessionTask`; no other
+assembly in the artifact reads either accessor. `ScheduleChildSessionTaskRun` is called from
+`NavForm.EnqueueBackgroundTask`, whose whole body the runner replaces
+(`NclCecilRewrite.Forms.cs`, `RunnerPageBackgroundTaskGap.cs`), and from a service web-API
+endpoint (`CopilotApi.dll`) no AL code can invoke. The seed is justified by the measured getter,
+not by an AL reproducer.
 
 ## Left null on purpose: `NCLMetadata`
+
+The reader lists below name the readers that matter for the decision; they are not exhaustive
+(`EvictObjects`, `RemoveAppGroup` and `GetGlobalLockIfAppGroupCanBeShared` also take these locks).
 
 | field | what seeding it does |
 |---|---|

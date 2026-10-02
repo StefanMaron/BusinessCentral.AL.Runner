@@ -10,7 +10,8 @@
 //
 // Runner-mechanism tests: a real service tier runs the real ctors, so none of this arises
 // upstream, and no AL path reaches either lock in-process (ChildSessionsStates is read only by
-// NavChildSessionTaskScheduler, which the runner's inline page-background-task route bypasses).
+// NavChildSessionTaskScheduler, and the runner replaces the body of NavForm.EnqueueBackgroundTask,
+// the one Ncl.dll caller that could reach it; see docs/skeleton-lock-objects.md).
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -171,6 +172,7 @@ public sealed class SkeletonSessionLockObjectsTests
         var lockField = MetaField(meta, "allMetaTablesSnapshotSyncRoot");
         var cache = MetaField(meta, "allMetaTablesSnapshots");
         var cacheBefore = cache.GetValue(meta);
+        var lockBefore = lockField.GetValue(meta);
         try
         {
             lockField.SetValue(meta, new object());
@@ -185,7 +187,7 @@ public sealed class SkeletonSessionLockObjectsTests
         }
         finally
         {
-            lockField.SetValue(meta, null);
+            lockField.SetValue(meta, lockBefore);
             cache.SetValue(meta, cacheBefore);
         }
     }
@@ -199,13 +201,14 @@ public sealed class SkeletonSessionLockObjectsTests
     {
         var meta = Metadata();
         var lockField = MetaField(meta, "appObjectInitializationChangeOrRemovalSyncRoot");
+        var lockBefore = lockField.GetValue(meta);
         try
         {
             lockField.SetValue(meta, new object());
             var m = meta.GetType().GetMethod("InitializeBaseAppGroup", F)!;
             Assert.Throws<NullReferenceException>(() => Inner(() => m.Invoke(meta, null)));
         }
-        finally { lockField.SetValue(meta, null); }
+        finally { lockField.SetValue(meta, lockBefore); }
     }
 
     /// <summary>Why <c>allObjectIdsSnapshotSyncRoot</c> needs no seed: its only in-process reader,
