@@ -337,6 +337,34 @@ public sealed class DotNetRefPackDiagnosisTests : IDisposable
         Assert.Equal(Key(BcCompiler.RunningDotNetRefPackCacheTerm), implicitKey);
     }
 
+    /// <summary>The term must not depend on the order a filesystem lists sibling directories.</summary>
+    [Fact]
+    public void TheRefPackTerm_IsIndependentOfTheOrderTheDirectoriesAreListed()
+    {
+        string[] dirs =
+        {
+            "/d/packs/Microsoft.NETCore.App.Ref/8.0.30/ref/net8.0",
+            "/d/packs/Microsoft.NETCore.App.Ref/8.0.30/ref/net8.1",
+            "/d/packs/NETStandard.Library.Ref/2.1.0/ref/netstandard2.1",
+        };
+
+        Assert.Equal(BcCompiler.DotNetRefPackCacheTerm(dirs), BcCompiler.DotNetRefPackCacheTerm(dirs.Reverse()));
+    }
+
+    /// <summary>
+    /// The production key reads the RUNNING install's term; the two tests above that touch it read
+    /// the same property, so a term pointed at the wrong install would compare with itself. This
+    /// one reads the install directly (it asserts on any box that has the packs, as CI legs do).
+    /// </summary>
+    [Fact]
+    public void RunningTerm_NamesThePacks_WhenTheRunningInstallHasThem()
+    {
+        var rd = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
+        if (BcCompiler.DiagnoseDotNetRefPacks(rd, Environment.GetEnvironmentVariable("DOTNET_ROOT")) != null) return;
+        Assert.Contains("Microsoft.NETCore.App.Ref/", BcCompiler.RunningDotNetRefPackCacheTerm);
+        Assert.Contains("NETStandard.Library.Ref/", BcCompiler.RunningDotNetRefPackCacheTerm);
+    }
+
     // ---------------------------------------------------------------------------------------
     // Which attribution wins when both could apply (#3890 vs #5134).
     // ---------------------------------------------------------------------------------------

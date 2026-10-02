@@ -478,7 +478,8 @@ bucket reports fewer passing tests with diagnostics that point at the AL.
 
 **What the runner does.** Before the first compile it prints one `[dotnet-ref-packs]` line naming
 the dotnet root it searched, which pack is missing and the fix, and every EMIT-EXCLUDED report
-that carries a `DotNet` `AL0185` ends with `Probable cause, not the AL`. It does **not** refuse
+that carries a `DotNet` `AL0185` for a type the packs could supply ends with `Probable cause, not the AL`
+(a type in the #3890 list keeps its own attribution). It does **not** refuse
 the run: an app with no `DotNet` alias compiles fine without the packs, and refusing would break
 those runs. A dependency's dropped objects are reported and the run continues by design (#2247),
 so a run can still end `PASSED` with objects missing (#5233). The source-dependency cache key

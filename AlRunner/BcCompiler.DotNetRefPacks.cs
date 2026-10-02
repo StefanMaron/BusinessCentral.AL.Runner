@@ -151,9 +151,17 @@ public sealed partial class BcCompiler
     /// same packs in different places share entries. Built from the enumeration itself.
     /// </summary>
     internal static string DotNetRefPackCacheTerm(string runtimeDir, string? envDotnetRoot)
+        => DotNetRefPackCacheTerm(EnumerateDotNetRefAssemblyDirsUnder(runtimeDir, envDotnetRoot));
+
+    /// <summary>
+    /// Sorted: the enumeration yields directories in filesystem order (probe order, which matters
+    /// there), and the key must not depend on the order a filesystem happens to list siblings.
+    /// </summary>
+    internal static string DotNetRefPackCacheTerm(IEnumerable<string> probedDirs)
     {
-        var dirs = EnumerateDotNetRefAssemblyDirsUnder(runtimeDir, envDotnetRoot)
-            .Select(d => string.Join("/", d.Replace('\\', '/').TrimEnd('/').Split('/').TakeLast(4)));
+        var dirs = probedDirs
+            .Select(d => string.Join("/", d.Replace('\\', '/').TrimEnd('/').Split('/').TakeLast(4)))
+            .OrderBy(d => d, StringComparer.Ordinal);
         return "refpacks:" + string.Join(",", dirs);
     }
 
