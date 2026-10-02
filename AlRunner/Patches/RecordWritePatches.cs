@@ -725,8 +725,35 @@ public static partial class BcRuntime
     // the Cecil prepend is the same minimal `ldarg.0; call` pair as AssignAutoIncrement
     // above.
 
-    private static readonly System.Guid _sessionUserGuid = System.Guid.NewGuid();
-    private static System.Guid GetOrCreateSessionUserGuid() => _sessionUserGuid;
+    // SystemCreatedBy / SystemModifiedBy are the writing session's user. Observably equivalent
+    // to BC because this IS the call AL's UserSecurityId() compiles to
+    // (ALDatabase.ALUserSecurityId => NavCurrentThread.Session.User.Id), read at stamp time, so
+    // an adopted or re-seeded session user is followed and the two cannot drift apart.
+    // Settled by corpus codeunit 60172 *_IsUserSecurityId (AlRunner#5206). Trap: never cache it.
+    private static bool _sessionUserUnreadableReported;
+
+    private static bool TryGetSessionUserSecurityId(out System.Guid userSecurityId)
+    {
+        try
+        {
+            userSecurityId = Microsoft.Dynamics.Nav.Runtime.ALDatabase.ALUserSecurityId();
+            return true;
+        }
+        catch (System.Exception ex)
+        {
+            // No session user means no identity to record: leave the By fields as they are
+            // rather than invent one, and say so once.
+            if (!_sessionUserUnreadableReported)
+            {
+                _sessionUserUnreadableReported = true;
+                Console.Error.WriteLine(
+                    "[warn] SystemCreatedBy/SystemModifiedBy not stamped: UserSecurityId() could not "
+                    + $"be read ({ex.GetType().Name}: {ex.Message}). See AlRunner#5206.");
+            }
+            userSecurityId = default;
+            return false;
+        }
+    }
 
     private static void TryStampDateTime(
         Microsoft.Dynamics.Nav.Runtime.NavRecord self,
@@ -776,12 +803,14 @@ public static partial class BcRuntime
         {
             var meta = self.MetaTable;
             var nowUtc = System.DateTime.UtcNow;
-            var sessionUser = GetOrCreateSessionUserGuid();
 
             TryStampDateTime(self, meta, 2000000001, nowUtc);    // SystemCreatedAt
-            TryStampGuid    (self, meta, 2000000002, sessionUser); // SystemCreatedBy
             TryStampDateTime(self, meta, 2000000003, nowUtc);    // SystemModifiedAt
-            TryStampGuid    (self, meta, 2000000004, sessionUser); // SystemModifiedBy
+            if (TryGetSessionUserSecurityId(out var sessionUser))
+            {
+                TryStampGuid(self, meta, 2000000002, sessionUser); // SystemCreatedBy
+                TryStampGuid(self, meta, 2000000004, sessionUser); // SystemModifiedBy
+            }
         }
         catch { /* never block insert */ }
     }
@@ -820,10 +849,10 @@ public static partial class BcRuntime
         {
             var meta = self.MetaTable;
             var nowUtc = System.DateTime.UtcNow;
-            var sessionUser = GetOrCreateSessionUserGuid();
 
             TryStampDateTime(self, meta, 2000000003, nowUtc);    // SystemModifiedAt
-            TryStampGuid    (self, meta, 2000000004, sessionUser); // SystemModifiedBy
+            if (TryGetSessionUserSecurityId(out var sessionUser))
+                TryStampGuid(self, meta, 2000000004, sessionUser); // SystemModifiedBy
         }
         catch { /* never block modify */ }
     }
