@@ -18,6 +18,7 @@ namespace AlRunner.Tests;
 /// The migration debt is accepted and tracked — but it must be MEASURABLE, not invisible.
 /// <see cref="JmpHook.OrphanedHooks"/> records those call sites so the audit can name them.
 /// </summary>
+[Collection(JmpHookAuditSerialCollection.Name)]
 public class JmpHookOrphanAuditTests
 {
     // A stand-in "original" and "replacement". Reflection over methods on this test type is
