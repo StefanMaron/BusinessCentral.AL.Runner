@@ -164,7 +164,11 @@ public sealed class TddResultAnnotationTests
         Assert.Contains("EMPTY body", tddSection);
         Assert.Contains(TddReport.PerTestPrefix.TrimEnd(), tddSection);
         Assert.Contains("generatedStubs", tddSection);
-        Assert.Contains("helpers, library codeunits, [HandlerFunctions] handlers", tddSection); // follows calls, not just the [Test] body
+        var guideText = System.Text.RegularExpressions.Regex.Replace(tddSection, @"\s+", " ");
+        Assert.Contains("helpers, library codeunits, [HandlerFunctions] handlers, event subscribers of a publisher procedure declared in the same app", guideText); // follows calls, not just the [Test] body
+        Assert.DoesNotContain("event subscribers are not followed", guideText);
+        Assert.Contains("takes its return type from the other Variant argument", guideText); // #5146
+        Assert.Contains("generates an overload beside it", guideText); // #5228
         Assert.DoesNotContain("ran against generated", tddSection); // "reaches": read from the code, not observed
         Assert.DoesNotContain("raises a distinctive error", tddSection);
 
@@ -177,7 +181,11 @@ public sealed class TddResultAnnotationTests
         Assert.Contains("`generatedStubs` (#5147)", serverDoc);
         Assert.DoesNotContain("a test that ran against a stub is not a pass", serverDoc);
         Assert.Contains("a procedure the\n  test calls directly or transitively", serverDoc.Replace("\r\n", "\n"));
-        Assert.Contains("Event subscribers and procedures in another `sourcePaths` bundle", serverDoc);
+        var serverText = System.Text.RegularExpressions.Regex.Replace(serverDoc, @"\s+", " ");
+        Assert.Contains("an `[EventSubscriber]` of a publisher procedure declared in the same app", serverText); // #5161
+        Assert.DoesNotContain("Event subscribers and procedures in another `sourcePaths` bundle", serverText);
+        Assert.Contains("takes its return type from the other `Variant` arguments", serverText); // #5146
+        Assert.Contains("generates an overload beside it", serverText); // #5228
 
         using var schema = JsonDocument.Parse(File.ReadAllText(Path.Combine(RepoRoot, "protocol-v2.schema.json")));
         Assert.True(schema.RootElement.GetProperty("definitions").GetProperty("TestEvent")

@@ -1237,7 +1237,11 @@ It runs the same generation as the CLI and `--watch --tdd` (`--guide`, "TDD MODE
 
 - A missing member the call site anchors (a procedure's argument and return types, a field's
   type, an enum or enumextension value) is generated in memory, never on disk, and the test
-  runs. A generated procedure has an empty body, so it returns its type's default value (0,
+  runs. A call passed to a `Variant` parameter (`Assert.AreEqual(25, Calc.Points(250), ...)`)
+  takes its return type from the other `Variant` arguments, and is refused when they fix no
+  single type (#5146). A call to an existing procedure with an argument count none of its
+  overloads takes (the test adds a parameter) generates an overload beside it, typed by the
+  call site (#5228); the existing procedure is untouched. A generated procedure has an empty body, so it returns its type's default value (0,
   `false`, a blank date, an empty Guid, the enum's first value); a generated field or enum value
   simply exists. Each test reports its own result: `Assert.AreEqual(42, Calc.DoubleIt(21), ...)`
   fails with its own assertion message, and a test that only checks the default passes (#5147).
@@ -1247,11 +1251,12 @@ It runs the same generation as the CLI and `--watch --tdd` (`--guide`, "TDD MODE
   `status`, and is omitted for every other test. "Reaches" is read from the code, not observed
   at run time: the member is named by an AL0132 in the test's own body, or in a procedure the
   test calls directly or transitively — a helper in the test codeunit, a procedure of another
-  codeunit in the same app, or a handler the test names in `[HandlerFunctions(...)]`. A branch
-  that never ran still counts. Event subscribers and procedures in another `sourcePaths` bundle
-  (a test library app compiled separately) are not followed (#5161): their members are still
-  generated and listed on stderr, but a test reaching them only that way carries no
-  `generatedStubs`.
+  codeunit in the same app, a handler the test names in `[HandlerFunctions(...)]`, or an
+  `[EventSubscriber]` of a publisher procedure declared in the same app that a procedure the test
+  reaches calls (#5161). A branch that never ran still counts. An event a table raises itself
+  (`OnAfterInsertEvent` and the like) is not followed, and neither are procedures in another
+  `sourcePaths` bundle (a test library app compiled separately): a test reaching a stub only that
+  way carries no `generatedStubs`.
   The CLI's `--output-json` carries the same field.
 - With the app and its tests as two `sourcePaths`, the member is generated into the app bundle
   and the app is recompiled within the same request before the test bundle compiles again.

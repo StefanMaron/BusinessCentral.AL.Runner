@@ -11,7 +11,7 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-public sealed class TddCallShapeRun : IDisposable
+public class TddRunResult : IDisposable
 {
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
@@ -23,14 +23,17 @@ public sealed class TddCallShapeRun : IDisposable
     public List<JsonElement> Tests { get; private set; } = new();
     private JsonDocument? _doc;
 
-    public TddCallShapeRun()
+    protected static readonly string ShapesFixture =
+        Path.Combine(RepoRoot, "AlRunner.Tests", "Fixtures", "TddCallShapes");
+
+    public TddRunResult(params string[] folders)
     {
         if (!TestArtifacts.Present()) return; // the tests skip (or, on CI, fail) in SkipIfMissing
         Directory.CreateDirectory(_scratch);
-        var fixture = Path.Combine(RepoRoot, "AlRunner.Tests", "Fixtures", "TddCallShapes");
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
-        args.Append($" --tdd --cache \"{Path.Combine(_scratch, "cache")}\" --output-json \"{fixture}\"");
+        args.Append($" --tdd --cache \"{Path.Combine(_scratch, "cache")}\" --output-json");
+        foreach (var f in folders) args.Append($" \"{f}\"");
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet", Arguments = args.ToString(),
@@ -77,6 +80,12 @@ public sealed class TddCallShapeRun : IDisposable
         _doc?.Dispose();
         try { Directory.Delete(_scratch, recursive: true); } catch { }
     }
+}
+
+/// <summary>One --tdd run of the single-folder TddCallShapes fixture, shared by the tests of the class.</summary>
+public sealed class TddCallShapeRun : TddRunResult
+{
+    public TddCallShapeRun() : base(ShapesFixture) { }
 }
 
 public sealed class TddCallShapeTests : IClassFixture<TddCallShapeRun>
@@ -172,6 +181,12 @@ public sealed class TddCallShapeTests : IClassFixture<TddCallShapeRun>
         Assert.Contains("did not compile", _run.Failure("BareStatementWithExtraArgument_Refuses"));
         Assert.Contains("Existing", _run.Failure("BareStatementWithExtraArgument_Refuses"));
 
+        // AL0126 also names a built-in method called with the wrong argument count (Codeunit.Run):
+        // there is no declared procedure to overload, so nothing is generated.
+        Assert.Equal("fail", _run.Find("BuiltInMethodWithWrongArgumentCount_Refuses").GetProperty("status").GetString());
+        Assert.Contains("'Run'", _run.Failure("BuiltInMethodWithWrongArgumentCount_Refuses"));
+        Assert.DoesNotContain("\"Run\"(", _run.StdErr);
+
         // Two tests share one overload: it is generated once.
         var generated = _run.StdErr[_run.StdErr.IndexOf("--tdd: generated", StringComparison.Ordinal)..];
         generated = generated[..generated.IndexOf("test(s) reach generated stubs", StringComparison.Ordinal)];
@@ -195,5 +210,26 @@ public sealed class TddCallShapeTests : IClassFixture<TddCallShapeRun>
 
         Assert.Equal("pass", _run.Find("RaisingAnotherEvent_IsNotAnnotated").GetProperty("status").GetString());
         Assert.Empty(_run.StubsOf("RaisingAnotherEvent_IsNotAnnotated"));
+    }
+
+    /// <summary>
+    /// #5228 with the existing procedure in another source folder: the overload is generated into
+    /// the app bundle, which is recompiled before the test bundle compiles again.
+    /// </summary>
+    [SkippableFact]
+    public void ExistingProcedureInAnotherSourceFolder_GetsAGeneratedOverload()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "AlRunner.Tests", "Fixtures", "TddOverloadTwoFolder");
+        using var run = new TddRunResult(Path.GetFullPath(Path.Combine(root, "app")), Path.GetFullPath(Path.Combine(root, "test")));
+
+        Assert.True(run.Exit == 0, $"exit {run.Exit}\n{run.StdErr}");
+        Assert.Equal(2, run.Tests.Count);
+        Assert.Equal("pass", run.Find("ExtraArgument_RunsAgainstGeneratedOverload").GetProperty("status").GetString());
+        Assert.Equal(new[] { "Overload Calc: procedure \"Existing\"(Arg1: Integer; Arg2: Integer): Integer" },
+            run.StubsOf("ExtraArgument_RunsAgainstGeneratedOverload"));
+        Assert.Equal("pass", run.Find("OwnArgument_StillRunsTheExistingProcedure").GetProperty("status").GetString());
+        Assert.Empty(run.StubsOf("OwnArgument_StillRunsTheExistingProcedure"));
     }
 }

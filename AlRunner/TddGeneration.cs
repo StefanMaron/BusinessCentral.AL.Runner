@@ -163,7 +163,8 @@ public static class TddGeneration
     }
 
     /// <summary>
-    /// Pure resolution step (no mutation): given an AL0132 diagnostic, determines WHAT is
+    /// Pure resolution step (no mutation): given an AL0132 diagnostic (or, #5228, an AL0126 one:
+    /// the procedure exists, the call needs an overload), determines WHAT is
     /// missing (field / procedure / enum value), on WHICH object (by name — matched back to a
     /// live <see cref="NavSyntax.ObjectSyntax"/> at generation time, since a PRIOR call in the
     /// same <see cref="Generate"/> pass may already have mutated that object's tree), and the

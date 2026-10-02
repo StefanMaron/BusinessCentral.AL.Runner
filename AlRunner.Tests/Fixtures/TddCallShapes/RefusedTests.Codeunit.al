@@ -1,8 +1,9 @@
 /// <summary>
 /// Calls the generator cannot anchor and must refuse (#5146, #5228): a Text expected value (a
-/// length nothing fixes), a sibling that is itself missing, Variant siblings that disagree, and a
-/// bare-statement call to an existing procedure with an extra argument (void or discarded?).
-/// Each test is reported failed, naming the missing symbol.
+/// length nothing fixes), a sibling that is itself missing, Variant siblings that disagree, a
+/// bare-statement call to an existing procedure with two extra arguments (void or discarded?),
+/// and a built-in method (Run) called with an argument count it does not take (no declared
+/// procedure to overload). Each test is reported failed, naming the missing symbol.
 /// </summary>
 codeunit 65203 "Tdd Shape Refused Tests"
 {
@@ -42,5 +43,14 @@ codeunit 65203 "Tdd Shape Refused Tests"
         Target: Codeunit "Tdd Shape Target Cu";
     begin
         Target.Existing(5, 7, 9);
+    end;
+
+    [Test]
+    procedure BuiltInMethodWithWrongArgumentCount_Refuses()
+    var
+        Target: Codeunit "Tdd Shape Target Cu";
+        Result: Boolean;
+    begin
+        Result := Target.Run(1, 2);
     end;
 }

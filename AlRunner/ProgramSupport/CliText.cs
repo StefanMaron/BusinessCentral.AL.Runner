@@ -342,7 +342,9 @@ internal static partial class ProgramSupport
         w.WriteLine("  cover them), so the run reports exit 3 and zero test results, not a red test.");
         w.WriteLine("  --tdd infers the missing member's type from how the test uses it (a field's");
         w.WriteLine("  type from what's assigned to it, a procedure's parameter/return types from its");
-        w.WriteLine("  call site), generates it into the implementing app's source in memory, and");
+        w.WriteLine("  call site: a call passed to a Variant parameter, as Assert.AreEqual(25,");
+        w.WriteLine("  Calc.Points(250), ...), takes its return type from the other Variant argument),");
+        w.WriteLine("  generates it into the implementing app's source in memory, and");
         w.WriteLine("  recompiles. A generated procedure has an EMPTY body, so it returns its type's");
         w.WriteLine("  default value (0, false, a blank date, ...); a generated field or enum value");
         w.WriteLine("  simply exists. The test runs and reports its OWN result: a test expecting a");
@@ -350,10 +352,15 @@ internal static partial class ProgramSupport
         w.WriteLine("  red-green loop — instead of a compile failure:");
         w.WriteLine("    al-runner --tdd MyApp MyApp.Test");
         w.WriteLine();
+        w.WriteLine("  A call to a procedure that EXISTS, with an argument count none of its overloads");
+        w.WriteLine("  takes (the test adds a parameter), generates an overload beside it, typed by the");
+        w.WriteLine("  call site; the existing procedure is not touched.");
+        w.WriteLine();
         w.WriteLine("  Every test that reaches a generated member, passed or failed, gets a line naming");
         w.WriteLine("  those members — reached in its own body or through procedures it calls in the");
-        w.WriteLine("  same app (helpers, library codeunits, [HandlerFunctions] handlers), read from");
-        w.WriteLine("  the code, not from what ran (event subscribers are not followed):");
+        w.WriteLine("  same app (helpers, library codeunits, [HandlerFunctions] handlers, event");
+        w.WriteLine("  subscribers of a publisher procedure declared in the same app), read from the");
+        w.WriteLine("  code, not from what ran:");
         w.WriteLine("    reaches generated stub(s): Calc: procedure \"DoubleIt\"(Arg1: Integer): Integer");
         w.WriteLine("  (--output-json and --server test lines: a generatedStubs array), and the end of");
         w.WriteLine("  the run lists those tests with their results. Its status is still the test's own.");
