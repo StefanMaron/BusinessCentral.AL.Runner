@@ -773,6 +773,12 @@ public sealed partial class BcCompiler
         return any == null ? null : (any, false);
     }
 
+    /// <summary>The NETStandard.Library.Ref version directory the enumeration reads: the highest.</summary>
+    private static string? SelectNetStandardRefPack(string nsRef)
+        => Directory.EnumerateDirectories(nsRef)
+            .OrderByDescending(d => Version.TryParse(Path.GetFileName(d), out var v) ? v : new Version(0, 0))
+            .FirstOrDefault();
+
     internal static IEnumerable<string> EnumerateDotNetRefAssemblyDirsUnder(string runtimeDir, string? envDotnetRoot)
     {
         var dotnetRoot = ResolveDotNetRoot(runtimeDir, envDotnetRoot);
@@ -813,9 +819,7 @@ public sealed partial class BcCompiler
         var nsRef = Path.Combine(packs, "NETStandard.Library.Ref");
         if (Directory.Exists(nsRef))
         {
-            var best = Directory.EnumerateDirectories(nsRef)
-                .OrderByDescending(d => Version.TryParse(Path.GetFileName(d), out var v) ? v : new Version(0, 0))
-                .FirstOrDefault();
+            var best = SelectNetStandardRefPack(nsRef);
             if (best != null)
             {
                 var refSub = Path.Combine(best, "ref");

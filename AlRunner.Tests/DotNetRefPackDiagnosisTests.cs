@@ -229,4 +229,126 @@ public sealed class DotNetRefPackDiagnosisTests : IDisposable
         Assert.Contains(Path.Combine(_root, "packs"), with);
         Assert.DoesNotContain("Probable cause", without);
     }
+
+    // ---------------------------------------------------------------------------------------
+    // The NETStandard pack is judged on the directory the enumeration reads (the highest version).
+    // ---------------------------------------------------------------------------------------
+
+    [Fact]
+    public void ANetStandardFolderWithNoVersion_CountsAsMissing()
+    {
+        AddPack("Microsoft.NETCore.App.Ref", "8.0.30", "net8.0");
+        Directory.CreateDirectory(Path.Combine(_root, "packs", "NETStandard.Library.Ref"));
+
+        var gap = BcCompiler.DiagnoseDotNetRefPacks(RuntimeDir(), null);
+
+        Assert.NotNull(gap);
+        Assert.Contains("NETStandard.Library.Ref is not installed", gap!.Warning);
+    }
+
+    [Fact]
+    public void ANetStandardVersionWithNoRefFolder_CountsAsMissing()
+    {
+        AddPack("Microsoft.NETCore.App.Ref", "8.0.30", "net8.0");
+        Directory.CreateDirectory(Path.Combine(_root, "packs", "NETStandard.Library.Ref", "2.1.0"));
+
+        var gap = BcCompiler.DiagnoseDotNetRefPacks(RuntimeDir(), null);
+
+        Assert.NotNull(gap);
+        Assert.Contains("NETStandard.Library.Ref is not installed", gap!.Warning);
+    }
+
+    /// <summary>
+    /// The enumeration reads only the HIGHEST version, so a lower one that has a ref folder is
+    /// never probed and must not make the pack read as usable.
+    /// </summary>
+    [Fact]
+    public void ALowerNetStandardVersionWithRefs_DoesNotMakeAnEmptyHighestUsable()
+    {
+        AddPack("Microsoft.NETCore.App.Ref", "8.0.30", "net8.0");
+        AddPack("NETStandard.Library.Ref", "2.0.0", "netstandard2.0");
+        Directory.CreateDirectory(Path.Combine(_root, "packs", "NETStandard.Library.Ref", "2.1.0"));
+
+        var gap = BcCompiler.DiagnoseDotNetRefPacks(RuntimeDir(), null);
+
+        Assert.NotNull(gap);
+        Assert.Contains("NETStandard.Library.Ref is not installed", gap!.Warning);
+        // Control: the enumeration really does yield nothing for it.
+        Assert.DoesNotContain(BcCompiler.EnumerateDotNetRefAssemblyDirsUnder(RuntimeDir(), null),
+            d => d.Contains("NETStandard.Library.Ref"));
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // The source-dependency cache key (#5134): a dependency compiled without packs is a partial
+    // output, so the key must move when packs appear.
+    // ---------------------------------------------------------------------------------------
+
+    private static AppManifest Manifest() => new(
+        Publisher: "Contoso", Name: "Dep One", Version: new Version(1, 0, 0, 0),
+        AppId: Guid.Parse("11111111-2222-3333-4444-555555555555"),
+        Dependencies: Array.Empty<DependencyRef>());
+
+    private static string Key(string refPackTerm)
+        => DependencyLoader.ComputeSourceDependencyCacheKeyCore(
+            Manifest(), "dep.app", _ => "ABCDEF", refPackTerm);
+
+    [Fact]
+    public void TheSourceDependencyKey_DiffersBetweenARootWithPacksAndOneWithout()
+    {
+        var without = BcCompiler.DotNetRefPackCacheTerm(RuntimeDir(), null);
+        AddPack("Microsoft.NETCore.App.Ref", "8.0.30", "net8.0");
+        AddPack("NETStandard.Library.Ref", "2.1.0", "netstandard2.1");
+        var with = BcCompiler.DotNetRefPackCacheTerm(RuntimeDir(), null);
+
+        Assert.NotEqual(without, with);
+        Assert.NotEqual(Key(without), Key(with));
+        Assert.Equal(Key(with), Key(with));                     // control: the key is deterministic
+        Assert.Contains("Microsoft.NETCore.App.Ref/8.0.30/ref/net8.0", with);
+    }
+
+    [Fact]
+    public void TheRefPackTerm_DoesNotDependOnWhereTheDotnetRootIs()
+    {
+        AddPack("Microsoft.NETCore.App.Ref", "8.0.30", "net8.0");
+        AddPack("NETStandard.Library.Ref", "2.1.0", "netstandard2.1");
+        var here = BcCompiler.DotNetRefPackCacheTerm(RuntimeDir(), null);
+
+        var other = TestScratch.Dir("al-runner-5134-refpacks-other");
+        try
+        {
+            foreach (var (pack, v, tfm) in new[]
+                     { ("Microsoft.NETCore.App.Ref", "8.0.30", "net8.0"), ("NETStandard.Library.Ref", "2.1.0", "netstandard2.1") })
+                Directory.CreateDirectory(Path.Combine(other, "packs", pack, v, "ref", tfm));
+            var rd = Path.Combine(other, "shared", "Microsoft.NETCore.App", "8.0.30") + Path.DirectorySeparatorChar;
+            Directory.CreateDirectory(rd);
+
+            Assert.Equal(here, BcCompiler.DotNetRefPackCacheTerm(rd, null));
+        }
+        finally { try { Directory.Delete(other, true); } catch { } }
+    }
+
+    /// <summary>The default (no explicit term) uses the running install's term, not nothing.</summary>
+    [Fact]
+    public void TheDefaultKey_UsesTheRunningInstallsTerm()
+    {
+        var implicitKey = DependencyLoader.ComputeSourceDependencyCacheKeyCore(
+            Manifest(), "dep.app", _ => "ABCDEF");
+
+        Assert.Equal(Key(BcCompiler.RunningDotNetRefPackCacheTerm), implicitKey);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Which attribution wins when both could apply (#3890 vs #5134).
+    // ---------------------------------------------------------------------------------------
+
+    [Fact]
+    public void AnUnobtainableTypeAlone_KeepsItsOwnAttribution_NotThePacks()
+    {
+        var gap = BcCompiler.DiagnoseDotNetRefPacks(RuntimeDir(), null);
+        var mock = "error AL0185: DotNet 'MockAzureKeyVaultSecretProvider' is missing";
+
+        Assert.Null(BcCompiler.AttributeToMissingDotNetRefPack(new[] { mock }, gap));
+        // ...but beside another DotNet type, the packs are a probable cause too.
+        Assert.NotNull(BcCompiler.AttributeToMissingDotNetRefPack(new[] { mock, Al0185DotNet }, gap));
+    }
 }

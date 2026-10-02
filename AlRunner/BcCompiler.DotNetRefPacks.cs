@@ -32,8 +32,9 @@ public sealed partial class BcCompiler
 
     /// <summary>
     /// CLAIM: the packs the enumeration reads are absent, or present only for another .NET major.
-    /// Judged by the same <see cref="ResolveDotNetRoot"/> / <see cref="SelectCoreRefPack"/> the
-    /// enumeration uses, so "what was diagnosed" and "what was probed" cannot drift apart.
+    /// Judged by the same <see cref="ResolveDotNetRoot"/> / <see cref="SelectCoreRefPack"/> /
+    /// <see cref="SelectNetStandardRefPack"/> the enumeration uses, so "what was diagnosed" and
+    /// "what was probed" are the same directories (pinned per pack by DotNetRefPackDiagnosisTests).
     /// Null when the running major's core pack and the netstandard pack are both usable.
     ///
     /// TRAP: a pack directory without a <c>ref/&lt;tfm&gt;</c> subdirectory yields nothing to
@@ -48,7 +49,7 @@ public sealed partial class BcCompiler
             return new DotNetRefPackGap(
                 $"[dotnet-ref-packs] Could not locate the dotnet root (runtime directory '{runtimeDir}', "
                 + $"DOTNET_ROOT '{envDotnetRoot ?? "<unset>"}'), so the .NET reference packs cannot be read. "
-                + "Every `DotNet` alias in a compiled app will fail AL0185 and the objects using one "
+                + "`DotNet` aliases that bind through them will fail AL0185 and the objects using one "
                 + "are dropped. " + RefPackFix,
                 AliasesCannotBind: true,
                 Cause: "the dotnet root could not be located, so the .NET reference packs cannot be read");
@@ -73,8 +74,10 @@ public sealed partial class BcCompiler
         }
 
         var nsRef = Path.Combine(packs, "NETStandard.Library.Ref");
-        var nsUsable = Directory.Exists(nsRef)
-            && Directory.EnumerateDirectories(nsRef).Any(HasRefTfmDir);
+        // The directory the enumeration reads (highest version), not "any version": a lower
+        // version with a ref/ folder is never probed, so it must not make this read as usable.
+        var nsBest = Directory.Exists(nsRef) ? SelectNetStandardRefPack(nsRef) : null;
+        var nsUsable = nsBest != null && HasRefTfmDir(nsBest);
         if (!nsUsable)
         {
             problems.Add($"NETStandard.Library.Ref is not installed ('{nsRef}' "
@@ -113,7 +116,10 @@ public sealed partial class BcCompiler
         if (gap is not { AliasesCannotBind: true } || excludedDiagnostics == null) return null;
         foreach (var d in excludedDiagnostics)
             if (d != null && d.Contains("AL0185", StringComparison.Ordinal)
-                && d.Contains("DotNet '", StringComparison.Ordinal))
+                && d.Contains("DotNet '", StringComparison.Ordinal)
+                // A type no packs can supply keeps its own #3890 attribution; claiming the packs
+                // for it would contradict "permanent and expected here".
+                && !DependencyLoader.UnobtainableDotNetTypes.Any(t => d.Contains($"'{t}'", StringComparison.Ordinal)))
                 return "Probable cause, not the AL: " + gap.Cause + ". Install the .NET SDK, or unpack "
                     + "microsoft.netcore.app.ref and netstandard.library.ref under <dotnet root>/packs/ "
                     + "(the [dotnet-ref-packs] line printed before compiling has the full account).";
@@ -123,17 +129,39 @@ public sealed partial class BcCompiler
     internal static string? AttributeToMissingDotNetRefPack(IReadOnlyList<string>? excludedDiagnostics)
         => AttributeToMissingDotNetRefPack(excludedDiagnostics, RunningDotNetRefPackGap);
 
-    private static int _refPackGapPrinted;
-
     /// <summary>
-    /// Print the gap once per process, before the first compile. Stderr and unconditional rather
-    /// than through <c>ProvisionGapLog</c>: that log is reset per bundle, and a once-per-process
-    /// line would then reach only the first bundle's summary.
+    /// Print the gap before the first compile. Called from <c>GetOrCreateDotNetFactory</c>, which
+    /// builds the factory once per process under a lock, so that is the once-guard. Stderr and
+    /// unconditional rather than through <c>ProvisionGapLog</c>: that log is reset per bundle, and
+    /// a once-per-process line would then reach only the first bundle's summary.
     /// </summary>
     private static void WarnOnceIfDotNetRefPacksMissing()
     {
         var gap = RunningDotNetRefPackGap;
-        if (gap != null && Interlocked.Exchange(ref _refPackGapPrinted, 1) == 0)
+        if (gap != null)
             Console.Error.WriteLine(gap.Warning);
     }
+
+    /// <summary>
+    /// The compile-cache key term for which reference-pack directories BC's binder is given.
+    /// CLAIM: a source dependency compiled without packs is a different (partial) output from one
+    /// compiled with them, so the key must change when packs appear — otherwise a persisted entry
+    /// compiled on a runtime-only install is replayed, with its "packs missing" report, after the
+    /// user installs the SDK. Root-independent (pack/version/tfm only), so two machines with the
+    /// same packs in different places share entries. Built from the enumeration itself.
+    /// </summary>
+    internal static string DotNetRefPackCacheTerm(string runtimeDir, string? envDotnetRoot)
+    {
+        var dirs = EnumerateDotNetRefAssemblyDirsUnder(runtimeDir, envDotnetRoot)
+            .Select(d => string.Join("/", d.Replace('\\', '/').TrimEnd('/').Split('/').TakeLast(4)));
+        return "refpacks:" + string.Join(",", dirs);
+    }
+
+    private static readonly Lazy<string> _runningRefPackCacheTerm = new(
+        () => DotNetRefPackCacheTerm(
+            System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(),
+            Environment.GetEnvironmentVariable("DOTNET_ROOT")));
+
+    /// <summary>The term for the install this process runs on (fixed for the process, like the probing paths).</summary>
+    internal static string RunningDotNetRefPackCacheTerm => _runningRefPackCacheTerm.Value;
 }

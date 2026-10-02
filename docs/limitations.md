@@ -480,8 +480,14 @@ bucket reports fewer passing tests with diagnostics that point at the AL.
 the dotnet root it searched, which pack is missing and the fix, and every EMIT-EXCLUDED report
 that carries a `DotNet` `AL0185` ends with `Probable cause, not the AL`. It does **not** refuse
 the run: an app with no `DotNet` alias compiles fine without the packs, and refusing would break
-those runs. The fix is to install the .NET SDK, or unpack the `microsoft.netcore.app.ref` and
+those runs. A dependency's dropped objects are reported and the run continues by design (#2247),
+so a run can still end `PASSED` with objects missing (#5233). The source-dependency cache key
+carries the probed pack directories, so installing the packs recompiles instead of replaying a
+partial output. The fix is to install the .NET SDK, or unpack the `microsoft.netcore.app.ref` and
 `netstandard.library.ref` NuGet packages under `<dotnet root>/packs/`.
+
+A runtime-only install can also abort the compile with a stack overflow in Cecil's `ExportedType`
+resolution before any object is dropped (#5232); the `[dotnet-ref-packs]` line is printed first.
 
 **A pack for another major is a different fault.** With only another major's
 `Microsoft.NETCore.App.Ref` present the enumeration still falls back to the highest one (the
