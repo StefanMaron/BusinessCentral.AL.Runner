@@ -3098,6 +3098,21 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                     if (AlRunner.Infrastructure.ProvisionGapLog.WriteAtDiscovery) Console.Error.WriteLine(g);
                     bundleProvisionGaps.Add(g);
                 }
+                // #5233: the deferral attempt asks whether the BUNDLE passes without the platform
+                // apps. A loaded dependency that source-compiles against a withheld floor (Test
+                // Runner, by default) answers a different question: its compile drops objects and
+                // the dependency path exits 0 by design (#2247), so a green here would be replayed
+                // as the verdict. Not green, before anything compiles or is cached; the caller
+                // then runs with the apps. docs/limitations.md#platform-apps-deferral.
+                if (AlRunner.Infrastructure.ProvisioningCheck.WithholdingPlatformApps()
+                    && resolver.ProvisioningGaps.Count > 0)
+                {
+                    if (stdoutSilenced) { Console.SetOut(savedOut); Console.SetError(savedErr); }
+                    Console.Error.WriteLine(
+                        "[provision] this attempt withheld the platform apps and a loaded dependency needs one of them "
+                        + "as a floor; it is not a measurement of the bundle, so it is not green (#5233).");
+                    return 2;
+                }
                 // Compiler sees only non-workspace dirs in its .app scanner; the
                 // synthetic workspace dirs are registered as symbols.json-only
                 // sources via SetExtraSymbolDirs (called AFTER SetResolvedDeps,
