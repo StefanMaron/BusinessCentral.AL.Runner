@@ -22,7 +22,6 @@ public sealed class ServerRequestDoneMarkerTests
           "publisher": "Repro5168",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 511680, "to": 511689 } ],
           "runtime": "14.0"
         }

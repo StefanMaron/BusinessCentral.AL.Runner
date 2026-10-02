@@ -151,7 +151,7 @@ public sealed class TestPageFieldErrorNamesControlTests
         Directory.CreateDirectory(root);
         File.WriteAllText(Path.Combine(root, "app.json"), $$"""
         { "id": "{{Guid.NewGuid()}}", "name": "Fen", "publisher": "AL Runner", "version": "1.0.0.0",
-          "dependencies": [], "platform": "1.0.0.0", "idRanges": [ { "from": 63450, "to": 63459 } ], "runtime": "14.0" }
+          "dependencies": [], "idRanges": [ { "from": 63450, "to": 63459 } ], "runtime": "14.0" }
         """);
         File.WriteAllText(Path.Combine(root, "Fen.al"), Al);
 

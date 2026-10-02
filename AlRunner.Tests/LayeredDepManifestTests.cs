@@ -87,7 +87,6 @@ public class LayeredDepManifestTests
           "publisher": "AL Runner",
           "version": "1.0.0.0",{{helpUrlLine}}
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{idFrom}}, "to": {{idFrom + 19}} } ],
           "runtime": "14.0"
         }
@@ -136,7 +135,6 @@ public class LayeredDepManifestTests
           "dependencies": [
             { "id": "{{depId}}", "name": "{{depName}}", "publisher": "AL Runner", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{idFrom}}, "to": {{idFrom + 19}} } ],
           "runtime": "14.0"
         }

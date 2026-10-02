@@ -61,7 +61,6 @@ public class QueryHavingAndJoinAggregationProjectionTests
           "publisher": "Repro2146",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 61900, "to": 61930 } ],
           "runtime": "14.0"
         }

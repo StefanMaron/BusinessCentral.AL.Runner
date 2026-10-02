@@ -43,7 +43,6 @@ public sealed class ServerSameCodeunitIdTwoWorkspacesTests
           "publisher": "Repro4137",
           "version": "1.0.0.0",
           "dependencies": [ {{dependencies}} ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{from}}, "to": {{to}} } ],
           "runtime": "14.0"
         }

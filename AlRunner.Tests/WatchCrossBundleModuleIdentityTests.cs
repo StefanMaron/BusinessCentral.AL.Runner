@@ -151,7 +151,6 @@ public class WatchCrossBundleModuleIdentityTests
           "publisher": "Repro2594",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{SetupTableId}}, "to": {{SetupTableId + 9}} } ],
           "runtime": "14.0"
         }
@@ -186,7 +185,6 @@ public class WatchCrossBundleModuleIdentityTests
             { "id": "{{DepAppId}}", "name": "WM Dep App 2594",
               "publisher": "Repro2594", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{TestsId}}, "to": {{TestsId + 9}} } ],
           "runtime": "14.0"
         }

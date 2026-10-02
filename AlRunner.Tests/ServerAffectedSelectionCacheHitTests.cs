@@ -81,7 +81,6 @@ public class ServerAffectedSelectionCacheHitTests
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60400, "to": 60419 } ],
           "runtime": "14.0"
         }
@@ -102,7 +101,6 @@ public class ServerAffectedSelectionCacheHitTests
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60400, "to": 60409 } ],
           "runtime": "14.0"
         }
@@ -121,7 +119,6 @@ public class ServerAffectedSelectionCacheHitTests
             { "id": "c4971001-0000-4a11-9111-{{appIdSuffix}}", "name": "CacheHit App SX {{appIdSuffix}}",
               "publisher": "AL Runner", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60410, "to": 60419 } ],
           "runtime": "14.0"
         }

@@ -146,7 +146,6 @@ public class WatchAffectedSelectionTests
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 61770, "to": 61789 } ],
           "runtime": "14.0"
         }

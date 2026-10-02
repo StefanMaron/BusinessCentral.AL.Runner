@@ -44,7 +44,6 @@ public class TestPagePartLinkedRowLoadTests
           "publisher": "Repro2677",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62525, "to": 62535 } ],
           "runtime": "14.0"
         }

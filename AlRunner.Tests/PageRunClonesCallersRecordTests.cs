@@ -57,7 +57,6 @@ public sealed class PageRunClonesCallersRecordTests : IDisposable
               "version": "1.0.0.0",
               "dependencies": [],
               "idRanges": [ { "from": 90470, "to": 90476 } ],
-              "platform": "27.0.0.0",
               "runtime": "15.0",
               "target": "Cloud"
             }

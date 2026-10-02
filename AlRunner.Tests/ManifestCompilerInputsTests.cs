@@ -67,7 +67,6 @@ public sealed class ManifestCompilerInputsTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "28.0.0.0",
           "idRanges": [ { "from": 61050, "to": 61079 } ],
           "runtime": "17.0"{{extraProps}}
         }

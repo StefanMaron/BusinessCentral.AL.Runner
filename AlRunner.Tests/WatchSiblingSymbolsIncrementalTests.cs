@@ -83,7 +83,7 @@ public class WatchSiblingSymbolsIncrementalTests
         File.WriteAllText(Path.Combine(depDir, "app.json"), $$"""
         {
           "id": "{{DepAppId}}", "name": "WSI Sibling Dep", "publisher": "AL Runner",
-          "version": "1.0.0.0", "dependencies": [], "platform": "1.0.0.0",
+          "version": "1.0.0.0", "dependencies": [], 
           "idRanges": [ { "from": 64060, "to": 64064 } ], "runtime": "14.0"
         }
         """);
@@ -92,7 +92,7 @@ public class WatchSiblingSymbolsIncrementalTests
           "id": "{{TestAppId}}", "name": "WSI Sibling Tests", "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [ { "id": "{{DepAppId}}", "name": "WSI Sibling Dep", "publisher": "AL Runner", "version": "1.0.0.0" } ],
-          "platform": "1.0.0.0", "idRanges": [ { "from": 64065, "to": 64069 } ], "runtime": "14.0"
+          "idRanges": [ { "from": 64065, "to": 64069 } ], "runtime": "14.0"
         }
         """);
         WriteDep(depDir, "");

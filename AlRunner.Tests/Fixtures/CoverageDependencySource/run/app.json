@@ -19,7 +19,6 @@
       "to": 70889
     }
   ],
-  "platform": "27.0.0.0",
   "runtime": "15.0",
   "target": "OnPrem"
 }

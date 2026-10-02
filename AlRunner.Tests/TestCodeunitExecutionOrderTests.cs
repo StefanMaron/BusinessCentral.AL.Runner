@@ -95,7 +95,6 @@ public sealed class TestCodeunitExecutionOrderTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62280, "to": 62299 } ],
           "runtime": "14.0"
         }

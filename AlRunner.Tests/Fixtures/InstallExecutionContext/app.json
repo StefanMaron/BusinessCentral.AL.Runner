@@ -6,7 +6,6 @@
   "brief": "#4049: the runner sets BC's NavSession.AppInstallationContext around this bundle's install triggers and clears it afterwards.",
   "description": "AlRunner#4049: the install trigger records Session.GetExecutionContext() and Session.GetCurrentModuleExecutionContext(); the tests read the recorded values and the same calls at test time, so a context that was never set and a context that was never cleared both fail.",
   "idRanges": [ { "from": 70900, "to": 70919 } ],
-  "platform": "27.0.0.0",
   "runtime": "15.0",
   "target": "OnPrem"
 }

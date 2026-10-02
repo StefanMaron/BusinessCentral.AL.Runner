@@ -56,7 +56,6 @@ public class QueryColumnFilterProjectionTests
           "publisher": "Repro2418",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62480, "to": 62489 } ],
           "runtime": "14.0"
         }

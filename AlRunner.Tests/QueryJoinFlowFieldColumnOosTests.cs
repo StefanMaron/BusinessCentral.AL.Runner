@@ -42,7 +42,6 @@ public class QueryJoinFlowFieldColumnOosTests
           "publisher": "Repro2423",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{idRangeFrom}}, "to": {{idRangeTo}} } ],
           "runtime": "14.0"
         }

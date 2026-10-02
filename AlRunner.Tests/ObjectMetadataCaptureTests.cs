@@ -178,7 +178,6 @@ public class ObjectMetadataCaptureTests
           "publisher": "OMR",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 70670, "to": 70674 } ],
           "runtime": "14.0"
         }
@@ -215,7 +214,6 @@ public class ObjectMetadataCaptureTests
           "dependencies": [
             { "id": "{{depId}}", "name": "OMR Dep App", "publisher": "OMR", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 70675, "to": 70679 } ],
           "runtime": "14.0"
         }

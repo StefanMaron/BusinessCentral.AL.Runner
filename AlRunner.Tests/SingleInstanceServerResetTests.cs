@@ -49,7 +49,6 @@ public sealed class SingleInstanceServerResetTests
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 64600, "to": 64603 } ],
           "runtime": "14.0"
         }

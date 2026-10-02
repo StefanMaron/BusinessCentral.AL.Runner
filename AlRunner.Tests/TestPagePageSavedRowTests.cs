@@ -32,7 +32,6 @@ public sealed class TestPagePageSavedRowTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 66810, "to": 66819 } ],
           "runtime": "14.0"
         }

@@ -100,7 +100,7 @@ public class WatchSiblingSourceDependencyStaleTests
         File.WriteAllText(Path.Combine(depDir, "app.json"), $$"""
         {
           "id": "{{DepAppId}}", "name": "Watch Sibling Dep WSS", "publisher": "AL Runner",
-          "version": "1.0.0.0", "dependencies": [], "platform": "1.0.0.0",
+          "version": "1.0.0.0", "dependencies": [], 
           "idRanges": [ { "from": 64050, "to": 64054 } ], "runtime": "14.0"
         }
         """);
@@ -109,7 +109,7 @@ public class WatchSiblingSourceDependencyStaleTests
           "id": "{{TestAppId}}", "name": "Watch Sibling Dep Tests WSS", "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [ { "id": "{{DepAppId}}", "name": "Watch Sibling Dep WSS", "publisher": "AL Runner", "version": "1.0.0.0" } ],
-          "platform": "1.0.0.0", "idRanges": [ { "from": 64055, "to": 64059 } ], "runtime": "14.0"
+          "idRanges": [ { "from": 64055, "to": 64059 } ], "runtime": "14.0"
         }
         """);
         WriteDepSource(depDir, 42);

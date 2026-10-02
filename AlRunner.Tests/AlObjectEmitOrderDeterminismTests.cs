@@ -75,7 +75,6 @@ public sealed class AlObjectEmitOrderDeterminismTests : IDisposable
       "publisher": "AL Runner",
       "version": "1.0.0.0",
       "dependencies": [],
-      "platform": "1.0.0.0",
       "idRanges": [ { "from": 62240, "to": 62249 } ],
       "runtime": "14.0"
     }

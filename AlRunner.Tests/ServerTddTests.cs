@@ -123,7 +123,6 @@ public sealed class ServerTddTests : IClassFixture<SharedCliServer>
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 65300, "to": 65319 } ],
           "runtime": "14.0"
         }
@@ -407,7 +406,6 @@ public sealed class ServerTddTests : IClassFixture<SharedCliServer>
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 65300, "to": 65319 } ],
           "runtime": "14.0"
         }

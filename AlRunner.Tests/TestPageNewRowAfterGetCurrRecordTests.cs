@@ -34,7 +34,6 @@ public sealed class TestPageNewRowAfterGetCurrRecordTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62850, "to": 62859 } ],
           "runtime": "14.0"
         }

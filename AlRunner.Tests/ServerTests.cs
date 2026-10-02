@@ -147,7 +147,6 @@ public class ServerTests : IClassFixture<SharedCliServer>
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60120, "to": 60129 } ],
           "runtime": "14.0"
         }
@@ -549,7 +548,6 @@ public class ServerTests : IClassFixture<SharedCliServer>
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60350, "to": 60359 } ],
           "runtime": "14.0"
         }
@@ -573,7 +571,6 @@ public class ServerTests : IClassFixture<SharedCliServer>
           "dependencies": [
             { "id": "{{appId}}", "name": "Runner Extras - Server Multi App", "publisher": "AL Runner", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60160, "to": 60169 } ],
           "runtime": "14.0"
         }

@@ -7,7 +7,6 @@
   "description": "AlRunner#3965: AlCoverageSourceMap.Build is fed only the execution bundles, so a statement executed in a dependency compiled from sibling source cannot be attributed and is dropped from the report. This app exists only to own one executed statement and one NEVER-executed statement, so a fix that attributes everything indiscriminately is as visible as one that attributes nothing.",
   "dependencies": [],
   "idRanges": [ { "from": 70860, "to": 70869 } ],
-  "platform": "27.0.0.0",
   "runtime": "15.0",
   "target": "OnPrem"
 }

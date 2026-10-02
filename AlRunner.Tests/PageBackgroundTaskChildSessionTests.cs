@@ -29,7 +29,6 @@ public class PageBackgroundTaskChildSessionTests
           "publisher": "Repro4679",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 64679, "to": 64685 } ],
           "runtime": "14.0"
         }

@@ -188,7 +188,6 @@ public sealed class ManifestFeaturesSubprocessTests : IClassFixture<SharedCliSer
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{Math.Min(tableId, pageId)}}, "to": {{Math.Max(tableId, pageId) + 5}} } ],
           "runtime": "17.0"{{featuresLine}}
         }
@@ -306,7 +305,6 @@ public sealed class ManifestFeaturesSubprocessTests : IClassFixture<SharedCliSer
           "dependencies": [
             { "id": "{{depId}}", "name": "{{depName}}", "publisher": "AL Runner", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{idFrom}}, "to": {{idFrom + 9}} } ],
           "runtime": "17.0"
         }

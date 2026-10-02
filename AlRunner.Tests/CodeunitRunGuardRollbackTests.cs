@@ -51,7 +51,6 @@ public class CodeunitRunGuardRollbackTests
           "publisher": "Repro2334",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62334, "to": 62339 } ],
           "runtime": "14.0"
         }

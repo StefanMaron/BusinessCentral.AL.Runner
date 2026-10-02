@@ -45,7 +45,6 @@ public class QueryColumnAlDiagnosticFailureTests
           "publisher": "Repro2150",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62200, "to": 62209 } ],
           "runtime": "14.0"
         }

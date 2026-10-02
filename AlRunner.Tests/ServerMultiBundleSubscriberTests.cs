@@ -75,7 +75,7 @@ public class ServerMultiBundleSubscriberTests
             : "[]";
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         { "id": "{{appId}}", "name": "{{name}}", "publisher": "AL Runner", "version": "1.0.0.0",
-          "dependencies": {{deps}}, "platform": "1.0.0.0", "idRanges": [ { "from": {{from}}, "to": {{to}} } ], "runtime": "14.0" }
+          "dependencies": {{deps}}, "idRanges": [ { "from": {{from}}, "to": {{to}} } ], "runtime": "14.0" }
         """);
         return dir;
     }

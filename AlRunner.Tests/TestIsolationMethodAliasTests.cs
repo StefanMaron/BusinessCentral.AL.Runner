@@ -64,7 +64,6 @@ public sealed class TestIsolationMethodAliasTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62110, "to": 62119 } ],
           "runtime": "14.0"
         }

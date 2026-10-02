@@ -50,7 +50,6 @@ public sealed class TestPageCurrFieldNoDispatchTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62470, "to": 62479 } ],
           "runtime": "14.0"
         }

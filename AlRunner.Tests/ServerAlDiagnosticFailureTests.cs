@@ -34,7 +34,6 @@ public sealed class ServerAlDiagnosticFailureTests : IClassFixture<SharedCliServ
           "publisher": "Repro2152",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62220, "to": 62229 } ],
           "runtime": "14.0"
         }

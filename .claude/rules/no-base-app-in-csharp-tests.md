@@ -36,6 +36,16 @@ out which property and supply it (#2364). Two that have come up, with what repla
 **A checked-in fixture manifest counts too** — `AlRunner.Tests/Fixtures/RecordTriggerXRec/app.json`
 is the violation a class-only list missed (#2364).
 
+## `"platform"` is the same trap, one size smaller (#5112)
+
+`"platform"` is allowed, but not free: it makes every invocation compile against the System
+symbols. Declare it only when the AL reads System objects (`Session`, `User`, `AllObj`, ...) or
+the floor is the subject. The test is mechanical: remove it and the class must still pass with
+the same assertions; never judge by eye. `AlRunner.Tests/PlatformFloorFixtureGuardTests.cs`
+enforces it for fixtures and generated manifests, with a reason per allowlist entry and a stale
+entry failing the run. Trap: an entry resting on "fails without it" can stop being true when the
+AL changes, and nothing fails when it does; re-run the removal before trusting one.
+
 ## Do not conclude a failure set from a run that has not finished
 
 **The bar for adding to either allowlist is a completed run showing the class or fixture fails

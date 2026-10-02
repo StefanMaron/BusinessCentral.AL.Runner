@@ -150,7 +150,6 @@ public class ServerAffectedSelectionPersistedBaselineTests
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60600, "to": 60639 } ],
           "runtime": "14.0"
         }

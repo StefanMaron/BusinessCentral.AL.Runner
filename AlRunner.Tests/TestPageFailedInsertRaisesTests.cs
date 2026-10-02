@@ -32,7 +32,6 @@ public sealed class TestPageFailedInsertRaisesTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62870, "to": 62879 } ],
           "runtime": "14.0"
         }

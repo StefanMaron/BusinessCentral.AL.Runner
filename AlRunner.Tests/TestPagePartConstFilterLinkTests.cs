@@ -39,7 +39,6 @@ public class TestPagePartConstFilterLinkTests
           "publisher": "Repro2469",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62540, "to": 62549 } ],
           "runtime": "14.0"
         }

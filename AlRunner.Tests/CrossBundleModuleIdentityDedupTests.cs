@@ -79,7 +79,6 @@ public class CrossBundleModuleIdentityDedupTests
           "publisher": "Repro1683",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 61860, "to": 61869 } ],
           "runtime": "14.0"
         }
@@ -130,7 +129,6 @@ public class CrossBundleModuleIdentityDedupTests
           "dependencies": [
             { "id": "{{depId}}", "name": "TE Dep App 1683", "publisher": "Repro1683", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 61870, "to": 61879 } ],
           "runtime": "14.0"
         }

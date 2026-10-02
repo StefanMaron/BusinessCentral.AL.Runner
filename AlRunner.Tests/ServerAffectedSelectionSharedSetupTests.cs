@@ -133,7 +133,6 @@ public class ServerAffectedSelectionSharedSetupTests : IClassFixture<SharedCliSe
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 61830, "to": 61849 } ],
           "runtime": "14.0"
         }
@@ -369,7 +368,6 @@ public class ServerAffectedSelectionSharedSetupTests : IClassFixture<SharedCliSe
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 61830, "to": 61849 } ],
           "runtime": "14.0"
         }

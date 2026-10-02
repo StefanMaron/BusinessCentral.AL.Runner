@@ -94,7 +94,6 @@ public class LayeredPrePassProvisioningReportingTests
           "dependencies": [
             { "id": "{{baseId}}", "name": "LPP Chain Base", "publisher": "AL Runner", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60860, "to": 60869 } ],
           "runtime": "14.0"
         }
@@ -125,7 +124,6 @@ public class LayeredPrePassProvisioningReportingTests
           "dependencies": [
             { "id": "{{middleId}}", "name": "LPP Chain Middle", "publisher": "AL Runner", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60870, "to": 60879 } ],
           "runtime": "14.0"
         }
@@ -166,7 +164,6 @@ public class LayeredPrePassProvisioningReportingTests
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60880, "to": 60889 } ],
           "runtime": "14.0"
         }
@@ -204,7 +201,6 @@ public class LayeredPrePassProvisioningReportingTests
           "dependencies": [
             { "id": "{{middleId}}", "name": "{{middleName}}", "publisher": "AL Runner", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60890, "to": 60899 } ],
           "runtime": "14.0"
         }

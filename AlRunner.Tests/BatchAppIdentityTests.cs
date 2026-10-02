@@ -65,7 +65,6 @@ public sealed class BatchAppIdentityTests : IDisposable
           "publisher": "AL Runner",
           "version": "{{version}}",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{baseId}}, "to": {{baseId + 9}} } ],
           "runtime": "14.0"
         }

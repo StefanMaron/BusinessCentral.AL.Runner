@@ -61,7 +61,6 @@ public class PerSuiteAlDiagnosticFailureTests
           "publisher": "Repro2152",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62210, "to": 62219 } ],
           "runtime": "14.0"
         }

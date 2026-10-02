@@ -55,7 +55,6 @@ public sealed class TestPageDeletedRowCloseTests : IDisposable
               "version": "1.0.0.0",
               "dependencies": [],
               "idRanges": [ { "from": 90480, "to": 90489 } ],
-              "platform": "27.0.0.0",
               "runtime": "15.0",
               "target": "Cloud"
             }

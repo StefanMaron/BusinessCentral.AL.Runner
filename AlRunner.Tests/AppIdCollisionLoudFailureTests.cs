@@ -87,7 +87,6 @@ public class AppIdCollisionLoudFailureTests
           "publisher": "Repro1850",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 61880, "to": 61889 } ],
           "runtime": "14.0"
         }
@@ -113,7 +112,6 @@ public class AppIdCollisionLoudFailureTests
           "publisher": "Repro1850",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 61890, "to": 61899 } ],
           "runtime": "14.0"
         }

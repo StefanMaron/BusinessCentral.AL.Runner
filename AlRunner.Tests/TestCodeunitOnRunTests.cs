@@ -59,7 +59,6 @@ public class TestCodeunitOnRunTests
           "publisher": "Repro4694",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62690, "to": 62699 } ],
           "runtime": "14.0"
         }

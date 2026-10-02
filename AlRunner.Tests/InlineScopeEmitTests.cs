@@ -56,7 +56,6 @@ public class InlineScopeEmitTests
           "publisher": "Repro4697",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62790, "to": 62799 } ],
           "runtime": "14.0"
         }

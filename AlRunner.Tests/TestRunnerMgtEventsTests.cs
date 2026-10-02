@@ -79,7 +79,6 @@ public sealed class TestRunnerMgtEventsTests
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [ {{dependency}} ],
-          "platform": "27.0.0.0",
           "idRanges": [ { "from": 64810, "to": 64819 }, { "from": 130450, "to": 130459 } ],
           "runtime": "14.0",
           "target": "{{target}}"

@@ -71,7 +71,6 @@ public sealed class TestPagePartAdoptedFromHostTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62410, "to": 62413 } ],
           "runtime": "14.0"
         }
@@ -204,7 +203,6 @@ public sealed class TestPagePartAdoptedFromHostTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62420, "to": 62429 } ],
           "runtime": "14.0"
         }

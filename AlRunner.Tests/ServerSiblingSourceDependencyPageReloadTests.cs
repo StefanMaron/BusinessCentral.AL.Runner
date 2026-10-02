@@ -38,7 +38,6 @@ public sealed class ServerSiblingSourceDependencyPageReloadTests
           "dependencies": [
             { "id": "{{SubjectAppId}}", "name": "Repro4099 Subject", "publisher": "Repro4099", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 64095, "to": 64099 } ],
           "runtime": "14.0"
         }
@@ -122,7 +121,6 @@ public sealed class ServerSiblingSourceDependencyPageReloadTests
           "publisher": "Repro4099",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 64090, "to": 64094 } ],
           "runtime": "14.0"
         }

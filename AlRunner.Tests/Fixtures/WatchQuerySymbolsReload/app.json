@@ -5,6 +5,5 @@
   "version": "1.0.0.0",
   "dependencies": [],
   "idRanges": [ { "from": 70620, "to": 70639 } ],
-  "platform": "27.0.0.0",
   "runtime": "15.0"
 }

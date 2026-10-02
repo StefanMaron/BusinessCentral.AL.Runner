@@ -67,7 +67,6 @@ public class WatchLayeredDependencyStaleTests
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60420, "to": 60429 } ],
           "runtime": "14.0"
         }
@@ -104,7 +103,6 @@ public class WatchLayeredDependencyStaleTests
             { "id": "{{DepAppId}}", "name": "Watch Layered Dep WLD",
               "publisher": "AL Runner", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60430, "to": 60439 } ],
           "runtime": "14.0"
         }

@@ -93,7 +93,6 @@ public class ServerAffectedSelectionExtensionEventTests : IClassFixture<SharedCl
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60490, "to": 60499 } ],
           "runtime": "14.0"
         }
@@ -119,7 +118,6 @@ public class ServerAffectedSelectionExtensionEventTests : IClassFixture<SharedCl
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60740, "to": 60749 } ],
           "runtime": "14.0"
         }
@@ -131,7 +129,6 @@ public class ServerAffectedSelectionExtensionEventTests : IClassFixture<SharedCl
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60750, "to": 60759 } ],
           "runtime": "14.0"
         }

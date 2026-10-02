@@ -59,7 +59,6 @@ public sealed class PageOpensOnStoredRowTests : IDisposable
               "version": "1.0.0.0",
               "dependencies": [],
               "idRanges": [ { "from": 90730, "to": 90735 } ],
-              "platform": "27.0.0.0",
               "runtime": "15.0",
               "target": "Cloud"
             }

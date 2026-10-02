@@ -76,7 +76,6 @@ public class DependencyManifestNonStringFieldTests
           "publisher": "Repro2560",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 61960, "to": 61969 } ],
           "runtime": "14.0"
         }
@@ -105,7 +104,6 @@ public class DependencyManifestNonStringFieldTests
             { "id": "{{depId}}", "name": "Repro2560 Dep App", "publisher": "Repro2560", "version": "1.0.0.0" },
             { "id": 999, "name": 123, "publisher": "Repro2560", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 61970, "to": 61979 } ],
           "runtime": "14.0"
         }

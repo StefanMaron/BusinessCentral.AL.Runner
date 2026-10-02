@@ -107,7 +107,6 @@ public class NoCacheLastWinsIntegrationTests
           "publisher": "Repro2555",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 61940, "to": 61949 } ],
           "runtime": "14.0"
         }
@@ -183,7 +182,6 @@ public class NoCacheLastWinsIntegrationTests
           "publisher": "Repro2555",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 61950, "to": 61959 } ],
           "runtime": "14.0"
         }
@@ -257,7 +255,6 @@ public class NoCacheLastWinsIntegrationTests
           "publisher": "Repro4725",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 61960, "to": 61969 } ],
           "runtime": "14.0"
         }

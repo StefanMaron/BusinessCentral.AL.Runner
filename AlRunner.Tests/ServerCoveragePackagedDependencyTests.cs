@@ -65,7 +65,7 @@ public sealed class ServerCoveragePackagedDependencyTests
             File.WriteAllText(Path.Combine(unrelated, "app.json"), """
                 { "id": "5b7f0c0e-4c1e-4d7c-9a51-2f6e0d9a7e12", "name": "Runner Tests Fixture - Coverage Unrelated",
                   "publisher": "AL Runner", "version": "1.0.0.0", "dependencies": [],
-                  "idRanges": [ { "from": 79870, "to": 79879 } ], "platform": "27.0.0.0", "runtime": "15.0", "target": "OnPrem" }
+                  "idRanges": [ { "from": 79870, "to": 79879 } ], "runtime": "15.0", "target": "OnPrem" }
                 """);
             File.WriteAllText(Path.Combine(unrelated, "Unrelated.Codeunit.al"), """
                 codeunit 79870 "Cov Unrelated Tests"

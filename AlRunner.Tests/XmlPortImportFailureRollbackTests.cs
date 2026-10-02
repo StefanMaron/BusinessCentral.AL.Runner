@@ -30,7 +30,6 @@ public class XmlPortImportFailureRollbackTests
           "publisher": "Repro4643",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 64643, "to": 64649 } ],
           "runtime": "14.0"
         }

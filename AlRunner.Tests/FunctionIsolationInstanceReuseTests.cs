@@ -41,7 +41,6 @@ public class FunctionIsolationInstanceReuseTests
           "publisher": "Repro4826",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 64820, "to": 64826 } ],
           "runtime": "14.0"
         }

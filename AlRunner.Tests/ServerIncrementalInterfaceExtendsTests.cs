@@ -39,7 +39,6 @@ public class ServerIncrementalInterfaceExtendsTests
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 71890, "to": 71899 } ],
           "runtime": "14.0"
         }

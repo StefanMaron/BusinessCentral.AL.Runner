@@ -108,7 +108,6 @@ public class ServerCrossAppStaleGenerationTests : IClassFixture<SharedCliServer>
           "version": "1.0.0.0",
           "dependencies": [],
           "idRanges": [ { "from": {{libFrom}}, "to": {{libFrom + 9}} } ],
-          "platform": "1.0.0.0",
           "runtime": "14.0"
         }
         """);
@@ -156,7 +155,6 @@ public class ServerCrossAppStaleGenerationTests : IClassFixture<SharedCliServer>
             { "id": "{{libId}}", "name": "WS Lib{{sfx}}", "publisher": "AL Runner Repro", "version": "1.0.0.0" }
           ],
           "idRanges": [ { "from": {{testFrom}}, "to": {{testFrom + 9}} } ],
-          "platform": "1.0.0.0",
           "runtime": "14.0"
         }
         """);

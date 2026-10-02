@@ -62,7 +62,6 @@ public sealed class NclShadowSteadyStateTests
           "publisher": "Repro5019",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 61970, "to": 61979 } ],
           "runtime": "14.0"
         }

@@ -198,7 +198,6 @@ public class ServerAffectedSelectionTableChangeTests
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60670, "to": 60689 } ],
           "runtime": "14.0"
         }

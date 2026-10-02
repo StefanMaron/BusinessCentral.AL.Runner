@@ -48,7 +48,6 @@ public class PageTriggerEventDispatchTests
           "publisher": "Repro3436",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 63436, "to": 63439 } ],
           "runtime": "14.0"
         }

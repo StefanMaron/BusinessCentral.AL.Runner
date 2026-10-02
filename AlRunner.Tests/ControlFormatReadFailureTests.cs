@@ -113,7 +113,7 @@ public sealed class ControlFormatReadFailureTests
         Directory.CreateDirectory(root);
         File.WriteAllText(Path.Combine(root, "app.json"), $$"""
         { "id": "{{Guid.NewGuid()}}", "name": "Cfr", "publisher": "AL Runner", "version": "1.0.0.0",
-          "dependencies": [], "platform": "1.0.0.0", "idRanges": [ { "from": 63460, "to": 63469 } ], "runtime": "14.0" }
+          "dependencies": [], "idRanges": [ { "from": 63460, "to": 63469 } ], "runtime": "14.0" }
         """);
         File.WriteAllText(Path.Combine(root, "Cfr.al"), Al);
 

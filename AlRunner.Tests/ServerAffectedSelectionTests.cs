@@ -26,7 +26,6 @@ public class ServerAffectedSelectionTests : IClassFixture<SharedCliServer>
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60200, "to": 60249 } ],
           "runtime": "14.0"
         }
@@ -209,7 +208,6 @@ public class ServerAffectedSelectionTests : IClassFixture<SharedCliServer>
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 60260, "to": 60269 } ],
           "runtime": "14.0"
         }

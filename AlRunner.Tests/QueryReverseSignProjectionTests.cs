@@ -46,7 +46,6 @@ public class QueryReverseSignProjectionTests
           "publisher": "Repro2575",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 61980, "to": 61989 } ],
           "runtime": "14.0"
         }

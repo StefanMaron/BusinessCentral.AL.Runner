@@ -144,7 +144,6 @@ public class RunSeedTests
           "publisher": "Repro2502",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": {{codeunitId}}, "to": {{codeunitId}} } ],
           "runtime": "14.0"
         }
