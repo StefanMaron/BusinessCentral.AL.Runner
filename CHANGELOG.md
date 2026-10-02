@@ -95,6 +95,7 @@ All notable changes to this project are documented here. Format based on
 - **testpage:** New() on an empty linked part raises the part's OnNewRecord
 
 ### Changed
+- **platform-floor:** measure the remaining System-table fixtures by stripped run
 - **fixtures:** drop the platform floor from more C# fixtures (#5112 batch 3)
 - **tests:** drop the platform floor from more C# test fixtures
 - **tests:** drop the platform floor from C# test fixtures that use no System symbols
