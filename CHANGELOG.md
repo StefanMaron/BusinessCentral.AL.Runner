@@ -21,6 +21,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **tdd:** generate nested-argument and overload members, follow event subscribers (#5146, #5228, #5161)
 - **coverage:** report every object's lines in one frame when a same-app-id source project is found
 - **compiler:** name a missing .NET reference pack up front and as the cause of AL0185 DotNet drops
 - **resolver:** bundle-declared TableRelation/CalcFormula names resolve by namespace and usings
