@@ -66,7 +66,6 @@ public class QueryFlowFieldColumnProjectionTests
           "publisher": "Repro2300",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62460, "to": 62469 } ],
           "runtime": "14.0"
         }

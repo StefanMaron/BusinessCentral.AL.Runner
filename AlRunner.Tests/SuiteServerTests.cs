@@ -372,7 +372,7 @@ public class SuiteServerTests
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         { "id": "{{Guid.NewGuid()}}", "name": "SuiteServer {{name}}", "publisher": "AL Runner", "version": "1.0.0.0",
-          "dependencies": [], "platform": "1.0.0.0", "idRanges": [ { "from": 69980, "to": 69989 } ], "runtime": "14.0" }
+          "dependencies": [], "idRanges": [ { "from": 69980, "to": 69989 } ], "runtime": "14.0" }
         """);
         File.WriteAllText(Path.Combine(dir, "Tests.Codeunit.al"), $$"""
         codeunit 69981 "SST Tests"

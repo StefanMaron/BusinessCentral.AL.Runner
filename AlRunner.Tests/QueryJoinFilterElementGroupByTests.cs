@@ -30,7 +30,6 @@ public class QueryJoinFilterElementGroupByTests
           "publisher": "Repro5145",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 75140, "to": 75150 } ],
           "runtime": "14.0"
         }

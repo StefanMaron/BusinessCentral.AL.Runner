@@ -43,7 +43,6 @@ public sealed class TextSplitVariadicSeparatorsTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 63400, "to": 63419 } ],
           "runtime": "14.0"
         }

@@ -53,7 +53,6 @@ public sealed class ServerTestSelectionFieldTests : IClassFixture<SharedCliServe
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 65400, "to": 65419 } ],
           "runtime": "14.0"
         }

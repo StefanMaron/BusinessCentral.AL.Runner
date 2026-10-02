@@ -85,10 +85,6 @@ public sealed class PlatformFloorFixtureGuardTests
         "measured on #5112: with the floor removed the class fails (bundle exits 3 / EMIT-EXCLUDED) because " +
         "its AL needs System symbols";
 
-    private const string PendingSharedServer =
-        "not yet measured: #5178 converts this class to the shared server, so the floor is dropped " +
-        "after it merges (#5112 follow-up) rather than conflicting with it";
-
     /// <summary>Checked-in fixture manifests that keep the floor, with the reason. Paths relative to AlRunner.Tests/.</summary>
     private static readonly Dictionary<string, string> AllowedFixtures = new()
     {
@@ -160,23 +156,8 @@ public sealed class PlatformFloorFixtureGuardTests
         ["TestPageSourceTableTemporaryIntegerTests.cs"] = Measured,
         ["WriteTransactionTestBoundaryTests.cs"] = Measured,
 
-        // Not yet attempted: #5178 owns these files until it merges.
-        ["CrossBundleModuleIdentityDedupTests.cs"] = PendingSharedServer,
-        ["FunctionIsolationInstanceReuseTests.cs"] = PendingSharedServer,
-        ["HostOpenPartErrorTests.cs"] = PendingSharedServer,
-        ["QueryFlowFieldColumnProjectionTests.cs"] = PendingSharedServer,
-        ["QueryFlowFieldFlowFilterTests.cs"] = PendingSharedServer,
-        ["QueryHavingAndJoinAggregationProjectionTests.cs"] = PendingSharedServer,
-        ["QueryJoinFilterElementGroupByTests.cs"] = PendingSharedServer,
-        ["QueryJoinFlowFieldColumnOosTests.cs"] = PendingSharedServer,
-        ["QueryRangeFilterRetargetTests.cs"] = PendingSharedServer,
-        ["QueryWildcardFilterProjectionTests.cs"] = PendingSharedServer,
-        ["RecordLinkStoreEndToEndTests.cs"] = PendingSharedServer,
-        ["SourceTableViewApplicationTests.cs"] = PendingSharedServer,
-        ["StaleBundleSymbolAppOwnershipTests.cs"] = PendingSharedServer,
-        ["SuiteServerTests.cs"] = PendingSharedServer,
-        ["TestPagePartConstFilterLinkTests.cs"] = PendingSharedServer,
-        ["TextSplitVariadicSeparatorsTests.cs"] = PendingSharedServer,
+        ["RecordLinkStoreEndToEndTests.cs"] = "AL reads the System table Record Link (" + Measured + ")",
+        ["StaleBundleSymbolAppOwnershipTests.cs"] = Measured,
     };
 
     [Fact]

@@ -43,7 +43,7 @@ public sealed class HostOpenPartErrorTests
         Directory.CreateDirectory(root);
         File.WriteAllText(Path.Combine(root, "app.json"), $$"""
         { "id": "{{Guid.NewGuid()}}", "name": "Hope", "publisher": "AL Runner", "version": "1.0.0.0",
-          "dependencies": [], "platform": "1.0.0.0", "idRanges": [ { "from": 62810, "to": 62829 } ], "runtime": "14.0" }
+          "dependencies": [], "idRanges": [ { "from": 62810, "to": 62829 } ], "runtime": "14.0" }
         """);
         File.WriteAllText(Path.Combine(root, "Hope.al"),
             """

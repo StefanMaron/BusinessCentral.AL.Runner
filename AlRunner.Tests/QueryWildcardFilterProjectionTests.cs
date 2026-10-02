@@ -47,7 +47,6 @@ public class QueryWildcardFilterProjectionTests
           "publisher": "Repro2299",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62450, "to": 62459 } ],
           "runtime": "14.0"
         }
