@@ -128,4 +128,32 @@ codeunit 70782 "ITSI Tests"
             Error('the one SUPER row names %1, but UserSecurityId() is %2',
               Format(AccessCtrl."User Security ID"), Format(UserSecurityId()));
     end;
+
+    [Test]
+    procedure ItsiAuditFieldsNameTheAdoptedUser()
+    var
+        Setup: Record "ITSI Setup";
+        AdoptedSid: Guid;
+    begin
+        // AlRunner#5206. SystemCreatedBy / SystemModifiedBy are stamped from the session's
+        // CURRENT user, read at write time. This fixture moves that user off the generated id
+        // onto an adopted one, so a stamp taken from a constant or captured early fails here
+        // while the plain "= UserSecurityId()" corpus check would still pass.
+        Evaluate(AdoptedSid, AdoptedSidTok);
+        Setup.Init();
+        Setup."Code" := 'AUDIT';
+        Setup.Insert();
+        Setup.Get('AUDIT');
+        if Setup.SystemCreatedBy <> AdoptedSid then
+            Error('SystemCreatedBy is %1, expected the adopted session user %2',
+              Format(Setup.SystemCreatedBy), AdoptedSidTok);
+        if Setup.SystemModifiedBy <> AdoptedSid then
+            Error('SystemModifiedBy is %1, expected the adopted session user %2',
+              Format(Setup.SystemModifiedBy), AdoptedSidTok);
+        // The install trigger's row was written by the same session, after adoption (#3268).
+        Setup.Get(OwnerCodeTok);
+        if Setup.SystemCreatedBy <> AdoptedSid then
+            Error('the install-written row has SystemCreatedBy %1, expected the adopted session user %2',
+              Format(Setup.SystemCreatedBy), AdoptedSidTok);
+    end;
 }

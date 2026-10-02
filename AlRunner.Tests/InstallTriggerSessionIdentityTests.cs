@@ -106,6 +106,8 @@ public sealed class InstallTriggerSessionIdentityTests
         // ADOPTED. The seed now runs on both sides of the identity decision, so a grant
         // written for the pre-adoption id is the way that goes wrong.
         Assert.Contains("PASS  Codeunit70782.ItsiExactlyOneSuperRowAndItNamesTheAdoptedId", stdout);
+        // #5206 — the audit "By" fields follow the session user after adoption, not a constant.
+        Assert.Contains("PASS  Codeunit70782.ItsiAuditFieldsNameTheAdoptedUser", stdout);
         Assert.True(exit == 0,
             $"{arm}: expected a clean run. exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");
     }
