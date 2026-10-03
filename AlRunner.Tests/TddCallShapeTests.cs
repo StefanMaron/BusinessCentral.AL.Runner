@@ -272,6 +272,49 @@ public sealed class TddCallShapeTests : IClassFixture<TddCallShapeRun>
     }
 
     /// <summary>
+    /// #5244: the first call site of a missing member is a bare statement, which anchors no type; the
+    /// second is typed. The member is generated from the second, and the first test — refused when it
+    /// alone decided the key — compiles against it, runs, and names it.
+    /// </summary>
+    [SkippableFact]
+    public void BareStatementBeforeATypedCall_DoesNotRefuseTheMember()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var stub = new[] { $"{Target}: procedure \"Ordered\"(Arg1: Integer): Integer" };
+        Assert.Equal("pass", _run.Find("A_BareStatementFirst_StillReachesTheStubTheTypedCallGenerates").GetProperty("status").GetString());
+        Assert.Equal(stub, _run.StubsOf("A_BareStatementFirst_StillReachesTheStubTheTypedCallGenerates"));
+        Assert.Equal("pass", _run.Find("B_TypedCallSecond_GeneratesTheMember").GetProperty("status").GetString());
+        Assert.Equal(stub, _run.StubsOf("B_TypedCallSecond_GeneratesTheMember"));
+
+        // Generated once, however many call sites name it.
+        var generated = _run.StdErr[_run.StdErr.IndexOf("--tdd: generated", StringComparison.Ordinal)..];
+        generated = generated[..generated.IndexOf("test(s) reach generated stubs", StringComparison.Ordinal)];
+        Assert.Equal(1, System.Text.RegularExpressions.Regex.Matches(generated, "\"Ordered\"\\(").Count);
+    }
+
+    /// <summary>
+    /// #5244 across source folders: the same shape with the member in the app bundle, so the key goes
+    /// through the cross-bundle attempt state instead of the in-compile one.
+    /// </summary>
+    [SkippableFact]
+    public void BareStatementBeforeATypedCall_DoesNotRefuseTheMemberInAnotherSourceFolder()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "AlRunner.Tests", "Fixtures", "TddRefusalOrder"));
+        using var run = new TddRunResult(Path.Combine(root, "app"), Path.Combine(root, "test"));
+
+        Assert.True(run.Exit == 0, $"exit {run.Exit}\n{run.StdErr}");
+        var stub = new[] { "Order App Target: procedure \"CrossOrdered\"(Arg1: Integer): Integer" };
+        Assert.Equal(2, run.Tests.Count);
+        Assert.Equal("pass", run.Find("A_BareStatementFirst_StillReachesTheStubTheTypedCallGenerates").GetProperty("status").GetString());
+        Assert.Equal(stub, run.StubsOf("A_BareStatementFirst_StillReachesTheStubTheTypedCallGenerates"));
+        Assert.Equal("pass", run.Find("B_TypedCallSecond_GeneratesTheMemberIntoTheApp").GetProperty("status").GetString());
+        Assert.Equal(stub, run.StubsOf("B_TypedCallSecond_GeneratesTheMemberIntoTheApp"));
+    }
+
+    /// <summary>
     /// #5228 with the existing procedure in another source folder: the overload is generated into
     /// the app bundle, which is recompiled before the test bundle compiles again.
     /// </summary>
