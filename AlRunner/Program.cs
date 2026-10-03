@@ -4560,7 +4560,13 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
             IReadOnlyList<string> suiteAlDiagnostics = Array.Empty<string>();
             try
             {
-                var emitOutput = emitter.Emit(suitePaths, $"V2_{Path.GetFileName(suite)}", suite);
+                // The bundled loop's scope (see bundleDepScope above), so a declared dependency whose
+                // .app carries no SymbolReference.json is not handed to BC's package scanner, which
+                // answers AL1022 for it and fails a suite the bundled run compiles (#5132). Only
+                // the Emit is scoped: assembler.Compile below is Roslyn and reads no package list.
+                BcEmitOutput emitOutput;
+                using (BcCompiler.ScopeSymbolBearingDepsOnly())
+                    emitOutput = emitter.Emit(suitePaths, $"V2_{Path.GetFileName(suite)}", suite);
                 sources = emitOutput.Sources;
                 suiteAlDiagnostics = emitOutput.Diagnostics;
             }
@@ -4596,6 +4602,17 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                     $"{suiteName}: AL-DIAGNOSTIC-FAIL ({suiteAlDiagnostics.Count}): " +
                     $"{suiteAlDiagnostics.FirstOrDefault()?.Split('\n')[0]}");
                 continue; // do not compile/run a suite BC would refuse to publish
+            }
+            // #5299: the bundled loop's EMIT-ZERO. Every object of the suite failed to emit, so
+            // there is nothing to compile; running it would report "0 tests, PASSED" for a suite
+            // that did not compile.
+            if (sources.Count == 0 && suiteAlDiagnostics.Count > 0)
+            {
+                Console.Error.WriteLine($"{suiteName}: EMIT-ZERO — 0 sources emitted, {suiteAlDiagnostics.Count} AL error(s):");
+                foreach (var line in DependencyResolveFailureOutput.AlDiagnosticListing(suiteAlDiagnostics, bundleDependencyUnresolved, AlRunner.Log.Verbose))
+                    Console.Error.WriteLine(line);
+                bundleErrors.Add($"{suiteName}: EMIT-ZERO ({suiteAlDiagnostics.Count} AL error(s){DependencyResolveFailureOutput.DependencyUnresolvedSuffix(bundleDependencyUnresolved)})");
+                continue;
             }
 
             var ct = System.Diagnostics.Stopwatch.StartNew();
