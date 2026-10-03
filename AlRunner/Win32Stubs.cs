@@ -80,7 +80,12 @@ internal static class Win32Stubs
     /// somewhere temporary without touching the real install layout. Null in
     /// production. Never read from production code paths other than
     /// <see cref="GetOrBuild"/>'s own base-directory resolution below.</summary>
-    internal static string? BaseDirectoryForTests;
+    internal static string? BaseDirectoryForTests
+    {
+        get => _baseDirectoryForTests.Value;
+        set => _baseDirectoryForTests.Value = value;
+    }
+    private static readonly AsyncLocal<string?> _baseDirectoryForTests = new();
 
     /// <summary>
     /// #1809: test-only seam so <see cref="IsOnPath"/> can be exercised with an empty
@@ -96,7 +101,37 @@ internal static class Win32Stubs
     /// production and in every test that doesn't need this — only read here, never
     /// from production code paths.
     /// </summary>
-    internal static string? PathEnvironmentForTests;
+    internal static string? PathEnvironmentForTests
+    {
+        get => _pathEnvironmentForTests.Value;
+        set => _pathEnvironmentForTests.Value = value;
+    }
+    private static readonly AsyncLocal<string?> _pathEnvironmentForTests = new();
+
+    /// <summary>
+    /// Test-only: stands in for <c>AL_RUNNER_WIN32_STUBS_SO</c> on the CALLING async flow only
+    /// (<c>null</c> value = "no override", even if the process environment carries one). A test used
+    /// to set the real environment variable; every runner child spawned by any parallel test
+    /// collection inherited it, and one that resolved it after the test had deleted its fixture died
+    /// in <c>WindowsLanguageHelper..cctor</c> with exit 134 (#5201). This seam, and the two above, are
+    /// per-flow so neither a child process nor another test's thread (BC assemblies in the test host
+    /// carry this resolver too) can see them; while any is active <see cref="GetOrBuild"/> neither
+    /// reads nor fills the shared handle cache. Production never sets one.
+    /// </summary>
+    internal static IDisposable OverrideSoForTests(string? value)
+    {
+        var previous = _soOverrideForTests.Value;
+        _soOverrideForTests.Value = new SoOverride(value);
+        return new RestoreSoOverride(previous);
+    }
+
+    private sealed record SoOverride(string? Value);
+    private static readonly AsyncLocal<SoOverride?> _soOverrideForTests = new();
+
+    private sealed class RestoreSoOverride(SoOverride? previous) : IDisposable
+    {
+        public void Dispose() => _soOverrideForTests.Value = previous;
+    }
 
     private static void TryRegister(Assembly asm)
     {
@@ -136,17 +171,23 @@ internal static class Win32Stubs
     /// InternalsVisibleTo — see Win32StubsLoudFailureTests.cs.</summary>
     internal static IntPtr GetOrBuild(string library)
     {
-        if (_handle != IntPtr.Zero) return _handle;
+        var soSeam = _soOverrideForTests.Value;
+        var seamActive = soSeam is not null || BaseDirectoryForTests is not null || PathEnvironmentForTests is not null;
+        if (!seamActive && _handle != IntPtr.Zero) return _handle;
+        IntPtr Loaded(IntPtr handle)
+        {
+            if (!seamActive) _handle = handle; // a fixture load must not answer the next, unrelated caller
+            return handle;
+        }
 
-        var soOverride = Environment.GetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO");
+        var soOverride = soSeam is not null ? soSeam.Value : Environment.GetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO");
         if (!string.IsNullOrEmpty(soOverride))
         {
             if (!File.Exists(soOverride))
                 throw new InvalidOperationException(
                     $"Win32Stubs: AL_RUNNER_WIN32_STUBS_SO is set to '{soOverride}' but that file does not exist. "
                     + "Unset it to build the shim from source, or point it at a valid prebuilt libwin32_stubs.so.");
-            _handle = NativeLibrary.Load(soOverride);
-            return _handle;
+            return Loaded(NativeLibrary.Load(soOverride));
         }
 
         // #1672: try the shipped prebuilt stub (beside the binary, one per RID —
@@ -157,10 +198,7 @@ internal static class Win32Stubs
         // (or a dev tree running straight from `dotnet run`).
         var prebuilt = LocatePrebuiltSo(BaseDirectoryForTests ?? AppContext.BaseDirectory, File.Exists);
         if (prebuilt != null)
-        {
-            _handle = NativeLibrary.Load(prebuilt);
-            return _handle;
-        }
+            return Loaded(NativeLibrary.Load(prebuilt));
 
         var compiler = FindCompiler(cmd => IsOnPath(cmd));
         if (compiler == null)
@@ -203,8 +241,7 @@ internal static class Win32Stubs
         {
             try { Directory.Delete(work, recursive: true); } catch { }
         }
-        _handle = NativeLibrary.Load(soFile);
-        return _handle;
+        return Loaded(NativeLibrary.Load(soFile));
     }
 
     /// <summary>The filename of the shipped prebuilt stub for the current process's

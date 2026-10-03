@@ -28,21 +28,7 @@ namespace AlRunner.Tests;
 /// </summary>
 public class Win32StubsLoudFailureTests
 {
-    /// <summary>
-    /// STAGE-A (RED) HELPER: the pre-fix mechanism, lifted unchanged — a process-wide
-    /// environment mutation. Replaced by the Win32Stubs seam in the GREEN commit.
-    /// </summary>
-    private static IDisposable OverrideSo(string? value)
-    {
-        var saved = Environment.GetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO");
-        Environment.SetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO", value);
-        return new Restore(() => Environment.SetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO", saved));
-    }
-
-    private sealed class Restore(Action undo) : IDisposable
-    {
-        public void Dispose() => undo();
-    }
+    private static IDisposable OverrideSo(string? value) => Win32Stubs.OverrideSoForTests(value);
 
     [Fact]
     public void FindCompiler_ReturnsFirstAvailableCandidate_InOrder()
