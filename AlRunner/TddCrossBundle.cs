@@ -359,6 +359,18 @@ public static class TddCrossBundle
         lock (Sync) return Generated.Select(g => g.Member).Concat(GeneratedHere).ToList();
     }
 
+    // #5287: whether the pass in progress may still be followed by a re-run. True until a driver says
+    // otherwise, which both --tdd drivers do at the start of every pass.
+    private static volatile bool _rerunAvailable = true;
+
+    /// <summary>The run's driver says, at the start of each pass, whether a re-run can follow it. A
+    /// dependency compile that lost objects to a member still waiting for its recompile throws
+    /// (TDD-RECOMPILE) only when one can: past the limit nothing would act on the throw, so the
+    /// compile is reported like any other dropped dependency (#5287).</summary>
+    public static void SetRerunAvailable(bool available) => _rerunAvailable = available;
+
+    internal static bool RerunAvailable => _rerunAvailable;
+
     /// <summary>True while members generated into another bundle wait for that bundle's recompile.
     /// Reads without taking: <see cref="TakePendingRecompile"/> stays the caller's one decision.</summary>
     public static bool HasPendingRecompile()

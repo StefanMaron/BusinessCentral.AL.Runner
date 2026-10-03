@@ -916,8 +916,12 @@ public sealed class DependencyLoader
         // symbols. A dependency that lost objects to the missing member is not a verdict, and
         // nothing of it may reach the compiled-deps cache below: its key (ComputeSourceDependencyCacheKeyCore)
         // does not name the bundle the member went into, so a re-run could be served the stale assembly.
-        if ((emitted.Count == 0 || emitOutput.ExcludedObjects.Count > 0)
-            && BcCompiler.IsTddMode() && TddCrossBundle.HasPendingRecompile())
+        var staleAgainstPending = (emitted.Count == 0 || emitOutput.ExcludedObjects.Count > 0)
+            && BcCompiler.IsTddMode() && TddCrossBundle.HasPendingRecompile();
+        // #5287: past the re-run limit no pass follows, so the throw would end the run with nothing
+        // reported. The compile goes on as the dropped dependency it is (reported below and by the
+        // dependents' tests, which fail where they reach it) and the run's end names the members.
+        if (staleAgainstPending && TddCrossBundle.RerunAvailable)
             throw new DependencyLoadException(m.Publisher, m.Name, m.Version.ToString(),
                 DependencyLoadException.TddRecompileStage,
                 "compiled against a bundle that --tdd generated a member into and has not recompiled yet");
@@ -998,7 +1002,9 @@ public sealed class DependencyLoader
         // would be served without the compile that generates them, and nothing would be reported or
         // annotated. Not published: it leaves the uncacheable marker, like a compile that failed.
         var generatedHere = BcCompiler.IsTddMode() && (emitOutput.TddGeneratedMembers?.Count ?? 0) > 0;
-        if (!generatedHere)
+        // #5287: nor is a compile that bound against a bundle still waiting for its recompile (the throw above
+        // refuses it while a re-run can follow); its key does not name that bundle either.
+        if (!generatedHere && !staleAgainstPending)
         {
             try
             {

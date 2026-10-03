@@ -1,0 +1,60 @@
+{
+  "id": "c3d4e5f6-6009-4a61-8b93-0c7d5e9f1c09",
+  "name": "Runner Tests Fixture - Tdd Lib Chain both test",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Test folder of the #5287 chain with two sibling fourth links.",
+  "description": "Test folder of the #5287 chain with two sibling fourth links.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "c3d4e5f6-6000-4a61-8b93-0c7d5e9f1c00",
+      "name": "Runner Tests Fixture - Tdd Lib Chain app",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    },
+    {
+      "id": "c3d4e5f6-6001-4a61-8b93-0c7d5e9f1c01",
+      "name": "Runner Tests Fixture - Tdd Lib Chain lib1",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    },
+    {
+      "id": "c3d4e5f6-6002-4a61-8b93-0c7d5e9f1c02",
+      "name": "Runner Tests Fixture - Tdd Lib Chain lib2",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    },
+    {
+      "id": "c3d4e5f6-6003-4a61-8b93-0c7d5e9f1c03",
+      "name": "Runner Tests Fixture - Tdd Lib Chain lib3",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    },
+    {
+      "id": "c3d4e5f6-6005-4a61-8b93-0c7d5e9f1c05",
+      "name": "Runner Tests Fixture - Tdd Lib Chain lib4",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    },
+    {
+      "id": "c3d4e5f6-6008-4a61-8b93-0c7d5e9f1c08",
+      "name": "Runner Tests Fixture - Tdd Lib Chain lib4b",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 72090,
+      "to": 72099
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
