@@ -121,12 +121,14 @@ public static class ResumeCarry
             var seen = new Dictionary<(string, BucketStage), int>();
             foreach (var b in attempt)
             {
-                seen.TryGetValue((b.BucketPath, b.Stage), out var nth);
-                seen[(b.BucketPath, b.Stage)] = nth + 1;
-                if (!slotOf.TryGetValue((b.BucketPath, b.Stage, nth), out var at))
+                var bundle = (b.BucketPath, b.Stage);
+                seen.TryGetValue(bundle, out var nth);
+                seen[bundle] = nth + 1;
+                var slot = (bundle.BucketPath, bundle.Stage, nth);
+                if (!slotOf.TryGetValue(slot, out var at))
                 {
                     at = slots.Count;
-                    slotOf[(b.BucketPath, b.Stage, nth)] = at;
+                    slotOf[slot] = at;
                     slots.Add(new List<BucketResult>());
                 }
                 slots[at].Add(b);

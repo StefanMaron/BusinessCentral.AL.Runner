@@ -65,6 +65,9 @@ public sealed class ResumeEmitExcludedTddTests
         foreach (var d in Dropped) Assert.Single(names, n => n == d);
         Assert.Equal(3, json.RootElement.GetProperty("exitCode").GetInt32());
         Assert.Equal(3, r.Exit);
+        // The closing line counts what the drops report, as it did before: the rows the resumed attempt left to the
+        // carry are still reported FAILED, so it must not fall back to "no test was reported failed".
+        Assert.Contains("5 [Test] procedure(s) of other dropped objects are reported FAILED above", r.Stderr);
     }
 
     /// <summary>--output-junit holds each case once, and the five dropped tests are the failed ones.</summary>
