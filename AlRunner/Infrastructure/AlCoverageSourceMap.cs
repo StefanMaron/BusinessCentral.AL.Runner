@@ -321,6 +321,21 @@ public static class AlCoverageSourceMap
     }
 
     /// <summary>
+    /// The roots for a map over the registered source dirs themselves
+    /// (<c>RecordPatches.RegisteredSourceDirs</c>) rather than over execution bundles plus what
+    /// they pulled in: <paramref name="executionDirs"/> are the registered dirs the run compiled,
+    /// so <see cref="Build"/> applies the same precedence as for
+    /// <see cref="RootsWithParsedSourceDependencies"/> - a sibling source folder beside one never
+    /// replaces an object it declares (#5222, #5250). No packaged roots: this map's contract is
+    /// the dirs the run parsed as AL (the #4984 gap is separate).
+    /// <para>Every production <c>Build</c> caller goes through one of the two, pinned by
+    /// CodeCoverageLogSiblingSourceTests, so a plain list cannot bring the last-root-wins back.</para>
+    /// </summary>
+    internal static CoverageRoots RootsForRegisteredDirs(
+        IReadOnlyList<string> registeredDirs, IReadOnlyCollection<string> executionDirs)
+        => new(registeredDirs, new Dictionary<string, string>(StringComparer.Ordinal), executionDirs);
+
+    /// <summary>
     /// How <see cref="Build"/> lists a root: the .al files under it, and the directories it
     /// could not enter. A seam, not a policy — the production implementation is
     /// <see cref="SafeDirectoryScan.Files(string, string, out IReadOnlyList{string}, SearchOption)"/>
