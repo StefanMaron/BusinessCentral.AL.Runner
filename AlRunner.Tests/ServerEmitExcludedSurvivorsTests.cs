@@ -8,7 +8,9 @@
 //
 // The rest keep what the CLI refuses refused: a survivor that reaches the dropped codeunit by id
 // (the module is not run), a module in which nothing survives (loud, never a pass with zero
-// tests), and a module that carries a real compile error beside a droppable one.
+// tests), a dropped library codeunit beside a droppable test codeunit (a real compile error is
+// never run around), a dropped profile beside a dropped test codeunit, and `execute`, which keeps
+// the refusal.
 
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -304,13 +306,7 @@ public sealed class ServerEmitExcludedSurvivorsTests : IClassFixture<SharedCliSe
         File.WriteAllText(Path.Combine(root, "Healthy.Codeunit.al"), Healthy(62351));
         // BC's own emitter crashes on a profile whose RoleCenter page is declared nowhere, and the retry
         // loop drops it (BcCompilerProfileEmitCrashTests).
-        File.WriteAllText(Path.Combine(root, "BadProfile.al"), """
-        profile "Srv Excl Bad Profile"
-        {
-            Caption = 'Srv Excl Bad Profile';
-            RoleCenter = "Srv Excl Nonexistent Page";
-        }
-        """);
+        File.WriteAllText(Path.Combine(root, "BadProfile.al"), BadProfile);
         try
         {
             var (cliExit, cliRows, cliOutput) = RunCli(root);
@@ -321,6 +317,132 @@ public sealed class ServerEmitExcludedSurvivorsTests : IClassFixture<SharedCliSe
             Assert.True(a.Rows.SequenceEqual(cliRows), $"server rows [{Describe(a.Rows)}] differ from the CLI's [{Describe(cliRows)}]\n{a.Raw}");
             Assert.Equal(0, a.Exit);
             Assert.Equal("", a.ErrorText);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    private const string BadProfile = """
+        profile "Srv Excl Bad Profile"
+        {
+            Caption = 'Srv Excl Bad Profile';
+            RoleCenter = "Srv Excl Nonexistent Page";
+        }
+        """;
+
+    /// <summary>
+    /// The profile carve-out holds only when EVERY dropped object is a profile. A broken profile beside a broken
+    /// test codeunit must not turn the codeunit's two tests into nothing: both paths refuse the module with exit
+    /// code 3 and a reason naming both objects, where a profile-only reading would run the healthy codeunit and
+    /// report a green with the two dropped tests absent.
+    /// </summary>
+    [SkippableFact]
+    public async Task ProfilePlusDroppedTestCodeunit_ServerAnswersAsTheCli_AndTheDroppedTestsAreReported()
+    {
+        TestArtifacts.SkipIfMissing();
+        var root = TestScratch.Dir("al-runner-server-excl-survivors-mixed");
+        WriteApp(root, "5118a007-0000-4000-8000-000000000007", 62360);
+        File.WriteAllText(Path.Combine(root, "Healthy.Codeunit.al"), Healthy(62361));
+        File.WriteAllText(Path.Combine(root, "Broken.Codeunit.al"), Broken(62362));
+        File.WriteAllText(Path.Combine(root, "BadProfile.al"), BadProfile);
+        try
+        {
+            var (cliExit, cliRows, cliOutput) = RunCli(root);
+            Assert.Equal(3, cliExit);
+            var server = await Ask(root);
+            Assert.True(server.Rows.SequenceEqual(cliRows),
+                $"server rows [{Describe(server.Rows)}] differ from the CLI's [{Describe(cliRows)}]\n{server.Raw}\n--- CLI ---\n{cliOutput}");
+            Assert.Equal(3, server.Exit);
+            // The module is refused on both paths: nothing runs, and the reason names both dropped objects.
+            Assert.Empty(cliRows);
+            Assert.Equal(0, server.Total);
+            Assert.Contains("The module was NOT run", server.ErrorText);
+            Assert.Contains("Srv Excl Bad Profile", server.ErrorText);
+            Assert.Contains("Srv Excl Broken 62362", server.ErrorText);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// A real compile error is never run around: a library (non-test) codeunit that cannot bind is dropped
+    /// beside a droppable test codeunit, and a survivor may call it, so no test runs, as on the CLI.
+    /// </summary>
+    [SkippableFact]
+    public async Task DroppedLibraryCodeunitBesideADroppableTestCodeunit_IsRefusedAndNothingRuns()
+    {
+        TestArtifacts.SkipIfMissing();
+        var root = TestScratch.Dir("al-runner-server-excl-survivors-library");
+        WriteApp(root, "5118a008-0000-4000-8000-000000000008", 62370);
+        File.WriteAllText(Path.Combine(root, "Healthy.Codeunit.al"), Healthy(62371));
+        File.WriteAllText(Path.Combine(root, "Broken.Codeunit.al"), Broken(62372));
+        File.WriteAllText(Path.Combine(root, "Library.Codeunit.al"), """
+        codeunit 62373 "Srv Excl Library"
+        {
+            procedure Helper()
+            var
+                Missing: Codeunit "This Codeunit Does Not Exist At All";
+            begin
+                Missing.DoSomething();
+            end;
+        }
+        """);
+        try
+        {
+            var (cliExit, cliRows, cliOutput) = RunCli(root);
+            Assert.Equal(3, cliExit);
+            Assert.DoesNotContain(cliRows, r => r.Status == "pass");
+            var server = await Ask(root);
+            Assert.True(server.Rows.SequenceEqual(cliRows),
+                $"server rows [{Describe(server.Rows)}] differ from the CLI's [{Describe(cliRows)}]\n{server.Raw}\n--- CLI ---\n{cliOutput}");
+            Assert.Equal(3, server.Exit);
+            Assert.DoesNotContain(server.Rows, r => r.Status == "pass");
+            Assert.Contains("The module was NOT run", server.ErrorText);
+            Assert.Contains("Srv Excl Library", server.ErrorText);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// `execute` has no row to show a skipped test in, so a dropped test codeunit still refuses its request
+    /// (docs/server-mode.md): exit code 3, the reason says so, and nothing is run.
+    /// </summary>
+    [SkippableFact]
+    public async Task Execute_ADroppedTestCodeunit_StillRefusesTheRequest()
+    {
+        TestArtifacts.SkipIfMissing();
+        var root = TestScratch.Dir("al-runner-server-excl-survivors-execute");
+        WriteApp(root, "5118a009-0000-4000-8000-000000000009", 62380);
+        File.WriteAllText(Path.Combine(root, "Broken.Codeunit.al"), Broken(62382));
+        File.WriteAllText(Path.Combine(root, "Runner.Codeunit.al"), """
+        codeunit 62381 "Srv Excl Execute"
+        {
+            trigger OnRun()
+            begin
+            end;
+        }
+        """);
+        try
+        {
+            var server = await _fixture.GetAsync(ServerArgs());
+            var line = await server.SendAsync(JsonSerializer.Serialize(new Dictionary<string, object?>
+            {
+                ["command"] = "execute", ["sourcePaths"] = new[] { root },
+            }), TimeSpan.FromSeconds(240));
+            using var doc = JsonDocument.Parse(line);
+            var text = string.Join(" | ", doc.RootElement.GetProperty("compilationErrors").EnumerateArray()
+                .SelectMany(g => g.GetProperty("errors").EnumerateArray().Select(e => e.GetString())));
+            Assert.True(doc.RootElement.GetProperty("exitCode").GetInt32() == 3, line);
+            Assert.Contains("EMIT-EXCLUDED", text);
+            Assert.Contains("The module was NOT run: this request cannot report", text);
+            Assert.Empty(doc.RootElement.GetProperty("tests").EnumerateArray());
         }
         finally
         {
