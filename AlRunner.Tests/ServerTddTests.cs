@@ -574,4 +574,36 @@ public sealed class ServerTddTests : IClassFixture<SharedCliServer>
         var closing = await server.StdErrSinceAsync(mark, "--tdd: 1 more member(s) were generated into another bundle but not compiled in");
         Assert.DoesNotContain("generated 4 member(s)", closing, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// #5287 over the server: one link longer, so the last pass's generation happens in a dependency load.
+    /// The request finishes as the one above does: the test fails and the response carries it, the
+    /// summary names the two members of the last pass as not compiled in, and the exit is 3, the compile
+    /// error of the library object lib4's compile dropped (as for any dropped object over the server),
+    /// not a failed load of lib4 that leaves the response without the test.
+    /// </summary>
+    [SkippableFact]
+    public async Task LongerChainPastTheRerunLimit_ReportsTheLimitInsteadOfADependencyLoadFailure()
+    {
+        TestArtifacts.SkipIfMissing();
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
+        var mark = server.StdErrMark;
+        var r = await Send(server, LongChainFolders.InOrder(), tdd: true);
+
+        Assert.True(r.ExitCode == 3, r.Raw);
+        Assert.True(r.Status("Reaches") == "fail", r.Raw);
+        Assert.Contains("did not compile", r.Message("Reaches"));
+        Assert.Contains("EMIT-EXCLUDED", r.Raw, StringComparison.Ordinal);
+        const string m4 = "Lib Chain 3: procedure \"M4\"(Arg1: Integer): Integer";
+        const string m5 = "Lib Chain 4: procedure \"M5\"(Arg1: Integer): Integer";
+        await server.StdErrSinceAsync(mark, "--tdd: generated 3 member(s) this request:");
+        // The closing lines follow the limit line, so the slice read at their anchor holds it too.
+        var closing = await server.StdErrSinceAsync(mark, "--tdd: 2 more member(s) were generated into another bundle but not compiled in");
+        var limit = Assert.Single(closing.Split('\n'),
+            l => l.StartsWith("--tdd: the re-run limit (3) was reached with 2 member(s) generated into another bundle and not compiled in:", StringComparison.Ordinal));
+        Assert.Contains(m4, limit, StringComparison.Ordinal);
+        Assert.Contains(m5, limit, StringComparison.Ordinal);
+        Assert.DoesNotContain("TDD-RECOMPILE", closing + r.Raw, StringComparison.Ordinal);
+        Assert.DoesNotContain("<deps>", r.Raw, StringComparison.Ordinal);
+    }
 }

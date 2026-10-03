@@ -2891,6 +2891,9 @@ if (tddMode && !tddRecompileRerun)
     tddExcludedObjectCount = 0;
     tddBundleDroppedNames.Clear();
 }
+// #5287: whether this pass can still be followed by a re-run, for the dependency loads inside it.
+if (tddMode)
+    TddCrossBundle.SetRerunAvailable(tddRecompileReruns < TddRecompileRerunLimit);
 
 // #2683: re-synthesise the dependency workspace before re-running. The pre-passes above
 // ran against the sources as they were when the process started; a --watch edit to a
@@ -5749,6 +5752,7 @@ return strictExitCode ? computedExitCode : 0;
         out bool tddRerun)
     {
         tddRerun = false;
+        if (tdd != null) TddCrossBundle.SetRerunAvailable(tddAllowRerun);   // #5287
         // Server requests share a process, so give each request the same fresh
         // NumberSequence lifetime as a standalone CLI/watch execution.
         AlRunner.Patches.NumberSequencePatches.ResetForNewExecution();

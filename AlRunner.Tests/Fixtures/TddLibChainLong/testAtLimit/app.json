@@ -1,0 +1,42 @@
+{
+  "id": "c3d4e5f6-6007-4a61-8b93-0c7d5e9f1c07",
+  "name": "Runner Tests Fixture - Tdd Lib Chain at limit test",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Test folder of the #5287 chain of exactly the re-run limit: calls a member the third link does not declare.",
+  "description": "Test folder of the #5287 chain of exactly the re-run limit: calls a member the third link does not declare.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "c3d4e5f6-6000-4a61-8b93-0c7d5e9f1c00",
+      "name": "Runner Tests Fixture - Tdd Lib Chain app",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    },
+    {
+      "id": "c3d4e5f6-6001-4a61-8b93-0c7d5e9f1c01",
+      "name": "Runner Tests Fixture - Tdd Lib Chain lib1",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    },
+    {
+      "id": "c3d4e5f6-6002-4a61-8b93-0c7d5e9f1c02",
+      "name": "Runner Tests Fixture - Tdd Lib Chain lib2",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 72070,
+      "to": 72079
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
