@@ -4,7 +4,10 @@
 // Both attempts compile each bundle and find the same drops. The first reports a dropped codeunit's
 // [Test] procedures as FAILED and carries them forward; the resumed one must not report them again.
 // ResumeEmitExcluded hangs, so the run resumes; the partner and the compile-fail bundle have a dropped
-// test codeunit of one test each, and the no-tests bundle a dropped helper that declares none.
+// test codeunit of one test each, and the no-tests bundle a dropped helper that declares none. TddLibDropped's
+// library and the last bundle come last: the last one hangs too, before a test that calls a library codeunit the
+// library dropped, so that test runs in the RESUMED attempt and must still fail naming the codeunit (#5292): a
+// resumed attempt is a fresh process, which fills the table of dropped codeunits again.
 
 using System.Text.Json;
 using System.Xml.Linq;
@@ -19,10 +22,13 @@ public sealed class ResumeEmitExcludedTddTests
         "Resume Excl Compile Fail.CompileFail_A", "Resume Excl Dropped.Dropped_A", "Resume Excl Dropped.Dropped_B",
         "Resume Excl Dropped.Dropped_C", "Resume Excl Partner Dropped.PartnerDropped_A",
     };
-    // ResumeEmitExcluded: RanBeforeHang and four healthy tests pass, Hangs times out; the partner's one test passes.
-    private const int Passed = 1 + 4 + 1;
-    private const int Errors = 1;
-    private const int Total = Passed + Errors + 5;
+    // ResumeEmitExcluded: RanBeforeHang and four healthy tests pass, Hangs times out; the partner's one test passes;
+    // The last bundle's Hangs times out too, its OtherLibraryObject_StillRuns passes and its
+    // RefusedShape_FailsNamingTheDroppedObject fails.
+    private const int Passed = 1 + 4 + 1 + 1;
+    private const int Failed = 5 + 1;
+    private const int Errors = 1 + 1;
+    private const int Total = Passed + Errors + Failed;
 
     private static readonly Lazy<(int Exit, string Stdout, string Stderr, string Junit, string Out, string Count)> Run = new(() =>
     {
@@ -34,7 +40,8 @@ public sealed class ResumeEmitExcludedTddTests
             $"--cache \"{Path.Combine(scratch, "cache")}\" --tdd --test-timeout 3 --output-junit \"{junit}\" --output-json "
             + $"--out \"{outPath}\" --count-out \"{countPath}\" \"{ResumeRun.Fixture("ResumeEmitExcluded")}\" "
             + $"\"{ResumeRun.Fixture("ResumeEmitExcludedPartner")}\" \"{ResumeRun.Fixture("ResumeEmitExcludedNoTests")}\" "
-            + $"\"{ResumeRun.Fixture("ResumeEmitExcludedCompileFail")}\"");
+            + $"\"{ResumeRun.Fixture("ResumeEmitExcludedCompileFail")}\" "
+            + $"\"{ResumeRun.Fixture("TddLibDropped/lib")}\" \"{ResumeRun.Fixture("ResumeEmitExcludedLibDropped")}\"");
         return (exit, stdout, stderr, junit,
             File.Exists(outPath) ? File.ReadAllText(outPath) : "", File.Exists(countPath) ? File.ReadAllText(countPath) : "");
     });
@@ -56,7 +63,7 @@ public sealed class ResumeEmitExcludedTddTests
         AssertTheRunResumed(r.Stderr);
 
         using var json = JsonDocument.Parse(r.Stdout);
-        Assert.Equal(new[] { Total, Passed, 5, Errors }, new[] { "total", "passed", "failed", "errors" }
+        Assert.Equal(new[] { Total, Passed, Failed, Errors }, new[] { "total", "passed", "failed", "errors" }
             .Select(k => json.RootElement.GetProperty(k).GetInt32()));
         var names = json.RootElement.GetProperty("tests").EnumerateArray().Select(t => t.GetProperty("name").GetString()!).ToList();
         Assert.Equal(names.Count, names.Distinct().Count());
@@ -70,7 +77,32 @@ public sealed class ResumeEmitExcludedTddTests
         Assert.Contains("5 [Test] procedure(s) of other dropped objects are reported FAILED above", r.Stderr);
     }
 
-    /// <summary>--output-junit holds each case once, and the five dropped tests are the failed ones.</summary>
+    /// <summary>
+    /// #5292: the library codeunit dropped by the RESUMED attempt is still named, with its AL error, by the test
+    /// that calls it. The control is the library's other codeunit, whose test passes.
+    /// </summary>
+    [SkippableFact]
+    public void ResumedAttempt_StillNamesTheDroppedLibraryCodeunitAndItsAlError()
+    {
+        TestArtifacts.SkipIfMissing();
+        var r = Run.Value;
+        AssertTheRunResumed(r.Stderr);
+
+        using var json = JsonDocument.Parse(r.Stdout);
+        var tests = json.RootElement.GetProperty("tests").EnumerateArray().ToList();
+        var refused = Assert.Single(tests, t => t.GetProperty("name").GetString()!.EndsWith(".RefusedShape_FailsNamingTheDroppedObject"));
+        Assert.Equal("fail", refused.GetProperty("status").GetString());
+        var failure = refused.GetProperty("message").GetString() + "\n"
+            + (refused.TryGetProperty("stackTrace", out var st) ? st.GetString() : "");
+        Assert.Contains("\"Lib Dropped Refused\"", failure);
+        Assert.Contains("did not compile", failure);
+        Assert.Contains("RefusedMissing", failure);
+        Assert.DoesNotContain("provision", failure, StringComparison.OrdinalIgnoreCase);
+        var other = Assert.Single(tests, t => t.GetProperty("name").GetString()!.EndsWith(".OtherLibraryObject_StillRuns"));
+        Assert.Equal("pass", other.GetProperty("status").GetString());
+    }
+
+    /// <summary>--output-junit holds each case once, and the five dropped tests, with the library test, are the failed ones.</summary>
     [SkippableFact]
     public void TheJUnit_HoldsEachCaseOnce()
     {
@@ -84,7 +116,9 @@ public sealed class ResumeEmitExcludedTddTests
         Assert.Equal(Total, names.Count);
         Assert.Equal(names.Count, names.Distinct().Count());
         Assert.Equal(Dropped, cases.Where(e => e.Elements("failure").Any())
-            .Select(e => $"{e.Attribute("classname")!.Value}.{e.Attribute("name")!.Value}").OrderBy(n => n, StringComparer.Ordinal));
+            .Select(e => $"{e.Attribute("classname")!.Value}.{e.Attribute("name")!.Value}")
+            .Where(n => !n.EndsWith(".RefusedShape_FailsNamingTheDroppedObject")).OrderBy(n => n, StringComparer.Ordinal));
+        Assert.Single(cases, e => e.Elements("failure").Any() && e.Attribute("name")!.Value == "RefusedShape_FailsNamingTheDroppedObject");
     }
 
     /// <summary>`--out` lists a failing test once, and `--count-out` counts the tests of each bundle once.</summary>
@@ -100,7 +134,8 @@ public sealed class ResumeEmitExcludedTddTests
             .Where(f => f.GetProperty("kind").GetString() is "fail" or "error")
             .Select(f => f.GetProperty("codeunit").GetString() + "." + f.GetProperty("method").GetString())
             .OrderBy(n => n, StringComparer.Ordinal).ToList();
-        Assert.Equal(Dropped.Append("Codeunit50980.Hangs").OrderBy(n => n, StringComparer.Ordinal), failing);
+        Assert.Equal(Dropped.Append("Codeunit50980.Hangs").Append("Codeunit72500.Hangs").Append("Codeunit72510.RefusedShape_FailsNamingTheDroppedObject")
+            .OrderBy(n => n, StringComparer.Ordinal), failing);
 
         using var count = JsonDocument.Parse(r.Count);
         var suites = count.RootElement.GetProperty("suites");
