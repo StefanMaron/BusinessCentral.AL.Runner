@@ -29,105 +29,6 @@ public sealed class CodeCoverageLogSiblingSourceTests : IDisposable
     private const int SpawnTimeoutMs = 240_000;
     private static readonly string ProjectPath = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "AlRunner"));
-    private static readonly Guid AppId = Guid.Parse("6c779974-6ae1-42b9-9842-ca25979bae35");
-    private static readonly Guid TestAppId = Guid.Parse("3f1c8d52-7b04-4e9a-a6d3-9e2b5c7a1d52");
-
-    // The original source: Multi A is short, so Multi B starts early in the file.
-    private const string SourceText = """
-        codeunit 79800 "Multi A"
-        {
-            procedure Never(X: Integer): Integer
-            begin
-                exit(X + 7);
-            end;
-        }
-
-        codeunit 79801 "Multi B"
-        {
-            procedure Reached(X: Integer): Integer
-            begin
-                if X > 10 then
-                    exit(X + 1);
-                exit(X);
-            end;
-
-            procedure Unreached(X: Integer): Integer
-            begin
-                exit(X * 3);
-            end;
-        }
-        """;
-
-    // What is compiled: Multi A is longer, so every line of Multi B sits further down than it
-    // does in SourceText, and the file is longer than the sibling's.
-    private const string BundleText = """
-        codeunit 79800 "Multi A"
-        {
-            procedure Never(X: Integer): Integer
-            var
-                Y: Integer;
-            begin
-                Y := Y + 1;
-                Y := Y + 2;
-                Y := Y + 3;
-                Y := Y + 4;
-                Y := Y + 5;
-                Y := Y + 6;
-                Y := Y + 7;
-                Y := Y + 8;
-                exit(X + 7);
-            end;
-        }
-
-        codeunit 79801 "Multi B"
-        {
-            procedure Reached(X: Integer): Integer
-            var
-                Z: Integer;
-            begin
-                Z := 1;
-                if X > 10 then
-                    exit(X + 1);
-                exit(X);
-            end;
-
-            procedure Unreached(X: Integer): Integer
-            begin
-                exit(X * 3);
-            end;
-        }
-        """;
-
-    // Reads the Code Coverage rows of Multi B after one call to Reached(20), and fails with the
-    // rows it saw unless they are exactly the compiled text's code lines and hits.
-    private const string TestsText = """
-        codeunit 79811 "Multi Tests"
-        {
-            Subtype = Test;
-
-            [Test]
-            procedure CodeCoverageRowsFollowTheCompiledText()
-            var
-                B: Codeunit "Multi B";
-                CC: Record "Code Coverage";
-                Seen: Text;
-            begin
-                CodeCoverageLog(true, false);
-                B.Reached(20);
-                CodeCoverageLog(false, false);
-                CC.SetRange("Object Type", CC."Object Type"::Codeunit);
-                CC.SetRange("Object ID", 79801);
-                CC.SetRange("Line Type", CC."Line Type"::Code);
-                if CC.FindSet() then
-                    repeat
-                        Seen += StrSubstNo('[%1:%2]', DelChr(CC.Line, '<', ' '), CC."No. of Hits");
-                    until CC.Next() = 0;
-                if Seen <> '[Z := 1;:1][if X > 10 then:1][exit(X + 1);:1][exit(X);:0][exit(X * 3);:0]' then
-                    Error('Code Coverage rows were %1', Seen);
-            end;
-        }
-        """;
-
     private readonly string _root = TestScratch.Dir("al-runner-codecoverage-log-sibling-source");
 
     public void Dispose()
@@ -135,42 +36,9 @@ public sealed class CodeCoverageLogSiblingSourceTests : IDisposable
         try { Directory.Delete(_root, recursive: true); } catch { }
     }
 
-    private static void Write(string path, string text)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, text);
-    }
-
-    private static void WriteManifest(string dir, Guid id, string name, bool dependsOnApp, bool platform = false)
-    {
-        Directory.CreateDirectory(dir);
-        var manifest = new Dictionary<string, object>
-        {
-            ["id"] = id, ["name"] = name, ["publisher"] = "AL Runner", ["version"] = "1.0.0.0",
-            ["runtime"] = "14.0",
-            ["idRanges"] = new[] { new { from = 79800, to = 79830 } },
-            ["dependencies"] = dependsOnApp
-                ? new[] { new { id = AppId, name = "Multi", publisher = "AL Runner", version = "1.0.0.0" } }
-                : Array.Empty<object>(),
-        };
-        // Record "Code Coverage" is a system table, so the test app needs the platform symbols.
-        if (platform) manifest["platform"] = "27.0.0.0";
-        File.WriteAllText(Path.Combine(dir, "app.json"), JsonSerializer.Serialize(manifest));
-    }
-
     /// <summary>The #5222 layout: bundle/ (compiled and run), src/ (same app id, other text), tests/.</summary>
-    private void Layout(bool withSibling)
-    {
-        WriteManifest(Path.Combine(_root, "bundle"), AppId, "Multi", dependsOnApp: false);
-        Write(Path.Combine(_root, "bundle", "MultiPair.Codeunit.al"), BundleText);
-        if (withSibling)
-        {
-            WriteManifest(Path.Combine(_root, "src"), AppId, "Multi", dependsOnApp: false);
-            Write(Path.Combine(_root, "src", "MultiPair.Codeunit.al"), SourceText);
-        }
-        WriteManifest(Path.Combine(_root, "tests"), TestAppId, "Multi Tests", dependsOnApp: true, platform: true);
-        Write(Path.Combine(_root, "tests", "src", "MultiTests.Codeunit.al"), TestsText);
-    }
+    private void Layout(bool withSibling, bool fromSource = false)
+        => CodeCoverageSiblingLayout.Write(_root, withSibling, fromSource: fromSource);
 
     // The shape that let the defect be fixed at one site and left at another: a production caller
     // handing Build a plain list of dirs, where the last root wins. Every caller must go through
@@ -240,11 +108,11 @@ public sealed class CodeCoverageLogSiblingSourceTests : IDisposable
         lock (sb) return (sb.ToString(), p.ExitCode);
     }
 
-    private (string Output, int Exit) RunLayout(string cache)
+    private (string Output, int Exit) RunLayout(string cache, params string[] folders)
     {
         var args = new List<string> { "--isolation", "test", "--cache", cache };
         args.AddRange(TestBuildConfig.BcVersionArg.Split(' ', StringSplitOptions.RemoveEmptyEntries));
-        args.AddRange(new[] { "bundle", "tests" });
+        args.AddRange(folders.Length > 0 ? folders : new[] { "bundle", "tests" });
         return SpawnRunner(args.ToArray());
     }
 
@@ -275,6 +143,27 @@ public sealed class CodeCoverageLogSiblingSourceTests : IDisposable
             var (output, exit) = RunLayout(cache);
             Assert.True(exit == 0, $"{run}: the one test must pass, exit was {exit}.\n{output}");
             Assert.DoesNotContain("Index was outside the bounds of the array", output);
+        }
+    }
+
+    // #5259: the same layout invoked as `tests` alone. bundle/ is no CLI bundle there: the
+    // source-dependency pre-pass compiles one of the two same-app-id folders as the dependency that
+    // satisfies tests/, and marks neither as compiled. The rows must be those of the folder whose
+    // code ran, which the test app tells by the result (21 from bundle/, 120 from src/) and accepts
+    // either, because which folder the dependency resolves to is not this fact's claim.
+    [SkippableFact]
+    public void Cli_CodeCoverageRows_AreTheRunText_WhenTheCompiledFolderIsASourceDependency_ColdAndWarm()
+    {
+        TestArtifacts.SkipIfMissing();
+        Layout(withSibling: true, fromSource: true);
+        var cache = Path.Combine(_root, "cache");
+        foreach (var run in new[] { "cold", "warm" })
+        {
+            var (output, exit) = RunLayout(cache, "tests");
+            Assert.True(exit == 0, $"{run}: the one test must pass, exit was {exit}.\n{output}");
+            Assert.DoesNotContain("Index was outside the bounds of the array", output);
+            // The run really took the dependency route, not the CLI-bundle one.
+            Assert.Contains("[source-dep]", output);
         }
     }
 }
