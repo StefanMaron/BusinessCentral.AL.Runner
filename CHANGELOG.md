@@ -21,6 +21,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **coverage:** Code Coverage rows follow the loaded package and the current server request
 - **tests:** CompilePhaseTests follower-blocked proof no longer rests on a fixed 600 ms wait
 - **tdd:** generate a missing member referenced from a dependency source bundle; a one-object library no longer aborts the run
 - **jobs:** count an emit-excluded codeunit's skipped tests once per shared bundle
