@@ -9,7 +9,8 @@ namespace AlRunner.Tests;
 
 public sealed class JobsSourceDependenciesTests
 {
-    private static readonly string Root = Path.Combine(Path.GetTempPath(), "jobs-source-deps-pure");
+    // never created: these tests only compare paths
+    private static readonly string Root = Path.Combine(Path.GetFullPath(Path.DirectorySeparatorChar.ToString()), "jobs-source-deps-pure");
 
     private static string P(string name) => Path.Combine(Root, name);
 
