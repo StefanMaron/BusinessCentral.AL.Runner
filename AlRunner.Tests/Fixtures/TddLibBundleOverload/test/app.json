@@ -1,0 +1,36 @@
+{
+  "id": "e6f8a0b2-3c4b-4a7d-8bc2-4d5e6f7a8b93",
+  "name": "Runner Tests Fixture - Tdd Lib Overload Test",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Tests reaching the library directly and through a local helper.",
+  "description": "Tests reaching the library directly and through a local helper.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "c4d6e8f0-1a29-4e5b-8fa0-2b3c4d5e6f71",
+      "name": "Runner Tests Fixture - Tdd Lib Overload App",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    },
+    {
+      "id": "d5e7f9a1-2b3a-4f6c-9ab1-3c4d5e6f7a82",
+      "name": "Runner Tests Fixture - Tdd Lib Overload Lib",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65570,
+      "to": 65579
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

@@ -1021,10 +1021,12 @@ public sealed class DependencyLoader
 
     /// <summary>
     /// Whether the cached emit-exclusion report of a source dependency names a missing member (AL0132,
-    /// or AL0126 for a missing overload), the two diagnostics --tdd generates from. An unreadable report
-    /// counts as one: a cached partial answer that cannot be told apart is not served to --tdd.
+    /// or AL0126 for a missing overload), the two diagnostics --tdd generates from. A report that
+    /// cannot be read (an IOException, or on Linux the UnauthorizedAccessException of a file with no
+    /// read permission) counts as one, so --tdd recompiles rather than trust an entry it cannot
+    /// classify. No report means a complete compile: false.
     /// </summary>
-    private static bool CachedDropWasAMissingMember(string emitExcludedSidecar)
+    internal static bool CachedDropWasAMissingMember(string emitExcludedSidecar)
     {
         if (!File.Exists(emitExcludedSidecar)) return false;
         try
@@ -1032,7 +1034,7 @@ public sealed class DependencyLoader
             var report = File.ReadAllText(emitExcludedSidecar);
             return report.Contains("AL0132", StringComparison.Ordinal) || report.Contains("AL0126", StringComparison.Ordinal);
         }
-        catch (IOException) { return true; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return true; }
     }
 
     /// <summary>

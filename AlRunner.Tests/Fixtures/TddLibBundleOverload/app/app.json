@@ -1,0 +1,23 @@
+{
+  "id": "c4d6e8f0-1a29-4e5b-8fa0-2b3c4d5e6f71",
+  "name": "Runner Tests Fixture - Tdd Lib Overload App",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "The implementing app: a codeunit that does not declare the member the library calls.",
+  "description": "The implementing app: a codeunit that does not declare the member the library calls.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65550,
+      "to": 65559
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
