@@ -674,6 +674,10 @@ internal static partial class ProgramSupport
                     // edit costs work proportional to that edit instead of the whole dependency
                     // module. See GetDepSymbolCompiler's own comment above for why keying on
                     // implPath is safe even though it's a looser identity than AppId/version.
+                    // #5132: this compile checks declaration diagnostics and the closure SetResolvedDeps
+                    // just installed is the impl's own, so a package it declares that carries no
+                    // SymbolReference.json would fail it on AL1022. See ScopeSymbolBearingDepsOnly.
+                    using (BcCompiler.ScopeSymbolBearingDepsOnly())
                     using (BcCompiler.ScopeCurrentAppIdentity(implId.AppId, implId.Publisher, implId.Version))
                     {
                         GetDepSymbolCompiler(implPath).EmitDepSymbolsIncremental(
@@ -1050,6 +1054,9 @@ internal static partial class ProgramSupport
                     // RunLayeredPrePass above, and for the identical reason — this function follows
                     // the exact same "new BcCompiler() every call" shape for the same kind of source
                     // dependency, just discovered via a sibling directory instead of a declared impl.
+                    // #5132: as in RunLayeredPrePass above — the closure just installed is this source
+                    // dependency's own, and a symbol-less package in it fails the compile on AL1022.
+                    using (BcCompiler.ScopeSymbolBearingDepsOnly())
                     using (BcCompiler.ScopeCurrentAppIdentity(sid.AppId, sid.Publisher, sid.Version))
                     {
                         GetDepSymbolCompiler(dir).EmitDepSymbolsIncremental(
