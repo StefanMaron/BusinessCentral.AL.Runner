@@ -4,7 +4,7 @@
 // the object's text, and its scope contexts) in caches keyed by the object id, and the runner seeds
 // ONE environment for the whole process, so the second request got the first one's statement lines
 // over its own text. The text indexed past the end (an exception) or the hits landed on other lines.
-// RecordPatches.ResetForReload now clears them with the other per-request source state.
+// The per-request reload now clears them with the other per-request source state.
 //
 // The layout is CodeCoverageSiblingLayout's: bundle/ and src/ share one app id, and each request
 // names one of them with a tests app that accepts only that folder's own result and rows.
