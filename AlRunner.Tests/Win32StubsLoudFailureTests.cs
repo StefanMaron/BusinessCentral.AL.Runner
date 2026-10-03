@@ -479,23 +479,104 @@ public class Win32StubsLoudFailureTests
     /// <summary>
     /// Nothing in this test project may put the shim override into the PROCESS environment: every
     /// runner child any collection spawns inherits it (#5201). Overrides go through
-    /// <c>Win32Stubs.OverrideSoForTests</c>. Counts the files it scanned so an empty scan cannot pass.
+    /// <c>Win32Stubs.OverrideSoForTests</c>; a test that needs the real variable gives it to its own
+    /// child's <c>ProcessStartInfo.Environment</c> (<see cref="Win32StubsEnvVarChildTests"/>).
+    ///
+    /// Checks exactly this: in every test source file, an <c>Environment.SetEnvironmentVariable</c>
+    /// call (arguments may span lines) whose first argument is the variable's string literal or a
+    /// <c>const</c>/<c>static readonly</c> string declared in that same file as that literal. It does
+    /// not follow a name declared in another file, built by concatenation, or passed through a
+    /// helper. Counts the files scanned so an empty scan cannot pass.
     /// </summary>
     [Fact]
     public void NoTestSetsTheShimOverrideInTheProcessEnvironment()
     {
         var testDir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "AlRunner.Tests"));
         Assert.True(Directory.Exists(testDir), $"AlRunner.Tests source directory not found at {testDir}");
-        var needle = "SetEnvironmentVariable(\"" + "AL_RUNNER_WIN32_STUBS_SO\"";
         var files = Directory.GetFiles(testDir, "*.cs", SearchOption.AllDirectories)
             .Where(f => !f.Contains(Path.DirectorySeparatorChar + "obj" + Path.DirectorySeparatorChar)
                      && !f.Contains(Path.DirectorySeparatorChar + "bin" + Path.DirectorySeparatorChar))
             .ToList();
         Assert.True(files.Count > 100, $"scanned only {files.Count} test source files; the scan did not see the project");
-        var offenders = files.Where(f => File.ReadAllText(f).Contains(needle))
+        var offenders = files.Where(f => SetsShimOverrideInProcessEnvironment(File.ReadAllText(f)))
             .Select(Path.GetFileName).ToList();
         Assert.True(offenders.Count == 0,
             "tests set AL_RUNNER_WIN32_STUBS_SO process-wide, so every runner child spawned meanwhile inherits it: "
             + string.Join(", ", offenders));
+    }
+
+    /// <summary>The scan's predicate, separate so the spellings it claims to catch are asserted directly.</summary>
+    internal static bool SetsShimOverrideInProcessEnvironment(string source)
+    {
+        const string literal = "\"AL_RUNNER_WIN32_STUBS_SO\"";
+        var names = System.Text.RegularExpressions.Regex.Matches(source,
+                @"\b(?:const|static\s+readonly)\s+string\s+(\w+)\s*=\s*" + literal)
+            .Select(m => m.Groups[1].Value).ToHashSet();
+        foreach (System.Text.RegularExpressions.Match call in System.Text.RegularExpressions.Regex.Matches(source,
+                     @"Environment\s*\.\s*SetEnvironmentVariable\s*\(\s*([^,]+?)\s*,"))
+        {
+            var first = call.Groups[1].Value;
+            if (first == literal || names.Contains(first)) return true;
+        }
+        return false;
+    }
+
+    [Theory]
+    [InlineData("Environment.SetEnvironmentVariable(\"AL_RUNNER_WIN32_STUBS_SO\", x);", true)]
+    [InlineData("Environment.SetEnvironmentVariable(\n    \"AL_RUNNER_WIN32_STUBS_SO\",\n    x);", true)]
+    [InlineData("const string V = \"AL_RUNNER_WIN32_STUBS_SO\"; void F() => Environment.SetEnvironmentVariable(V, x);", true)]
+    [InlineData("static readonly string V = \"AL_RUNNER_WIN32_STUBS_SO\"; void F() => Environment.SetEnvironmentVariable(\n V,\n x);", true)]
+    [InlineData("Environment.SetEnvironmentVariable(\"AL_RUNNER_DOTNET_SHIMS\", x);", false)]
+    [InlineData("const string V = \"AL_RUNNER_WIN32_STUBS_SO\"; psi.Environment[V] = x;", false)]
+    public void ShimOverrideScan_CatchesTheSpellingsItClaimsAndOnlyThose(string source, bool expected)
+        => Assert.Equal(expected, SetsShimOverrideInProcessEnvironment(source));
+
+    /// <summary>
+    /// "A seam neither reads nor fills the shared handle cache": the fill half is pinned by
+    /// <see cref="GetOrBuild_HonoursSoOverride_WhenFileExists"/>; this is the READ half. The cache is
+    /// filled first with the real shim (no seam), and a seam call must still go through its own
+    /// resolution instead of answering from it. Without the first step every other test would hide a
+    /// cache read, because each calls <c>ResetForTests</c> before it.
+    /// </summary>
+    [Fact]
+    public void ASeamCall_DoesNotAnswerFromTheSharedHandleCache()
+    {
+        var missing = Path.Combine(TestScratch.FlatDir("win32stubs-cache-read-"), "absent.so");
+        try
+        {
+            Win32Stubs.ResetForTests();
+            Assert.NotEqual(IntPtr.Zero, Win32Stubs.GetOrBuild("kernel32.dll")); // fills the cache
+            using (OverrideSo(missing))
+            {
+                var ex = Assert.Throws<InvalidOperationException>(() => Win32Stubs.GetOrBuild("kernel32.dll"));
+                Assert.Contains(missing, ex.Message);
+            }
+        }
+        finally { Win32Stubs.ResetForTests(); }
+    }
+
+    /// <summary>The same read-half pin for the two other seams, which also count as "a seam is active".</summary>
+    [Fact]
+    public void ADirectoryOrPathSeamCall_DoesNotAnswerFromTheSharedHandleCache()
+    {
+        var dir = TestScratch.FlatDir("win32stubs-cache-read-dir-");
+        Directory.CreateDirectory(dir); // no Win32Stubs/ inside: no prebuilt there
+        try
+        {
+            Win32Stubs.ResetForTests();
+            Assert.NotEqual(IntPtr.Zero, Win32Stubs.GetOrBuild("kernel32.dll")); // fills the cache
+            // No OverrideSo here: the call must be recognised as a seam call by these two alone.
+            Win32Stubs.PathEnvironmentForTests = ""; // no compiler reachable
+            Win32Stubs.BaseDirectoryForTests = dir;
+            var ex = Assert.Throws<InvalidOperationException>(() => Win32Stubs.GetOrBuild("kernel32.dll"));
+            Assert.Contains("kernel32.dll", ex.Message);
+        }
+        finally
+        {
+            Win32Stubs.PathEnvironmentForTests = null;
+            Win32Stubs.BaseDirectoryForTests = null;
+            Win32Stubs.ResetForTests();
+            try { Directory.Delete(dir, recursive: true); } catch { }
+        }
     }
 }

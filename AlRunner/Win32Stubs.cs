@@ -110,13 +110,12 @@ internal static class Win32Stubs
 
     /// <summary>
     /// Test-only: stands in for <c>AL_RUNNER_WIN32_STUBS_SO</c> on the CALLING async flow only
-    /// (<c>null</c> value = "no override", even if the process environment carries one). A test used
-    /// to set the real environment variable; every runner child spawned by any parallel test
-    /// collection inherited it, and one that resolved it after the test had deleted its fixture died
-    /// in <c>WindowsLanguageHelper..cctor</c> with exit 134 (#5201). This seam, and the two above, are
-    /// per-flow so neither a child process nor another test's thread (BC assemblies in the test host
-    /// carry this resolver too) can see them; while any is active <see cref="GetOrBuild"/> neither
-    /// reads nor fills the shared handle cache. Production never sets one.
+    /// (<c>null</c> value = "no override", even if the process environment carries one). Setting the
+    /// real variable in the test host is inherited by every runner child spawned meanwhile (#5201).
+    /// This seam, and the two above, are per-flow so neither a child process nor another test's
+    /// thread (BC assemblies in the test host carry this resolver too) can see them; while any is
+    /// active <see cref="GetOrBuild"/> neither reads nor fills the shared handle cache. Production
+    /// never sets one. The REAL variable is covered by a child-process test, not by this seam.
     /// </summary>
     internal static IDisposable OverrideSoForTests(string? value)
     {
