@@ -980,6 +980,12 @@ public static partial class RecordPatches
                 OwningAppId: filePath != null ? ResolveOwningApp(filePath)?.AppId : null,
                 PrimaryKey: primaryKey,
                 Namespace: fileNamespace, Usings: fileUsings);
+            // A source table can become the target of an extension parsed before it (#5289): an
+            // extension that read as extending a dependency's table of this name must stop doing so.
+            InvalidateExtensionTargetCache();
+            if (_extensionIdsByBaseTable.TryGetValue(tableName.ToLowerInvariant(), out var namedExtIds)
+                && namedExtIds.Any(_tableExtensionTargets.ContainsKey))
+                EvictCachedMetaTableForBaseTable(tableName);
         }
     }
 
@@ -992,10 +998,9 @@ public static partial class RecordPatches
             if (obj is not NavSyntax.TableExtensionSyntax ext) continue;
             if (ext.ObjectId?.Value.Value is not int extId) continue;
             var extName = IdentText(ext.Name);
-            // The name only: a namespace written in front of it is not part of the table's name
-            // (#5085). Registered by name alone, so a same-named table in another namespace is not
-            // told apart (#5223).
-            var baseName = LastNameSegment(ext.BaseObject?.ToString()?.Trim());
+            // The name is registered as the key; the namespace written in front of it is kept in the
+            // target so a same-named table in another namespace is told apart (#5085, #5289).
+            var (baseName, baseNamespace) = ExtendsTarget(ext.BaseObject?.ToString());
 
             // Extension fields are parsed exactly like base-table fields — see
             // ParseFieldSyntax for what they used to lose (#1711).
@@ -1066,7 +1071,8 @@ public static partial class RecordPatches
             // repeat this file's own former omission of the eviction (#2126).
             MergeExtensionFields(baseName, extId, fields, extKeys,
                 owningAppId: filePath != null ? ResolveOwningApp(filePath)?.AppId : null,
-                hasModify: hasModify);
+                hasModify: hasModify,
+                target: new TableExtensionTarget(baseName, baseNamespace, fileNamespace, fileUsings));
         }
     }
 

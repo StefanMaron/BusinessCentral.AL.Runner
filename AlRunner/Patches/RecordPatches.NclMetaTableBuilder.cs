@@ -147,10 +147,9 @@ public static partial class RecordPatches
         foreach (var f in parsed.Fields)
             if (f.FieldId == fieldNo)
                 return (f.MinValue, f.MaxValue);
-        if (_parsedExtensionFields.TryGetValue(parsed.TableName.ToLowerInvariant(), out var ext))
-            foreach (var f in ext)
-                if (f.FieldId == fieldNo)
-                    return (f.MinValue, f.MaxValue);
+        foreach (var f in ExtensionFieldsFor(parsed))
+            if (f.FieldId == fieldNo)
+                return (f.MinValue, f.MaxValue);
         return (null, null);
     }
 
@@ -185,8 +184,7 @@ public static partial class RecordPatches
             // carries its extension fields in Tables[]). Duplicating them corrupts the
             // NCLMetaTable field layout that R2R-precompiled BC code has baked offsets for.
             // Only append ext fields whose id is NOT already present in the base table's own list.
-            var extFields = _parsedExtensionFields.TryGetValue(parsed.TableName.ToLowerInvariant(), out var ef)
-                ? ef : Enumerable.Empty<ParsedField>();
+            var extFields = ExtensionFieldsFor(parsed);
 
             // #3614 — a tableextension's `modify(<field>)` block changes an EXISTING field's
             // properties, and BC leaves that change in the extension's own delta document
@@ -194,7 +192,7 @@ public static partial class RecordPatches
             // choice, so the corrected field list is what every consumer below sees.
             // Reads BC's own <FieldChange> rather than re-deriving the change from AL syntax;
             // RecordPatches.TableExtensionFieldDeltas.cs has the reasoning and the measurement.
-            parsed = parsed with { Fields = ApplyTableExtensionFieldDeltas(parsed.TableName, parsed.Fields).ToList() };
+            parsed = parsed with { Fields = ApplyTableExtensionFieldDeltas(parsed, parsed.Fields).ToList() };
 
             // #3552 — when BC's emitter handed the runner its own metadata document for this
             // table (#3548), let BC construct the NCLMetaTable from it rather than deriving one
@@ -1822,8 +1820,8 @@ public static partial class RecordPatches
     /// </summary>
     private static void AppendExtensionKeys(ParsedTable parsed, ParsedField[] allParsed, List<object> allKeys)
     {
-        if (!_parsedExtensionKeys.TryGetValue(parsed.TableName.ToLowerInvariant(), out var extKeys)
-            || extKeys.Count == 0)
+        var extKeys = ExtensionKeysFor(parsed);
+        if (extKeys.Count == 0)
             return;
 
         var fieldIdByName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -2406,8 +2404,8 @@ public static partial class RecordPatches
         // WireFieldTriggerHandlers is the sole caller and has already refused if the scan
         // types are absent.
         if (!TryGetInAppGroupScope("table", _parsedTables, tableId, out var parsed)) return;
-        if (!_extensionIdsByBaseTable.TryGetValue(parsed.TableName.ToLowerInvariant(), out var extIds)
-            || extIds.Count == 0)
+        var extIds = ExtensionIdsForTable(parsed);
+        if (extIds.Count == 0)
             return;
 
         // fieldNo → (before handlers, after handlers), preserving extension declaration order.
@@ -2686,9 +2684,7 @@ public static partial class RecordPatches
         {
             if (!(kvp.Value is NCLMetaTable mt)) continue;
             if (!_parsedTables.TryGetValue(kvp.Key, out var parsed)) continue;
-            var extFields = _parsedExtensionFields.TryGetValue(parsed.TableName.ToLowerInvariant(), out var ef)
-                ? (IEnumerable<ParsedField>)ef : Enumerable.Empty<ParsedField>();
-            FixupEnumFieldOptionMetadata(mt, parsed, extFields);
+            FixupEnumFieldOptionMetadata(mt, parsed, ExtensionFieldsFor(parsed));
         }
     }
 

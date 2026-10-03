@@ -22,7 +22,8 @@ public static partial class RecordPatches
                 {
                     if (!extIds.Contains(extensionId)) continue;
                     foreach (var t in _parsedTables.Values)
-                        if (string.Equals(t.TableName, baseName, StringComparison.OrdinalIgnoreCase) && !ids.Contains(t.TableId))
+                        if (string.Equals(t.TableName, baseName, StringComparison.OrdinalIgnoreCase) && !ids.Contains(t.TableId)
+                            && ExtensionAttachesToTable(extensionId, t))
                             ids.Add(t.TableId);
                 }
                 return ids;
@@ -121,12 +122,13 @@ public static partial class RecordPatches
                 {
                     // Precompiled tableextensions reach _extensionIdsByBaseTable only through this index.
                     EnsureBcSymbolExtensionIndex();
-                    string? tableName = TryGetInAppGroupScope("table", _parsedTables, baseId, out var parsed)
-                        ? parsed.TableName
-                        : DependencyTableName(baseId);
+                    if (TryGetInAppGroupScope("table", _parsedTables, baseId, out var parsed))
+                        return ExtensionIdsForTable(parsed).ToList();
+                    // Not parsed yet: a dependency's table, which carries no namespace (#5289).
+                    var tableName = DependencyTableName(baseId);
                     return tableName != null
                            && _extensionIdsByBaseTable.TryGetValue(tableName.ToLowerInvariant(), out var extIds)
-                        ? extIds.ToList()
+                        ? extIds.Where(e => ExtensionAttachesToTable(e, tableName, baseId, sourceParsed: false)).ToList()
                         : Array.Empty<int>();
                 }
             case "Page":
