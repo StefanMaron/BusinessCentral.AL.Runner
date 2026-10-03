@@ -234,6 +234,11 @@ public sealed class BaseAppFloorFixtureGuardTests
             + "closure to skip and assert nothing. The cost this rule guards is what they MEASURE: "
             + "the passing runs load zero dependencies, and only the two deliberate control cases "
             + "pay the closure they exist to prove is still served",
+        ["DeferredAttemptDependencyFloorTests.cs"] =
+            "legitimate (#5233) — the floor is the SUBJECT: the warm skip's attempt withholds the "
+            + "platform apps only for a bundle declaring an \"application\" floor, and the test asserts "
+            + "what that attempt does to the default Test Runner dependency. Without the floor no "
+            + "attempt runs and nothing is tested; the one runner spawn is the run the fix changes",
     };
 
     [Fact]

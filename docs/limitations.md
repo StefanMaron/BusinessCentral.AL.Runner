@@ -736,6 +736,21 @@ Not deferred: an explicit Microsoft dependency, a test-toolkit need, a symbol-on
 in the cache, an unreadable package, `--server`, `--watch`, `--tdd` and `--no-strict-exit`
 (which hides the exit code the verdict depends on).
 
+**An attempt is also not green when a loaded dependency's own floor was withheld** (#5233). The
+implicitly loaded Test Runner app declares a `Platform` floor, so inside the attempt its source
+compile has no System symbols and drops most of its objects, 130453 and 130454 (the per-test
+resets above) among them. The dependency path reports that and exits 0 by design (#2247), so the
+attempt exits 0 on its own; the attempt therefore exits 2 as soon as the resolver reports an
+unsupplied dependency floor, before anything compiles, and the run proceeds with the apps. The
+dependency's `compiled-deps` key carries which of its floors were supplied, so a DLL compiled
+without one is never replayed for a run that has it.
+
+The saving is lost, not only guarded: with the default Test Runner provisioned, every bundle
+declaring an `application` floor is refused by the attempt, warm or cold, so the deferral saves
+nothing there and the run loads the closure. On a cold cache that means the platform apps are
+downloaded (or exit 2 under `--no-auto-provision`) where the attempt used to pass on a degraded
+Test Runner. `AL_RUNNER_DEFAULT_TEST_TOOL=off` keeps the deferral; #5255 tracks restoring it.
+
 What the green attempt cannot see is a Microsoft subscriber that changes a result on AL that names
 no Microsoft object. Measured on BC 28.1 (#2232): insert, modify and delete of a custom table leave
 `Change Log Entry` at the same count with the apps loaded, and six of the fixture sets #2232 listed

@@ -220,14 +220,14 @@ public sealed class DependencyLoader
                 // identity keeps reusing (#1892: sibling bundles share one module).
                 var packageRewritten = identityMatches && sameDirectory
                     && existing.Tier3CacheKey != null
-                    && !string.Equals(existing.Tier3CacheKey, ComputeSourceDependencyCacheKey(m, path), StringComparison.Ordinal);
+                    && !string.Equals(existing.Tier3CacheKey, ComputeSourceDependencyCacheKey(m, path, ordered), StringComparison.Ordinal);
                 // #5079: across --server requests a different path is the same module only when its
                 // package holds the same bytes; a --tdd compile is never carried into a later request.
                 var staleForThisRequest = identityMatches && FromEarlierEpoch(existing)
                     && (existing.TddCompiled
                         || (!sameDirectory
                             && (existing.Tier3CacheKey == null
-                                || !string.Equals(existing.Tier3CacheKey, ComputeSourceDependencyCacheKey(m, path), StringComparison.Ordinal))));
+                                || !string.Equals(existing.Tier3CacheKey, ComputeSourceDependencyCacheKey(m, path, ordered), StringComparison.Ordinal))));
                 if (identityMatches && !packageRewritten && !staleForThisRequest)
                 {
                     _cache[m.AppId] = existing with { Epoch = CurrentEpoch };
@@ -324,7 +324,7 @@ public sealed class DependencyLoader
             IReadOnlyList<Assembly> chunks;
             try
             {
-                (asm, tier3CacheKey, chunks) = LoadOne(m, path, bucketRoot);
+                (asm, tier3CacheKey, chunks) = LoadOne(m, path, bucketRoot, ordered);
             }
             // #2131: this guard USED to be bare `when (microsoftSourceOnly)` — it caught
             // and silently swallowed EVERY Microsoft-source-only Tier-3 failure, including
@@ -568,7 +568,8 @@ public sealed class DependencyLoader
     /// and returns it empty, which the caller reads as "just <c>Asm</c>" (#3054).
     /// </summary>
     private (Assembly? Asm, string? Tier3CacheKey, IReadOnlyList<Assembly> Assemblies) LoadOne(
-        AppManifest m, string appPath, string bucketRoot)
+        AppManifest m, string appPath, string bucketRoot,
+        IReadOnlyList<(AppManifest Manifest, string AppPath)> resolved)
     {
         // #3549 — BC's own metadata documents for this dependency, BEFORE the tier choice
         // below. Tiers 1 and 2 return compiled code without ever running BC's emitter, and the
@@ -707,7 +708,7 @@ public sealed class DependencyLoader
             return (null, null, EmptyAssemblies);
         }
 
-        var cacheKey = ComputeSourceDependencyCacheKey(m, appPath);
+        var cacheKey = ComputeSourceDependencyCacheKey(m, appPath, resolved);
         // #1821: was hardcoded to ~/.cache/al-runner/compiled-deps regardless of --cache;
         // now follows the same isolation root al-out already honoured.
         var cacheDir = AlRunner.Infrastructure.CacheRoots.Resolve("compiled-deps");
@@ -1092,9 +1093,38 @@ public sealed class DependencyLoader
     /// computes for unchanged inputs orphans every existing entry on every machine; #3043's
     /// whole difficulty is that the obvious refactor does exactly that.
     /// </summary>
-    private static string ComputeSourceDependencyCacheKey(AppManifest manifest, string appPath)
+    internal static string ComputeSourceDependencyCacheKey(
+        AppManifest manifest, string appPath, IReadOnlyList<(AppManifest Manifest, string AppPath)> resolved)
         => ComputeSourceDependencyCacheKeyCore(
-               manifest, appPath, static p => RunnerFingerprint.ComputeFileContentHashMemoized(p));
+               manifest, appPath, static p => RunnerFingerprint.ComputeFileContentHashMemoized(p),
+               suppliedFloorsTerm: SuppliedFloorsCacheTerm(manifest, resolved.Select(r => r.Manifest)));
+
+    /// <summary>
+    /// #5233: the key line for which of the package's own floors (Platform, Application) this run
+    /// supplied, from the resolved closure the compile references. A source compile without a floor
+    /// has none of its symbols and drops the objects that need them, so that DLL must not answer for
+    /// a run that has the floor, and the reverse. Null for a package declaring no floor, which keeps
+    /// every such key unchanged; a package with one is recompiled once under the new key.
+    /// </summary>
+    internal static string? SuppliedFloorsCacheTerm(AppManifest manifest, IEnumerable<AppManifest> resolved)
+    {
+        var resolvedList = resolved as IReadOnlyCollection<AppManifest> ?? resolved.ToList();
+        var parts = new List<string>();
+        foreach (var floor in AppLoader.ImplicitRoots(manifest))
+        {
+            Version? supplied = null;
+            foreach (var r in resolvedList)
+            {
+                if (!string.Equals(r.Name, floor.Name, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(r.Publisher, floor.Publisher, StringComparison.OrdinalIgnoreCase)
+                    || r.Version < floor.Version)
+                    continue;
+                if (supplied == null || r.Version > supplied) supplied = r.Version;
+            }
+            parts.Add($"{floor.Publisher}/{floor.Name}>={floor.Version}={(supplied?.ToString() ?? "absent")}");
+        }
+        return parts.Count == 0 ? null : "floors:" + string.Join(",", parts);
+    }
 
     /// <summary>
     /// Testable core: takes the "which bytes is this package?" answer as a delegate, the same
@@ -1105,7 +1135,7 @@ public sealed class DependencyLoader
     /// </summary>
     internal static string ComputeSourceDependencyCacheKeyCore(
         AppManifest manifest, string appPath, Func<string, string> contentHashOf,
-        string? refPackTerm = null)
+        string? refPackTerm = null, string? suppliedFloorsTerm = null)
     {
         using var sha = SHA256.Create();
         using var ms = new MemoryStream();
@@ -1132,6 +1162,8 @@ public sealed class DependencyLoader
         // dependency compiled on a runtime-only install is a partial output that must not be
         // replayed (with its "packs missing" report) once the packs are installed.
         WriteLine(refPackTerm ?? AlRunner.BcCompiler.RunningDotNetRefPackCacheTerm);
+        // #5233: which of this package's floors the compile could see (SuppliedFloorsCacheTerm).
+        if (suppliedFloorsTerm != null) WriteLine(suppliedFloorsTerm);
         WriteLine($"app:{manifest.AppId}:{manifest.Publisher}:{manifest.Name}:{manifest.Version}");
         foreach (var dep in manifest.Dependencies.OrderBy(d => $"{d.Publisher}/{d.Name}/{d.Version}/{d.AppId}", StringComparer.OrdinalIgnoreCase))
             WriteLine($"dep:{dep.AppId}:{dep.Publisher}:{dep.Name}:{dep.Version}");
