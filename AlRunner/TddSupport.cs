@@ -127,6 +127,28 @@ public static class TddSupport
         var own = emitOutput.TddGeneratedMembers ?? Array.Empty<TddGeneratedMember>();
         return own.Concat(TddCrossBundle.GeneratedFor(moduleName).Where(m => !own.Contains(m))).ToList();
     }
+
+    /// <summary>
+    /// <paramref name="listed"/> plus every member generated into another bundle that no bundle's
+    /// compile listed (#5243): a library compiled only as a dependency of the test bundle asks for
+    /// its member there, and its own bundle iteration reuses that module instead of compiling.
+    /// </summary>
+    public static List<TddGeneratedMember> IncludingCrossBundle(IEnumerable<TddGeneratedMember> listed)
+    {
+        var all = listed.ToList();
+        var seen = new HashSet<string>(all.Select(TddReport.Describe), StringComparer.Ordinal);
+        foreach (var m in TddCrossBundle.AllGenerated())
+            if (seen.Add(TddReport.Describe(m))) all.Add(m);
+        return all;
+    }
+
+    /// <summary>
+    /// The members <paramref name="emitOutput"/>'s tests reach through another source bundle's
+    /// procedures (#5161). For the annotation only: they are already listed once, under the bundle
+    /// whose compile asked for them, so they are not added to the run's list of generated members.
+    /// </summary>
+    public static IReadOnlyList<TddGeneratedMember> ReachedFor(BcEmitOutput emitOutput)
+        => emitOutput.TddReachedMembers ?? Array.Empty<TddGeneratedMember>();
 }
 
 /// <summary>
@@ -159,7 +181,7 @@ public sealed class TddDependents
     {
         var label = string.IsNullOrEmpty(t.CodeunitDisplayName) ? t.Codeunit : t.CodeunitDisplayName!;
         if (!_byTest.TryGetValue($"{label}.{t.Method}", out var deps) || deps.Count == 0) return t;
-        return t with { GeneratedStubs = deps.Select(TddReport.Describe).ToList() };
+        return t with { GeneratedStubs = deps.Select(TddReport.Describe).Distinct().ToList() };
     }
 
     public List<TestResult> Apply(IReadOnlyList<TestResult> raw)

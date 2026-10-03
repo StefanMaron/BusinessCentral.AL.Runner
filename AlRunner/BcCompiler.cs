@@ -123,7 +123,11 @@ public sealed record BcEmitOutput(
     IReadOnlyList<TddExcludedObjectDetail>? ExcludedObjectDetails = null,
     // #4076: the app.json this compile read (BcCompiler.ResolveManifestAppJson), or null for
     // none. A text scan over the same files must blank the #if branches THIS manifest disabled.
-    string? ManifestAppJsonPath = null);
+    string? ManifestAppJsonPath = null,
+    // #5161: members --tdd generated into ANOTHER bundle that this compile's [Test]s reach through
+    // that bundle's procedures (a test library), each with those tests as DependentTests. Null
+    // outside --tdd and when nothing was generated into another bundle.
+    IReadOnlyList<TddGeneratedMember>? TddReachedMembers = null);
 
 public sealed partial class BcCompiler
 {
@@ -2488,10 +2492,22 @@ public sealed partial class BcCompiler
             }
         }
 
+        // #5161: a clean compile of a bundle that calls into one --tdd generated a member into. The
+        // compile that generated is skipped: its own diagnostics already named the tests.
+        IReadOnlyList<TddGeneratedMember>? tddReachedMembers = null;
+        if (_tddMode && caught == null && tddGeneratedMembers.Count == 0 && TddCrossBundle.HasReaching)
+        {
+            try { tddReachedMembers = TddCrossBundle.ReachThroughDependencies(compilation, trees); }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"--tdd: could not follow generated members through {moduleName}'s calls into other " +
+                    $"bundles ({ex.GetType().Name}: {ex.Message.Split('\n', 2)[0]}); a test reaching one only that way carries no generatedStubs.");
+            }
+        }
         var emitOutput = new BcEmitOutput(
             outputter.Captured, alDiags, excludedObjects, _tddMode ? excludedObjectDetails : null,
             _tddMode ? tddGeneratedMembers : null, excludedObjectDiagnostics, excludedObjectDetails,
-            ManifestAppJsonPath: manifestAppJsonPath);
+            ManifestAppJsonPath: manifestAppJsonPath, TddReachedMembers: tddReachedMembers);
 
         // #1902: only a CLEAN success (nothing excluded, every source captured) is trustworthy
         // as a RAD baseline — a module that only compiled after dropping broken objects must

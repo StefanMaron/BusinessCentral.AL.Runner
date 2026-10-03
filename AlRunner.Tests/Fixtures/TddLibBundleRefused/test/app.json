@@ -1,0 +1,23 @@
+{
+  "id": "a6b8f0c2-7394-4fb6-9ae8-51c2ad4e6f79",
+  "name": "Runner Tests Fixture - Tdd Lib Refused Test",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Tests that reach the app only through the library.",
+  "description": "Tests that reach the app only through the library.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [{"id": "e4f6d8a0-5172-4d94-9ec6-3fa08b2c4d57", "name": "Runner Tests Fixture - Tdd Lib Refused App", "publisher": "AL Runner", "version": "1.0.0.0"}, {"id": "f5a7e9b1-6283-4ea5-8fd7-40b19c3d5e68", "name": "Runner Tests Fixture - Tdd Lib Refused Lib", "publisher": "AL Runner", "version": "1.0.0.0"}],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65490,
+      "to": 65499
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

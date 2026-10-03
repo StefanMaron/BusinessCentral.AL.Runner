@@ -139,6 +139,10 @@ public static class TddGeneration
                     dependentsByKey[key] = list = new List<string>();
                 foreach (var label in callGraph.TestsReaching(diag))
                     if (!list.Contains(label)) list.Add(label);
+                // #5161: generated into another bundle, so a bundle compiled after this one reaches
+                // the member through whichever procedures of this compile lead to the call site.
+                if (member.GeneratedIntoFile != null)
+                    TddCrossBundle.RecordReaching(callGraph.ProcedureKeysReaching(diag), member);
             }
             catch
             {

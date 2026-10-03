@@ -2376,6 +2376,9 @@ var allTddGeneratedMembers = new List<TddGeneratedMember>();
 // --tdd: [Test] procedures reported FAILED for a missing symbol this run (TDD-EXCLUDED), so the
 // closing line says what was reported rather than assuming it (#5037).
 int tddSyntheticFailedCount = 0;
+// --tdd: objects dropped from a compile this run (TDD-EXCLUDED) that declare no [Test]. They add no
+// FAILED test above, so a closing line that read only tddSyntheticFailedCount said nothing was missing.
+int tddExcludedObjectCount = 0;
 // --tdd (#5037): set when this pass generated members into ANOTHER source bundle of the run;
 // the loop then runs the same cycle again so that bundle is recompiled before its dependents.
 bool tddRecompileRerun = false;
@@ -2693,14 +2696,23 @@ List<string> RenderDashboardLines(WatchStatus status, DateTime ts, TimeSpan dur)
 List<string> TddClosingLines()
 {
     var lines = new List<string>();
-    if (allTddGeneratedMembers.Count == 0 && tddSyntheticFailedCount > 0)
+    var generatedMembers = TddSupport.IncludingCrossBundle(allTddGeneratedMembers);
+    if (generatedMembers.Count == 0 && tddExcludedObjectCount > 0)
+    {
+        // #5243: an object that declares no [Test] (a test library) was dropped and reports no test.
+        lines.Add(
+            $"--tdd: no members were generated this run — {tddExcludedObjectCount} object(s) could not be " +
+            "compiled (named by the TDD-EXCLUDED line above); they declare no [Test] procedure, so no " +
+            "FAILED test of their own reports it.");
+    }
+    else if (generatedMembers.Count == 0 && tddSyntheticFailedCount > 0)
     {
         lines.Add(
             "--tdd: no members were generated this run — every missing symbol was reported " +
             "as a failed test instead (see the FAILED test messages above for each missing " +
             "symbol).");
     }
-    else if (allTddGeneratedMembers.Count == 0)
+    else if (generatedMembers.Count == 0)
     {
         // #5037: never claim failures were reported when none were.
         lines.Add(results.Any(r => r.CompileErrors.Count > 0 || r.ProcessError != null)
@@ -2710,8 +2722,8 @@ List<string> TddClosingLines()
     }
     else
     {
-        lines.Add($"--tdd: generated {allTddGeneratedMembers.Count} member(s) this run:");
-        foreach (var m in allTddGeneratedMembers)
+        lines.Add($"--tdd: generated {generatedMembers.Count} member(s) this run:");
+        foreach (var m in generatedMembers)
             lines.Add($"  {TddReport.Describe(m)}");
     }
     lines.AddRange(TddReport.SummaryLines(results.SelectMany(b => b.Tests), "run"));
@@ -2848,6 +2860,7 @@ if (tddMode && !tddRecompileRerun)
     // A --watch cycle reports its own generated members (#5147), not every earlier cycle's.
     allTddGeneratedMembers.Clear();
     tddSyntheticFailedCount = 0;
+    tddExcludedObjectCount = 0;
 }
 
 // #2683: re-synthesise the dependency workspace before re-running. The pre-passes above
@@ -2875,6 +2888,7 @@ if (tddRecompileRerun)
     tddRecompileRerun = false;
     allTddGeneratedMembers.Clear();
     tddSyntheticFailedCount = 0;
+    tddExcludedObjectCount = 0;
     if (RunDependencyPrePasses() != null)
     {
         Console.Error.WriteLine(
@@ -3181,6 +3195,15 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                     else
                         BcCompiler.SetCurrentAppIdentity(null, null, null);
                 }
+            }
+            // #5243: a dependency (a test library between the app and its tests) compiled against the
+            // old symbols of the bundle --tdd just generated a member into. The cycle re-runs below,
+            // so the rest of this pass has nothing to measure. Bounded like the re-run itself.
+            catch (AlRunner.Infrastructure.DependencyLoadException ex) when (
+                tddMode && tddRecompileReruns < 3
+                && ex.Stage == AlRunner.Infrastructure.DependencyLoadException.TddRecompileStage)
+            {
+                break;
             }
             catch (AlRunner.Infrastructure.DependencyLoadException ex)
             {
@@ -3850,6 +3873,7 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                         var bundleGenerated = TddSupport.MembersFor(emitOutput, moduleName);
                         allTddGeneratedMembers.AddRange(bundleGenerated);
                         bundleTddDependents.Add(bundleGenerated);
+                        bundleTddDependents.Add(TddSupport.ReachedFor(emitOutput));
                     }
 
                     // An emit-retry exclusion means one or more AL objects are NOT in the
@@ -3903,6 +3927,8 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                             }
                             bundleTests.AddRange(synthetic);
                             tddSyntheticFailedCount += synthetic.Count;
+                            tddExcludedObjectCount += (emitOutput.TddExcludedDetails ?? Array.Empty<TddExcludedObjectDetail>())
+                                .Count(d => TddSupport.BuildFailedTests(new[] { d }).Count == 0);
                             tddExcludedCount = emitOutput.ExcludedObjects.Count;
                             // sources stays as BcCompiler returned it (the recovered set) — do
                             // NOT clear it, unlike the non-tdd branch below.
@@ -5620,13 +5646,14 @@ return strictExitCode ? computedExitCode : 0;
     // The CLI's closing --tdd line, on stderr: stdout is the protocol.
     static void WriteTddSummary(TddServerRequest tdd)
     {
-        if (tdd.Generated.Count == 0)
+        var generated = TddSupport.IncludingCrossBundle(tdd.Generated);
+        if (generated.Count == 0)
         {
             Console.Error.WriteLine("--tdd: no members were generated this request.");
             return;
         }
-        Console.Error.WriteLine($"--tdd: generated {tdd.Generated.Count} member(s) this request:");
-        foreach (var m in tdd.Generated)
+        Console.Error.WriteLine($"--tdd: generated {generated.Count} member(s) this request:");
+        foreach (var m in generated)
             Console.Error.WriteLine($"  {TddReport.Describe(m)}");
         foreach (var line in TddReport.SummaryLines(tdd.RanAgainstStubs, "request"))
             Console.Error.WriteLine(line);
@@ -6544,6 +6571,7 @@ return strictExitCode ? computedExitCode : 0;
                         tdd.Generated.AddRange(generated);
                         tddDependents = new TddDependents();
                         tddDependents.Add(generated);
+                        tddDependents.Add(TddSupport.ReachedFor(emitOutput));
                         if (excludedObjects.Count > 0)
                             tddSynthetic = TddSupport.BuildFailedTests(
                                 emitOutput.TddExcludedDetails ?? Array.Empty<TddExcludedObjectDetail>());

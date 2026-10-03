@@ -1,0 +1,23 @@
+{
+  "id": "b1c3a5d7-2e4f-4a61-8b93-0c7d5e9f1a24",
+  "name": "Runner Tests Fixture - Tdd Lib Bundle App",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "The implementing app of the #5243 reproducer: a codeunit that does not declare the member the library calls.",
+  "description": "The implementing app of the #5243 reproducer: a codeunit that does not declare the member the library calls.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65440,
+      "to": 65449
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

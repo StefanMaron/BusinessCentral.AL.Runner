@@ -896,6 +896,30 @@ public sealed class DependencyLoader
             throw new DependencyLoadException(m.Publisher, m.Name, m.Version.ToString(), "EMIT-FAIL", detail, ex);
         }
         var emitted = emitOutput.Sources;
+        // #5243: --tdd generated a member into ANOTHER source bundle (this compile's, or an earlier
+        // one's) and that bundle is not recompiled yet, so this compile bound against its old
+        // symbols. A dependency that lost objects to the missing member is not a verdict, and
+        // nothing of it may reach the compiled-deps cache below: its key does not name the bundle
+        // the member went into, so the re-run would be served the stale assembly.
+        if ((emitted.Count == 0 || emitOutput.ExcludedObjects.Count > 0)
+            && BcCompiler.IsTddMode() && TddCrossBundle.HasPendingRecompile())
+            throw new DependencyLoadException(m.Publisher, m.Name, m.Version.ToString(),
+                DependencyLoadException.TddRecompileStage,
+                "compiled against a bundle that --tdd generated a member into and has not recompiled yet");
+        // #5243: under --tdd a source dependency whose every object was dropped for an AL diagnostic
+        // (a missing member --tdd refused to generate: a Text argument, a bare statement) reports
+        // like the partial drop below and loads no assembly, so the tests still run and fail where
+        // they reach it. It is not cached: the empty result is a --tdd answer, and a later run
+        // without --tdd must reach the EMIT-ZERO below.
+        if (emitted.Count == 0 && emitOutput.ExcludedObjects.Count > 0 && BcCompiler.IsTddMode())
+        {
+            AlRunner.Infrastructure.ProvisionGapLog.Report(
+                $"{m.Publisher}_{m.Name} v{m.Version}: EMIT-EXCLUDED — " +
+                BuildDependencyEmitExcludedDetail(
+                    emitOutput.ExcludedObjects, 0, emitOutput.ExcludedObjectDiagnostics ?? Array.Empty<string>())
+                + " --tdd keeps the run going without it: a test that reaches the dependency reports FAILED.");
+            return (null, null, EmptyAssemblies);
+        }
         if (emitted.Count == 0)
         {
             // EMIT-ZERO: Emit returned success but produced no sources — BC's silent

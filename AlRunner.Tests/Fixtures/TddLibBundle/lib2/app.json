@@ -1,0 +1,36 @@
+{
+  "id": "e5f7d9a1-5172-4d94-8ec6-2fa08b3c4d56",
+  "name": "Runner Tests Fixture - Tdd Lib Bundle Lib Two",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "A second test library, between the first library and the tests: it reaches the generated member only through the first library.",
+  "description": "A second test library, between the first library and the tests: it reaches the generated member only through the first library.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "b1c3a5d7-2e4f-4a61-8b93-0c7d5e9f1a24",
+      "name": "Runner Tests Fixture - Tdd Lib Bundle App",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    },
+    {
+      "id": "c2d4b6e8-3f50-4b72-9ca4-1d8e6f0a2b35",
+      "name": "Runner Tests Fixture - Tdd Lib Bundle Lib",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65470,
+      "to": 65479
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
