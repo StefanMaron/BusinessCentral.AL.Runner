@@ -104,6 +104,30 @@ public sealed class BundleFailureStageTests
     public void NoErrorsAtAllIsNotAnExecutionFailure()
         => Assert.Equal(BucketStage.CompileFailed, BundleFailureStage.Classify(Array.Empty<string>()));
 
+    private const string Drop = "<bundled>: EMIT-EXCLUDED for M: 1 object(s) dropped from the module";
+
+    /// <summary>#5256: a worker of a shared bundle that left the dropped objects' SKIPPED tests to a
+    /// peer may have no tests of its own. That is not a failed compile, and only when the drop is
+    /// the one thing it reports: any other error keeps the empty-bundle classification, and so does
+    /// the same drop on a worker that owns no peer's report (a plain run).</summary>
+    [Fact]
+    public void TheDropAloneOnAWorkerThatLeftItToAPeer_IsNotAnEmptyBundleFailure()
+        => Assert.True(BundleFailureStage.OnlyDropsAPeerReports(new[] { Drop }, droppedReportedByPeer: true));
+
+    [Fact]
+    public void TheSameDropOnAPlainRun_StaysAnEmptyBundleFailure()
+        => Assert.False(BundleFailureStage.OnlyDropsAPeerReports(new[] { Drop }, droppedReportedByPeer: false));
+
+    [Theory]
+    [InlineData("App: TEST-TIMEOUT-ABORT: hung")]
+    [InlineData("<bundled>: EMIT-FAIL: BC's compiler threw")]
+    public void AnyOtherErrorBesideTheDrop_StaysAnEmptyBundleFailure(string other)
+        => Assert.False(BundleFailureStage.OnlyDropsAPeerReports(new[] { Drop, other }, droppedReportedByPeer: true));
+
+    [Fact]
+    public void NoErrorsAtAll_IsNotADropAPeerReports()
+        => Assert.False(BundleFailureStage.OnlyDropsAPeerReports(Array.Empty<string>(), droppedReportedByPeer: true));
+
     // ─────────────────────────────────── the reason must be printed ──
 
     private static BucketResult ExecFailedBucket(params string[] errors)

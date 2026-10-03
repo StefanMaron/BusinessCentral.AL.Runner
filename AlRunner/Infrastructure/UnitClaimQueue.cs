@@ -76,6 +76,22 @@ internal sealed class UnitClaimQueue
         }
     }
 
+    /// <summary>
+    /// Claim a test codeunit the COMPILE dropped (EMIT-EXCLUDED, #5256). It never reaches the run,
+    /// so <see cref="TryClaim"/> never sees it, yet every worker of a shared bundle compiles the
+    /// bundle and finds the same drop: the claim is what makes exactly one of them report its
+    /// tests as SKIPPED. The prefix keeps the key apart from a real codeunit's type name.
+    /// </summary>
+    public bool TryClaimDropped(string moduleName, string droppedObjectKey)
+        => TryClaim(moduleName, "emit-excluded:" + droppedObjectKey);
+
+    /// <summary>The dropped objects of <paramref name="details"/> this worker claimed and so
+    /// reports; the others belong to the worker that claimed them. One claim per object, so
+    /// several dropped objects may fall to different workers and are still reported once each.</summary>
+    internal IReadOnlyList<TddExcludedObjectDetail> ClaimDropped(
+        string moduleName, IReadOnlyList<TddExcludedObjectDetail> details)
+        => details.Where(d => TryClaimDropped(moduleName, d.FilePath + "|" + d.ObjectDisplayName)).ToList();
+
     /// <summary>The lock the workers of this shared bundle serialise their compile phase on
     /// (<see cref="CompilePhase"/>). Beside the claim files, so it dies with the run's scratch.</summary>
     internal string CompilePhaseLockPath

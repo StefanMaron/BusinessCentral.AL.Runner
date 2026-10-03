@@ -54,6 +54,48 @@ public sealed class UnitClaimQueueTests : IDisposable
         Assert.True(scm.TryClaim("App", "Codeunit50000"));
     }
 
+    private static TddExcludedObjectDetail Dropped(string file, string name)
+        => new(file, name, Array.Empty<string>());
+
+    /// <summary>#5256: every worker of a shared bundle finds the same dropped objects. Between two
+    /// of them each object goes to exactly one, so the tests of the two workers sum to the
+    /// bundle's, and two objects dropped together may fall to different workers.</summary>
+    [Fact]
+    public void ClaimDropped_GivesEachDroppedObjectToExactlyOneWorker()
+    {
+        var details = new[] { Dropped("/b/erm/A.al", "A"), Dropped("/b/erm/B.al", "B") };
+        var worker1 = new UnitClaimQueue(_dir, "/b/erm");
+        var worker2 = new UnitClaimQueue(_dir, "/b/erm");
+
+        var first = worker1.ClaimDropped("App", details);
+        var second = worker2.ClaimDropped("App", details);
+
+        Assert.Equal(new[] { "A", "B" }, first.Select(d => d.ObjectDisplayName));
+        Assert.Empty(second);
+
+        // one object already taken by the other worker: only the free one is claimed
+        var third = new UnitClaimQueue(_dir, "/b/scm");
+        Assert.True(third.TryClaimDropped("App", "/b/scm/A.al|A"));
+        Assert.Equal(new[] { "B" }, third.ClaimDropped("App", new[]
+            { Dropped("/b/scm/A.al", "A"), Dropped("/b/scm/B.al", "B") }).Select(d => d.ObjectDisplayName));
+    }
+
+    /// <summary>A dropped object's claim must not shadow, or be shadowed by, a real codeunit's: the
+    /// dropped object never reaches the run, but a codeunit of the same name in another app group
+    /// does, and losing that claim would drop a test codeunit's results.</summary>
+    [Fact]
+    public void ClaimDropped_DoesNotCollideWithARealCodeunitsClaim_OrWithAnotherBundle()
+    {
+        var q = new UnitClaimQueue(_dir, "/b/erm");
+
+        // a codeunit type name spelled exactly as the dropped object's key would be, were it unprefixed
+        Assert.True(q.TryClaim("App", "A|A"));
+        Assert.Single(q.ClaimDropped("App", new[] { Dropped("A", "A") }));
+        Assert.Single(q.ClaimDropped("OtherApp", new[] { Dropped("A", "A") }));
+        Assert.Single(new UnitClaimQueue(_dir, "/b/scm").ClaimDropped("App", new[] { Dropped("A", "A") }));
+        Assert.Empty(q.ClaimDropped("App", new[] { Dropped("A", "A") }));
+    }
+
     [Fact]
     public void IsClaimed_ReadsWithoutClaiming()
     {

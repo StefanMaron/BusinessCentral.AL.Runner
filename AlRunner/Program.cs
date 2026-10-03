@@ -3313,6 +3313,9 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
     var bundleTests = new List<TestResult>();
     var bundleErrors = new List<string>();
     var bundleStage = BucketStage.Ran;
+    // #5256: set when a worker of a shared bundle left a dropped object's SKIPPED tests to the
+    // worker that claimed it, so a worker with none of its own is not a failed compile.
+    var droppedReportedByPeer = false;
     int sP = 0, sF = 0, sE = 0;
     // --tdd: the tests whose compile referenced a generated member, populated wherever this
     // bundle's emitOutput.TddGeneratedMembers is collected. Each such result keeps its own
@@ -3979,9 +3982,29 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                             // reflect over) and reported as SKIPPED when the module runs
                             // anyway, so the number that did not run is in the totals, the
                             // JUnit and --output-json — never merely absent.
+                            // #5256: every worker of a shared --jobs bundle compiles it and finds
+                            // the same drops; one claim per dropped object makes one worker
+                            // report its tests, so the aggregate counts them once.
+                            var dropClaim = everyDropSafe && !allProfiles
+                                ? AlRunner.Infrastructure.UnitClaimQueue.ForBundle(bundleAbs)
+                                : null;
+                            var ownDetails = dropClaim == null ? exclDetails
+                                : dropClaim.ClaimDropped(moduleName, exclDetails);
+                            if (ownDetails.Count < exclDetails.Count) droppedReportedByPeer = true;
                             var skippedForDrops = everyDropSafe && !allProfiles
-                                ? TddSupport.BuildSkippedTests(exclDetails)
+                                ? TddSupport.BuildSkippedTests(ownDetails)
                                 : Array.Empty<TestResult>();
+                            // The two sentences below say what this worker reports; a worker of a
+                            // shared bundle reports only the objects it claimed.
+                            var skippedNote = dropClaim == null
+                                ? $"the {skippedForDrops.Count} [Test] procedure(s) the dropped object(s) declare are reported as SKIPPED."
+                                : $"the dropped object(s) are shared out between this bundle's workers: the "
+                                  + $"{skippedForDrops.Count} [Test] procedure(s) of the ones this worker claimed are reported as "
+                                  + "SKIPPED here, and the worker that claimed each other object reports its own.";
+                            var skippedErrorNote = dropClaim == null
+                                ? $"{skippedForDrops.Count} [Test] procedure(s) did not run and are reported as SKIPPED; "
+                                : $"{skippedForDrops.Count} [Test] procedure(s) did not run and are reported as SKIPPED by this worker "
+                                  + "(the worker that claimed each other dropped object reports its own); ";
 
                             // Untagged on purpose: a `[Component]` prefix would be swallowed by
                             // Log's filter at default verbosity, which is the original defect.
@@ -3998,8 +4021,7 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                                 ? exclHeadline +
                                   $" Every dropped object is a test codeunit no surviving object in this module " +
                                   $"references, by name or by object id, so the remaining {sources.Count} object(s) " +
-                                  $"still run — the {skippedForDrops.Count} [Test] procedure(s) the dropped object(s) " +
-                                  $"declare are reported as SKIPPED."
+                                  $"still run — {skippedNote}"
                                 : exclHeadline +
                                   $" The module was NOT run: {DescribeRefusals(verdicts, emitOutput.ExcludedObjects)}")
                                 + ExclusionDiagnosticAdvice(exclDiags, printExclDiagsNow));
@@ -4020,8 +4042,8 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                                     $"<bundled>: EMIT-EXCLUDED for {moduleName}: {emitOutput.ExcludedObjects.Count} " +
                                     $"object(s) dropped from the module — tests they declare are missing: [{names}]. "
                                     + (everyDropSafe
-                                        ? $"{skippedForDrops.Count} [Test] procedure(s) did not run and are reported "
-                                          + $"as SKIPPED; the module's surviving {sources.Count} object(s) ran because "
+                                        ? skippedErrorNote
+                                          + $"the module's surviving {sources.Count} object(s) ran because "
                                           + $"nothing surviving references a dropped object."
                                         : $"The module was NOT run: {DescribeRefusals(verdicts, emitOutput.ExcludedObjects)}"));
                                 if (everyDropSafe)
@@ -4628,7 +4650,11 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
     // was reported as `compile-fail: 1` under a "COMPILE FAIL" header and classified
     // `compile/other` in --out's JSON, sending the reader hunting for AL errors that never
     // existed.
-    if (bundleTests.Count == 0 && bundleErrors.Count > 0)
+    //
+    // #5256: not when every error is an EMIT-EXCLUDED drop whose tests another worker of this
+    // shared bundle reports: the module compiled and ran here, this worker just has none of its own.
+    if (bundleTests.Count == 0 && bundleErrors.Count > 0
+        && !AlRunner.Infrastructure.BundleFailureStage.OnlyDropsAPeerReports(bundleErrors, droppedReportedByPeer))
         bundleStage = AlRunner.Infrastructure.BundleFailureStage.Classify(bundleErrors);
     // #3538: drained here, once per bucket, because the accumulator is run-wide while
     // CompanyInitializer.ResetForNewBundle runs once per APP GROUP — a bucket with several
