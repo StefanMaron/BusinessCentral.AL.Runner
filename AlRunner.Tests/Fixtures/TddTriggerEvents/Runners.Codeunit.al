@@ -61,3 +61,23 @@ codeunit 72308 "Trg Quiet Runner"
     begin
     end;
 }
+
+/// <summary>
+/// #5286, the control: a procedure of its own named Run, which takes a parameter, so a call to it is not
+/// Codeunit.Run. Its OnRun reaches a missing member, which the call must not reach.
+/// </summary>
+codeunit 72309 "Trg Own Run"
+{
+    trigger OnRun()
+    var
+        Target: Codeunit "Trg Target";
+        Result: Integer;
+    begin
+        Result := Target.MissingOwnRun(1);
+    end;
+
+    procedure Run(Value: Integer): Integer
+    begin
+        exit(Value);
+    end;
+}

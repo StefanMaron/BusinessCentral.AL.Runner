@@ -279,6 +279,15 @@ codeunit 72310 "Trg Tests"
         Rec.Modify(true);
     end;
 
+    [Test]
+    procedure CallingAProcedureNamedRun_IsNotCodeunitRun_IsNotAnnotated()
+    var
+        Own: Codeunit "Trg Own Run";
+    begin
+        if Own.Run(3) <> 3 then
+            Error('Run returns its argument');
+    end;
+
     local procedure NewRec() Result: Record "Trg Rec"
     begin
         Result.PK := 'K33';
