@@ -182,7 +182,7 @@ public sealed class TddResultAnnotationTests
         Assert.Contains("only when their RunTrigger argument is not omitted or false", guideText);
         Assert.Contains("a RecordRef, a FieldRef or a record that is not a variable (a procedure's return value) names none, so its operation counts for every table", guideText);
         Assert.Contains("Codeunit.Run reaches the OnRun of the codeunit named by Codeunit::Name", guideText);
-        Assert.Contains("the triggers of a page, report, query or xmlport, a TestPage's actions, and a table operation or Codeunit.Run inside a precompiled .app that the test only calls", guideText);
+        Assert.Contains("the triggers of a page, report, query or xmlport, a TestPage's actions, a TestPage's OpenNew, SetValue or Close running a table trigger (#5301), and a table operation or Codeunit.Run inside a precompiled .app that the test only calls", guideText);
         Assert.DoesNotContain("Inserting a record that a subscriber reacts to is such a path", guideText);
         Assert.Contains("its OnBefore and OnAfter Insert, Modify, Delete and Rename, and the OnBeforeValidate and OnAfterValidate of a modify() block, are started by the operation of that name", guideText);
         Assert.Contains("a trigger name this list does not know counts as started by every operation", guideText);
@@ -212,7 +212,7 @@ public sealed class TddResultAnnotationTests
         Assert.Contains("A table operation starts what the table declares (#5286)", serverText); // #5286
         Assert.Contains("only when their `RunTrigger` argument is not omitted or `false`", serverText);
         Assert.Contains("a `RecordRef`, a `FieldRef` or a record that is not a variable (a procedure's return value) names none, so its operation counts for every table", serverText);
-        Assert.Contains("the triggers of a page, report, query or xmlport, a `TestPage`'s actions, and a table operation or `Codeunit.Run` inside a precompiled `.app` that the test only calls", serverText);
+        Assert.Contains("the triggers of a page, report, query or xmlport, a `TestPage`'s actions, a `TestPage`'s `OpenNew`, `SetValue` or `Close` running a table trigger (#5301), and a table operation or `Codeunit.Run` inside a precompiled `.app` that the test only calls", serverText);
         Assert.DoesNotContain("carries no `generatedStubs` (#5286)", serverText);
         Assert.Contains("its `OnBefore` and `OnAfter` `Insert`, `Modify`, `Delete` and `Rename`, and the `OnBeforeValidate` and `OnAfterValidate` of a `modify()` block, are started by the operation of that name", serverText);
         Assert.Contains("a trigger name this list does not know counts as started by every operation", serverText);
