@@ -2373,7 +2373,8 @@ var results = new List<BucketResult>();
 // The earlier attempts' full results (--merge-results, #2719). Read BEFORE the bundles run rather than
 // where the outputs below fold them in, because an EMIT-EXCLUDED drop the carry already reported must
 // not be reported again by this attempt (#5268).
-var carriedResults = AlRunner.Infrastructure.ResumeCarry.Read(mergeResultsFiles, out _);
+var carriedAttempts = AlRunner.Infrastructure.ResumeCarry.ReadAttempts(mergeResultsFiles, out _);
+var carriedResults = carriedAttempts.SelectMany(a => a).ToList();
 // --tdd (issue #2001) acceptance criterion 8: every member generated across the WHOLE run
 // (every bundle's Emit call), printed as one list at the end — see the print site below.
 var allTddGeneratedMembers = new List<TddGeneratedMember>();
@@ -3946,7 +3947,9 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                                 foreach (var d in tddExclDiags)
                                     Console.Error.WriteLine($"  {d}");
                             }
-                            bundleTests.AddRange(synthetic);
+                            // #5272: rows an earlier attempt of this resumed run already reported are in the carry.
+                            bundleTests.AddRange(carriedResults.Count == 0 ? synthetic
+                                : AlRunner.Infrastructure.ResumeCarry.NotYetReported(carriedResults, bundleAbs, synthetic));
                             TddSupport.RegisterDroppedCodeunits(moduleName, emitOutput.TddExcludedDetails ?? Array.Empty<TddExcludedObjectDetail>());
                             tddSyntheticFailedCount += synthetic.Count;
                             tddExcludedObjectCount += (emitOutput.TddExcludedDetails ?? Array.Empty<TddExcludedObjectDetail>())
@@ -4959,9 +4962,11 @@ var carryLosses = AlRunner.Infrastructure.CarriedAttemptFiles.Audit(mergeCountsF
 var carryIncomplete = carryLosses.Count > 0;
 if (carryIncomplete)
     Console.Error.WriteLine(AlRunner.Infrastructure.CarriedAttemptFiles.Describe(carryLosses));
+// #5273: one bucket per bundle, not one per attempt.
 var allResults = carriedResults.Count == 0
     ? results
-    : carriedResults.Concat(results).ToList();
+    : AlRunner.Infrastructure.ResumeCarry.MergeAttempts(
+        carriedAttempts.Select(a => (IReadOnlyList<BucketResult>)a).Append(results).ToList());
 
 // ── Count-baseline check (issue #1880) ──────────────────────────────────────────────
 // Runs once, after every bundle has finished, against the FULL `results` list — same

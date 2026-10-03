@@ -53,7 +53,8 @@ A worker that resumes after a watchdog abort (#2280) compiles the bundle again a
 does not report SKIPPED rows its carried attempts already hold (`ResumeCarry.NotYetReported`, #5268), so
 the summary, the JUnit and `--output-json` count each once, and the aggregate counts a bundle once however
 many attempts its worker made, because each attempt prints its own `SUITE ERRORS` header
-(`ParallelFanOut.CountBundleHeaders`, #5269).
+(`ParallelFanOut.CountBundleHeaders`, #5269). Its `--tdd` FAILED rows and its structured outputs
+are held to the same rule (#5272, #5273): `docs/watchdog-resume-reporting.md`.
 
 A watchdog abort in a shared bundle ends that worker's run of it. The abort line counts the later
 codeunits nobody has claimed yet, and only those: one another worker already claimed is not lost.

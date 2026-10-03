@@ -571,6 +571,8 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             ["SourceDepCacheEnumMetadataTests"] = 41,
             ["DefineFlagIntegrationTests"] = 41,
             ["SuiteEnumerationTests"] = 36,
+            // #5273: three attempts of one bundle, each a fresh process that boots BC (about 30s locally).
+            ["ResumeThreeAttemptsTests"] = 35,
             ["EmitExclusionLoudnessTests"] = 33,
             ["BundleSuiteErrorLoudnessTests"] = 32,
             ["BcVersionFloorSkipTests"] = 32,

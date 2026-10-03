@@ -1,0 +1,23 @@
+{
+  "id": "c2c3d4e5-f6a7-4809-9b1c-2c3d4e5f6146",
+  "name": "Runner Tests Fixture - Resume Emit Excluded Two Hangs",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Two hanging codeunits and a codeunit that cannot bind: the run resumes twice, so a bundle is reported by three attempts and the second attempt adds a suite error the first did not have (#5272, #5273).",
+  "description": "Used by AlRunner.Tests/ResumeThreeAttemptsTests.cs.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 50960,
+      "to": 50979
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

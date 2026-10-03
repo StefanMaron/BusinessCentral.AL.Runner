@@ -102,6 +102,105 @@ public static class ResumeCarry
     }
 
     /// <summary>
+    /// One bucket per bundle for a resumed run's outputs (#5273). Every attempt compiles each bundle again
+    /// and reports it, so the folded attempts hold one bucket per bundle each; --output-json, --out and
+    /// --count-out treat every bucket as a bundle and read it once per attempt. Buckets of one bundle and
+    /// one stage merge, and only those: a bundle whose attempts disagree about its stage stays one bucket
+    /// per stage, never read as the other (a non-Ran bucket's tests are not reported). What a merge keeps is
+    /// docs/watchdog-resume-reporting.md: the DISTINCT things, never fewer than the most any attempt saw.
+    /// <paramref name="attempts"/> are in attempt order, the carried ones first and this process's last.
+    /// </summary>
+    public static List<BucketResult> MergeAttempts(IReadOnlyList<IReadOnlyList<BucketResult>> attempts)
+    {
+        var slots = new List<List<BucketResult>>();
+        var slotOf = new Dictionary<(string, BucketStage, int), int>();
+        foreach (var attempt in attempts)
+        {
+            // The same bundle twice in ONE attempt (two arguments naming it) stays two buckets: the n-th
+            // of a bundle merges with the n-th of the others.
+            var seen = new Dictionary<(string, BucketStage), int>();
+            foreach (var b in attempt)
+            {
+                var bundle = (b.BucketPath, b.Stage);
+                seen.TryGetValue(bundle, out var nth);
+                seen[bundle] = nth + 1;
+                var slot = (bundle.BucketPath, bundle.Stage, nth);
+                if (!slotOf.TryGetValue(slot, out var at))
+                {
+                    at = slots.Count;
+                    slotOf[slot] = at;
+                    slots.Add(new List<BucketResult>());
+                }
+                slots[at].Add(b);
+            }
+        }
+        return slots.Select(MergeOne).ToList();
+    }
+
+    private static BucketResult MergeOne(List<BucketResult> parts)
+    {
+        if (parts.Count == 1) return parts[0];
+        var first = parts[0];
+        var processErrors = parts.Select(p => p.ProcessError).Where(e => e != null).Distinct().ToList();
+        return first with
+        {
+            CompileErrors = MostReported(parts.Select(p => p.CompileErrors)),
+            ProcessError = processErrors.Count == 0 ? null : string.Join("; ", processErrors),
+            Tests = parts.SelectMany(p => p.Tests).ToList(),
+            EmitTime = TimeSpan.FromTicks(parts.Sum(p => p.EmitTime.Ticks)),
+            CompileTime = TimeSpan.FromTicks(parts.Sum(p => p.CompileTime.Ticks)),
+            RunTime = TimeSpan.FromTicks(parts.Sum(p => p.RunTime.Ticks)),
+            // Every attempt enters every app group of the bundle, so the most any attempt entered is the
+            // number of groups it has; a sum would count each group once per attempt.
+            RanGroupCount = parts.Max(p => p.RanGroupCount),
+            ProvisionGaps = parts.All(p => p.ProvisionGaps == null) ? null
+                : parts.SelectMany(p => p.ProvisionGaps ?? Array.Empty<string>()).Distinct().ToList(),
+            CompanyInitFailures = MergeCompanyInit(parts),
+        };
+    }
+
+    /// <summary>Each error as many times as the attempt that reported it most did: one attempt's own repeats
+    /// stay, the same line in a second attempt is the same suite error, and a line only one attempt has is kept.
+    /// In order of first appearance.</summary>
+    private static List<string> MostReported(IEnumerable<IReadOnlyList<string>> perAttempt)
+    {
+        var most = new Dictionary<string, int>(StringComparer.Ordinal);
+        var order = new List<string>();
+        foreach (var errors in perAttempt)
+        {
+            var here = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var e in errors)
+            {
+                here[e] = here.GetValueOrDefault(e) + 1;
+                if (!most.ContainsKey(e)) { most[e] = 0; order.Add(e); }
+            }
+            foreach (var (e, n) in here) if (n > most[e]) most[e] = n;
+        }
+        return order.SelectMany(e => Enumerable.Repeat(e, most[e])).ToList();
+    }
+
+    /// <summary>An abort each attempt reports for the same app groups is one abort: its count is the most any
+    /// attempt gave it. An attempt's own aborts are already collapsed by key.</summary>
+    private static List<CompanyInitFailure>? MergeCompanyInit(List<BucketResult> parts)
+    {
+        if (parts.All(p => p.CompanyInitFailures == null)) return null;
+        var merged = new List<CompanyInitFailure>();
+        var at = new Dictionary<(int, string, string, string), int>();
+        foreach (var f in parts.SelectMany(p => p.CompanyInitFailures ?? Array.Empty<CompanyInitFailure>()))
+        {
+            var key = (f.CodeunitId, f.CodeunitName, f.ExceptionType, f.Message);
+            if (at.TryGetValue(key, out var i))
+                merged[i] = merged[i] with
+                {
+                    Count = Math.Max(merged[i].Count, f.Count),
+                    AcceptedReason = merged[i].AcceptedReason ?? f.AcceptedReason,
+                };
+            else { at[key] = merged.Count; merged.Add(f); }
+        }
+        return merged;
+    }
+
+    /// <summary>
     /// Read every carry file back into BucketResults, in the order given. A file that is missing
     /// or will not parse contributes NOTHING rather than failing the run — the same stance
     /// JUnitReport takes for a carried JUnit, and the reason is the same: the run has already
@@ -109,9 +208,14 @@ public static class ResumeCarry
     /// It is the quiet direction, which is why the caller says so on stderr (see Program.cs).
     /// </summary>
     public static List<BucketResult> Read(IEnumerable<string> paths, out int unreadable)
+        => ReadAttempts(paths, out unreadable).SelectMany(a => a).ToList();
+
+    /// <summary><see cref="Read"/>, one list per readable file: each file is one attempt, and
+    /// <see cref="MergeAttempts"/> needs to know which buckets belong to the same one.</summary>
+    public static List<List<BucketResult>> ReadAttempts(IEnumerable<string> paths, out int unreadable)
     {
         unreadable = 0;
-        var all = new List<BucketResult>();
+        var attempts = new List<List<BucketResult>>();
         foreach (var p in paths)
         {
             List<CarriedBucket>? payload;
@@ -123,6 +227,8 @@ public static class ResumeCarry
             catch (Exception) { unreadable++; continue; }
             if (payload == null) { unreadable++; continue; }
 
+            var all = new List<BucketResult>();
+            attempts.Add(all);
             foreach (var b in payload)
             {
                 var tests = new List<TestResult>(b.Tests.Count);
@@ -143,6 +249,6 @@ public static class ResumeCarry
                     b.CompanyInitFailures));
             }
         }
-        return all;
+        return attempts;
     }
 }
