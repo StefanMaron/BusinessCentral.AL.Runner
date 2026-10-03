@@ -21,6 +21,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **win32-stubs:** test overrides of the shim path no longer leak to runner children (Watch_PicksUpEdit exit 134)
 - **jobs:** a watchdog resume counts an emit-excluded codeunit and its bundle once
 - **coverage:** Code Coverage rows follow the loaded package and the current server request
 - **tests:** CompilePhaseTests follower-blocked proof no longer rests on a fixed 600 ms wait
