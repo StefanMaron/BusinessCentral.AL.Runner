@@ -115,6 +115,28 @@ and a package's root is still replaced by an execution root, as before. Pinned b
 the CLI, cold and warm against one cache root). `--server` and the DAP launch build the map through
 the same function.
 
+### The Code Coverage line rows are the second reader (#5250)
+
+`CODECOVERAGELOG` serves an object's text for the `Code Coverage` (2000000049) rows from
+`CodeCoveragePatches.CompiledSourceMap`, which built its map over every registered source dir as a
+plain list. In the layout above `src/` is registered after `bundle/`, so its shorter text replaced
+the compiled text and the recorder's statement lines, numbered in `bundle/`'s text, indexed past the
+end of it: reading `Record "Code Coverage"` threw `NavALException: Index was outside the bounds of
+the array.` instead of returning rows.
+
+The dirs the run compiles are marked when they are registered
+(`RecordPatches.AddExecutionSourceDirs`, called by the two suite-registration loops in
+`Program.cs`), and the map is built from `AlCoverageSourceMap.RootsForRegisteredDirs`, so the same
+`Build` rule applies as for the report: a sibling supplies an object no compiled folder declares and
+never replaces one. A dir a source impl registered first is marked all the same, and the marks are
+part of the map's memo key and are cleared by `ResetForReload`. The map still covers only the
+registered dirs; a packaged dependency compiled from its embedded AL is not in it (#4984).
+
+Pinned by `CodeCoverageLogSiblingSourceTests` (the layout through the CLI, cold and warm, and a
+guard that every production `Build` caller goes through one of the two root helpers) and
+`CodeCoverageLogSiblingSourceServedTextTests` (the served text in process). Not exercised: the
+`--server` registration site, which makes the same call.
+
 ## The resolution chain
 
 `AlCoverageTracker.ResolveScopeInfo` asks four questions in order, and any one of them ends the
