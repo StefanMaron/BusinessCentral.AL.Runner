@@ -102,9 +102,10 @@ internal sealed class TddCallGraph
                 yield return m;
     }
 
-    /// <summary>The procedure an [EventSubscriber(ObjectType::X, X::"Name" or X::Id, 'Event', ...)]
-    /// names, when this compile declares it. A table's built-in events and an object this compile
-    /// does not hold have no procedure to be a caller, so they yield nothing.</summary>
+    /// <summary>The procedure an [EventSubscriber(ObjectType::X, X::"Name", 'Event', ...)] names, when
+    /// this compile declares it. A table's built-in events and an object this compile does not hold
+    /// have no procedure to be a caller, so they yield nothing. A publisher named by a bare object id
+    /// yields nothing either: there is no `X::` to read, and `X::Id` is a syntax error in AL (#5245).</summary>
     private static IEnumerable<NavSyntax.MethodDeclarationSyntax> PublisherMethods(
         NavSyntax.MethodDeclarationSyntax subscriber, IReadOnlyList<NavSyntax.ObjectSyntax> objects)
     {
@@ -126,17 +127,12 @@ internal sealed class TddCallGraph
         foreach (var obj in objects)
         {
             if (!ObjectKind(obj).Equals(kind, StringComparison.OrdinalIgnoreCase)) continue;
-            if (!(Name(obj.Name).Equals(objectName, StringComparison.OrdinalIgnoreCase)
-                  || ObjectIdText(obj) == objectName)) continue;
+            if (!Name(obj.Name).Equals(objectName, StringComparison.OrdinalIgnoreCase)) continue;
             foreach (var m in obj.DescendantNodes().OfType<NavSyntax.MethodDeclarationSyntax>())
                 if (Name(m.Name).Equals(eventName, StringComparison.OrdinalIgnoreCase))
                     yield return m;
         }
     }
-
-    // The base type declares no id member; each object type's own ObjectId is the token.
-    private static string ObjectIdText(NavSyntax.ObjectSyntax obj)
-        => obj.GetType().GetProperty("ObjectId")?.GetValue(obj) is NavSyntax.ObjectIdSyntax id ? id.Value.Text : "";
 
     private static string ObjectKind(NavSyntax.ObjectSyntax obj)
     {

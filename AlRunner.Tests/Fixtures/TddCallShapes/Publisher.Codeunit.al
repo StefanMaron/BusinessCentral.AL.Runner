@@ -10,6 +10,11 @@ codeunit 65206 "Tdd Shape Publisher"
         OnOther();
     end;
 
+    procedure RaiseById()
+    begin
+        OnById();
+    end;
+
     [IntegrationEvent(false, false)]
     local procedure OnCounted()
     begin
@@ -17,6 +22,11 @@ codeunit 65206 "Tdd Shape Publisher"
 
     [IntegrationEvent(false, false)]
     local procedure OnOther()
+    begin
+    end;
+
+    [IntegrationEvent(false, false)]
+    local procedure OnById()
     begin
     end;
 

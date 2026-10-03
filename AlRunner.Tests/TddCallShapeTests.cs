@@ -239,6 +239,39 @@ public sealed class TddCallShapeTests : IClassFixture<TddCallShapeRun>
     }
 
     /// <summary>
+    /// #5245: a table and a codeunit both named "Tdd Shape Publisher" declare OnCounted. The test
+    /// raising the table's event reaches its subscriber's stub, and the codeunit's tests do not
+    /// (and the reverse): a subscriber belongs to the object KIND it names, not to every object of
+    /// that name.
+    /// </summary>
+    [SkippableFact]
+    public void TableAndCodeunitPublishersOfOneName_KeepTheirOwnSubscribers()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        Assert.Equal("pass", _run.Find("RaisingTheTablePublisher_ReachesOnlyTheTableSubscribersStub").GetProperty("status").GetString());
+        Assert.Equal(new[] { $"{Target}: procedure \"CountTableEvent\"(Arg1: Integer): Integer" },
+            _run.StubsOf("RaisingTheTablePublisher_ReachesOnlyTheTableSubscribersStub"));
+        Assert.Equal(new[] { $"{Target}: procedure \"CountEvent\"(Arg1: Integer): Integer" },
+            _run.StubsOf("RaisingASubscribedEvent_ReachesTheSubscribersStub"));
+    }
+
+    /// <summary>
+    /// #5161, #5245: a subscriber naming its publisher by a bare object id adds no edge, as the guide
+    /// says. Its stub is generated all the same, so the test raising the event runs against it
+    /// unannotated: the absence is the graph's, not a refusal. (`Codeunit::65206` is a syntax error.)
+    /// </summary>
+    [SkippableFact]
+    public void SubscriberNamingItsPublisherByBareId_AddsNoEdge()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        Assert.Equal("pass", _run.Find("RaisingAnEventSubscribedByBareObjectId_IsNotAnnotated").GetProperty("status").GetString());
+        Assert.Empty(_run.StubsOf("RaisingAnEventSubscribedByBareObjectId_IsNotAnnotated"));
+        Assert.Contains($"{Target}: procedure \"CountById\"(Arg1: Integer): Integer", _run.StdErr);
+    }
+
+    /// <summary>
     /// #5228 with the existing procedure in another source folder: the overload is generated into
     /// the app bundle, which is recompiled before the test bundle compiles again.
     /// </summary>
