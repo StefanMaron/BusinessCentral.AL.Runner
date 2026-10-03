@@ -1,0 +1,30 @@
+{
+  "id": "c4d5e6f7-2222-4a61-8b93-0c7d5e9f1d02",
+  "name": "Runner Tests Fixture - Tdd Lib Second Round Lib",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "A library whose subscribers reach a member missing on a codeunit of the library itself, through two rounds of events.",
+  "description": "A library whose subscribers reach a member missing on a codeunit of the library itself, through two rounds of events.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "c4d5e6f7-1111-4a61-8b93-0c7d5e9f1d01",
+      "name": "Runner Tests Fixture - Tdd Lib Second Round App",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 72210,
+      "to": 72219
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

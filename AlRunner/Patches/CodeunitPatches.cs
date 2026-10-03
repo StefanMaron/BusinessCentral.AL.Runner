@@ -1625,6 +1625,14 @@ public static partial class BcRuntime
     // diagnostic when AL calls a PROCEDURE on a codeunit this returned a stand-in for.
     internal static string BuildMissingCodeunitMessage(int id)
     {
+        // #5266: a codeunit of a source dependency of this run that did not compile is not a package
+        // that failed to load: provisioning cannot bring it back, fixing the AL error can.
+        if (TddCrossBundle.DroppedCodeunitById(id) is { } dropped)
+            return
+                $"Codeunit {id} (\"{dropped.Name}\") is declared by {dropped.App}, a source dependency of this " +
+                $"run, and was dropped from it because it did not compile: {dropped.Diagnostic} " +
+                $"(the TDD-EXCLUDED or EMIT-EXCLUDED line earlier in this run names it). It is not a package that failed to " +
+                $"load: fix that error and the codeunit compiles.";
         if (_knownDependencyCodeunits.TryGetValue(id, out var known))
         {
             return

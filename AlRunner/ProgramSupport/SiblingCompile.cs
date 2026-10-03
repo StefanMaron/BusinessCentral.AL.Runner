@@ -400,6 +400,7 @@ internal static partial class ProgramSupport
             kv => kv.Value,
             StringComparer.OrdinalIgnoreCase);
 
+        foreach (var bundlePath in identities.Keys) AlRunner.TddCrossBundle.RegisterRunBundle(bundlePath); // #5264
         // impls = bundles that at least one other bundle declares as a dependency.
         var implPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var (path, id) in idByKey)
@@ -501,7 +502,7 @@ internal static partial class ProgramSupport
             AlRunner.TddCrossBundle.RegisterSourceImpl(implPath,
                 File.Exists(Path.Combine(implPath, "app.json")) ? Path.Combine(implPath, "app.json")
                     : (FindBucketRoot(implPath) is { } implRoot && File.Exists(Path.Combine(implRoot, "app.json"))
-                        ? Path.Combine(implRoot, "app.json") : null));
+                        ? Path.Combine(implRoot, "app.json") : null), implId.AppId);
             // #4455: this impl becomes a dependency .app for the bundles that declare it, and
             // its AL source is what the inventory tables end up reading (the package carries
             // no SymbolReference.json, so the symbol walk yields none of its objects). Declare

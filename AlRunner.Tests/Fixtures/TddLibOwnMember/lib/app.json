@@ -1,0 +1,23 @@
+{
+  "id": "b2c3d4e5-4444-4a61-8b93-0c7d5e9f1b01",
+  "name": "Runner Tests Fixture - Tdd Lib Own Member Lib",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "A test library whose codeunit calls a member that ANOTHER codeunit of the same library does not declare (#5271).",
+  "description": "A test library whose codeunit calls a member that ANOTHER codeunit of the same library does not declare (#5271).",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 71970,
+      "to": 71979
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

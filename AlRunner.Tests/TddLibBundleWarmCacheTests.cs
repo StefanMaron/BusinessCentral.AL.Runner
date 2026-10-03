@@ -93,6 +93,9 @@ public sealed class TddLibBundleWarmCacheTests
         {
             using var plain = new TddRunResult(Folders) { CacheRoot = cache, Plain = true };
             Assert.True(plain.Exit != 0, $"the plain run should not pass\n{plain.StdErr}");
+            // The dropped library's codeunit is named by --tdd's report (#5266), which a plain run does not
+            // register for: its failure keeps the generic advice until #5281 says otherwise.
+            Assert.DoesNotContain("was dropped from it", plain.Failure("ViaLibrary_RunsAgainstTheGeneratedStub"));
             // The precondition: the plain run did cache a partial library naming the missing member.
             var reports = PartialLibraryReports(cache);
             Assert.Single(reports);

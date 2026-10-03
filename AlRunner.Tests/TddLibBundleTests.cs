@@ -90,6 +90,8 @@ public sealed class TddLibBundleTests
         Assert.Contains("--tdd: generated 1 member(s) this run:", _run.StdErr);
         Assert.Contains($"  {Stub}", _run.StdErr);
         Assert.Equal(_run.AppHashBefore, HashDir(TddLibBundleRun.AppDir));
+        // #5265, the control: a chain the re-run bound covers says nothing about the bound.
+        Assert.DoesNotContain("re-run limit", _run.StdErr);
     }
 
     /// <summary>
@@ -146,11 +148,19 @@ public sealed class TddLibBundleTests
 
         Assert.Equal("fail", _refused.Find("ViaLibrary_FailsBecauseTheLibraryCannotCompile").GetProperty("status").GetString());
         Assert.Contains("Codeunit 65480", _refused.Failure("ViaLibrary_FailsBecauseTheLibraryCannotCompile"));
+        // #5266: the failure names the dropped object and its AL error, and does not send the reader
+        // to provisioning: the codeunit was compiled and dropped, not missing from a package.
+        var failure = _refused.Failure("ViaLibrary_FailsBecauseTheLibraryCannotCompile");
+        Assert.Contains("\"Lib Refused Helper\"", failure);
+        Assert.Contains("did not compile", failure);
+        Assert.Contains("MissingByName", failure);
+        Assert.DoesNotContain("provision", failure, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("--package-cache", failure);
         Assert.Equal("pass", _refused.Find("NotTouchingTheLibrary_StillRuns").GetProperty("status").GetString());
 
         // The cause is named on the line that reports the dropped library: its object and the AL
         // diagnostic that identified it.
-        var report = _refused.StdErr.Split('\n').Single(l => l.Contains("EMIT-EXCLUDED"));
+        var report = _refused.StdErr.Split('\n').Single(l => l.Contains(": EMIT-EXCLUDED — "));
         Assert.Contains("LibRefusedHelper", report);
         Assert.Contains("MissingByName", report);
 

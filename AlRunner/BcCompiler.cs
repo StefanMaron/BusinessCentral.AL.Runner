@@ -2050,7 +2050,7 @@ public sealed partial class BcCompiler
         var tddGeneratedMembers = new List<TddGeneratedMember>();
         if (_tddMode && caught == null && emitResult != null && !emitResult.Success)
         {
-            var newlyGenerated = TddGeneration.Generate(compilation, trees, parseOpts, emitResult, moduleName);
+            var newlyGenerated = TddGeneration.Generate(compilation, trees, parseOpts, emitResult, moduleName, TddCrossBundle.IsSourceImpl(appId));
             // A member generated into another bundle (#5037) is invisible to this compile until
             // that bundle is recompiled — Program.cs re-runs the cycle for it, so only a member
             // generated into this module's own trees is worth a recompile here.
@@ -2493,15 +2493,28 @@ public sealed partial class BcCompiler
         }
 
         // #5161: a clean compile of a bundle that calls into one --tdd generated a member into. The
-        // compile that generated is skipped: its own diagnostics already named the tests.
+        // compile that generated into ANOTHER bundle is skipped: its own diagnostics already named the tests.
+        // One that only generated into itself (#5271) still follows, for its calls into other bundles.
+        // #5264: a source bundle another bundle depends on leaves its call edges, so a subscriber in a
+        // bundle compiled later can be followed back to what raises its publisher.
         IReadOnlyList<TddGeneratedMember>? tddReachedMembers = null;
-        if (_tddMode && caught == null && tddGeneratedMembers.Count == 0 && TddCrossBundle.HasReaching)
+        if (_tddMode && caught == null)
         {
-            try { tddReachedMembers = TddCrossBundle.ReachThroughDependencies(compilation, trees); }
-            catch (Exception ex)
+            var recordEdges = TddCrossBundle.WantsKeyGraph(appId);
+            var followReaching = !tddGeneratedMembers.Any(g => g.GeneratedIntoFile != null) && TddCrossBundle.HasReaching;
+            if (recordEdges || followReaching)
             {
-                Console.Error.WriteLine($"--tdd: could not follow generated members through {moduleName}'s calls into other " +
-                    $"bundles ({ex.GetType().Name}: {ex.Message.Split('\n', 2)[0]}); a test reaching one only that way carries no generatedStubs.");
+                try
+                {
+                    var tddGraph = TddCallGraph.Build(compilation, trees);
+                    if (recordEdges) TddCrossBundle.RecordKeyGraph(appId, tddGraph.KeyEdges());
+                    if (followReaching) tddReachedMembers = TddCrossBundle.ReachThroughDependencies(tddGraph);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"--tdd: could not follow generated members through {moduleName}'s calls into other " +
+                        $"bundles ({ex.GetType().Name}: {ex.Message.Split('\n', 2)[0]}); a test reaching one only that way carries no generatedStubs.");
+                }
             }
         }
         var emitOutput = new BcEmitOutput(

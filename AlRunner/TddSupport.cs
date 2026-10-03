@@ -117,6 +117,34 @@ public static class TddSupport
         return results;
     }
 
+    /// <summary>#5266: remember each codeunit a source bundle's compile dropped and the AL diagnostic that
+    /// identified it, so a test that reaches one fails naming that error. An object whose file cannot be
+    /// read again is left out: its failure then keeps the generic message.</summary>
+    internal static void RegisterDroppedCodeunits(string app, IReadOnlyList<TddExcludedObjectDetail> details)
+    {
+        foreach (var detail in details)
+        {
+            try
+            {
+                var tree = NavSyntax.SyntaxTree.ParseObjectText(
+                    File.ReadAllText(detail.FilePath), path: detail.FilePath, encoding: null!, ParseOptionsFor(detail), default);
+                if (tree.GetRoot() is not NavSyntax.CompilationUnitSyntax root) continue;
+                var first = detail.Diagnostics.Count > 0 ? detail.Diagnostics[0] : "(no diagnostic captured)";
+                var at = first.IndexOf("error AL", StringComparison.Ordinal);
+                var diagnostic = at >= 0 ? first[at..] : first;
+                foreach (var obj in root.Objects)
+                    if (obj is NavSyntax.CodeunitSyntax cu && cu.ObjectId?.Value.Value is int id)
+                        TddCrossBundle.RegisterDroppedCodeunit(id, new TddCrossBundle.DroppedCodeunit(
+                            app, TddGeneration.ObjectNameOf(obj), diagnostic));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Console.Error.WriteLine(
+                    $"--tdd: could not re-read {detail.FilePath} to name its codeunits: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+    }
+
     /// <summary>
     /// Every member --tdd generated that <paramref name="moduleName"/>'s compile depended on: the
     /// ones its own emit generated, plus (#5037) the ones an earlier pass generated into another
@@ -196,6 +224,25 @@ public static class TddReport
 {
     public const string PerTestPrefix = "reaches generated stub(s): ";
 
+    /// <summary>#5265: said when the re-run limit stops the recompile that members generated into another
+    /// bundle wait for.</summary>
+    public static string RerunLimitLine(int limit, IReadOnlyList<TddGeneratedMember> members) =>
+        $"--tdd: the re-run limit ({limit}) was reached with {members.Count} member(s) generated into another bundle " +
+        $"and not compiled in: {string.Join("; ", members.Select(Describe))}. A test that needs one is reported FAILED.";
+
+    /// <summary>The closing block's account of the same members: they are not in the list of generated
+    /// members, because nothing compiled them in. Empty when none was left.</summary>
+    public static List<string> NotCompiledInLines(int limit, IReadOnlyList<TddGeneratedMember> members)
+    {
+        var lines = new List<string>();
+        if (members.Count == 0) return lines;
+        lines.Add($"--tdd: {members.Count} more member(s) were generated into another bundle but not compiled in, " +
+            $"because the re-run limit ({limit}) was reached, so they are not in the list above and a test " +
+            "that needs one is reported FAILED:");
+        foreach (var m in members) lines.Add($"  {Describe(m)}");
+        return lines;
+    }
+
     public static string Describe(TddGeneratedMember m) => $"{m.ObjectDisplayName}: {m.MemberKind} {m.Signature}";
 
     public static string PerTestLine(TestResult t) => PerTestPrefix + string.Join("; ", t.GeneratedStubs ?? Array.Empty<string>());
@@ -232,6 +279,9 @@ public sealed class TddServerRequest
 
     /// <summary>Every member generated in this request, for the stderr summary.</summary>
     public List<TddGeneratedMember> Generated { get; } = new();
+
+    /// <summary>Members generated into another bundle that the re-run limit left uncompiled (#5265).</summary>
+    public List<TddGeneratedMember> NotCompiledIn { get; } = new();
 
     /// <summary>Every result of this request that reaches a generated member, for the stderr summary.</summary>
     public List<TestResult> RanAgainstStubs { get; } = new();

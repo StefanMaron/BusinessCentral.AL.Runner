@@ -746,6 +746,9 @@ public sealed class DependencyLoader
             // missing member) shares this key. Served to a --tdd run it never compiles, the AL0132 that
             // would trigger generation never appears, and nothing is generated. Recompile instead.
             if (BcCompiler.IsTddMode() && CachedDropWasAMissingMember(emitExcludedSidecar)) return null;
+            // #5264: a source bundle of this run that nothing has compiled yet has left no call edges, and
+            // a subscriber in a later bundle is followed through them. Compile it here instead.
+            if (BcCompiler.IsTddMode() && TddCrossBundle.WantsKeyGraph(m.AppId) && !TddCrossBundle.HasKeyGraph(m.AppId)) return null;
             try
             {
                 var cachedBytes = File.ReadAllBytes(cachedDll);
@@ -900,6 +903,12 @@ public sealed class DependencyLoader
             throw new DependencyLoadException(m.Publisher, m.Name, m.Version.ToString(), "EMIT-FAIL", detail, ex);
         }
         var emitted = emitOutput.Sources;
+        if (BcCompiler.IsTddMode())
+        {
+            var dropped = emitOutput.ExcludedObjectDetails ?? Array.Empty<TddExcludedObjectDetail>();
+            TddSupport.RegisterDroppedCodeunits(m.Name, dropped);
+            TddCrossBundle.NoteDependencyDropped(dropped.Select(d => d.ObjectDisplayName));
+        }
         // #5243: --tdd generated a member into ANOTHER source bundle (this compile's, or an earlier
         // one's) and that bundle is not recompiled yet, so this compile bound against its old
         // symbols. A dependency that lost objects to the missing member is not a verdict, and
@@ -983,31 +992,38 @@ public sealed class DependencyLoader
         Console.Error.WriteLine(
             $"[deps] compiled-on-the-fly: {m.Name} v{m.Version} ({sw.ElapsedMilliseconds}ms). " +
             $"For faster CI, run --precompile to snapshot.");
-        try
+        // #5271: this compile generated members into itself (--tdd). The key does not see that, so a hit
+        // would be served without the compile that generates them, and nothing would be reported or
+        // annotated. Not published: it leaves the uncacheable marker, like a compile that failed.
+        var generatedHere = BcCompiler.IsTddMode() && (emitOutput.TddGeneratedMembers?.Count ?? 0) > 0;
+        if (!generatedHere)
         {
-            Directory.CreateDirectory(cacheDir);
-            var ownReportIds = AlReportMetadataRegistry.Ids
-                .Where(i => !reportIdsBeforeEmit.Contains(i)).ToArray();
-            var (sidecarCount, enumSidecarCount) = PublishSourceDependencyCache(
-                cachedDll, compile.AssemblyBytes!,
-                reportSidecar, ownReportIds,
-                reportLayoutSidecar,
-                pageMetadataSidecar,
-                AlPageMetadataRegistry.Ids.Where(i => !pageIdsBeforeEmit.Contains(i)).ToArray(),
-                xmlPortMetadataSidecar,
-                AlXmlPortMetadataRegistry.Ids.Where(i => !xmlPortIdsBeforeEmit.Contains(i)).ToArray(),
-                enumRegistrySidecar,
-                AlEnumMetadataRegistry.RegisteredSince(enumsBeforeEmit),
-                objectMetadataSidecar,
-                AlObjectMetadataRegistry.Keys.Where(k => !objectKeysBeforeEmit.Contains(k)).ToArray(),
-                emitExcludedSidecar: emitExcludedSidecar, emitExcludedReport: emitExcludedReport);
-            cacheOutcome.Published();
-            Console.Error.WriteLine(
-                $"[deps] source-cache WROTE: {m.Name} v{m.Version} key={cacheKey[..12]} ({compile.AssemblyBytes!.Length} bytes, {sidecarCount} report-metadata entries, {enumSidecarCount} enum-registry entries)");
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"[deps] source-cache write failed for {m.Name}: {ex.Message}");
+            try
+            {
+                Directory.CreateDirectory(cacheDir);
+                var ownReportIds = AlReportMetadataRegistry.Ids
+                    .Where(i => !reportIdsBeforeEmit.Contains(i)).ToArray();
+                var (sidecarCount, enumSidecarCount) = PublishSourceDependencyCache(
+                    cachedDll, compile.AssemblyBytes!,
+                    reportSidecar, ownReportIds,
+                    reportLayoutSidecar,
+                    pageMetadataSidecar,
+                    AlPageMetadataRegistry.Ids.Where(i => !pageIdsBeforeEmit.Contains(i)).ToArray(),
+                    xmlPortMetadataSidecar,
+                    AlXmlPortMetadataRegistry.Ids.Where(i => !xmlPortIdsBeforeEmit.Contains(i)).ToArray(),
+                    enumRegistrySidecar,
+                    AlEnumMetadataRegistry.RegisteredSince(enumsBeforeEmit),
+                    objectMetadataSidecar,
+                    AlObjectMetadataRegistry.Keys.Where(k => !objectKeysBeforeEmit.Contains(k)).ToArray(),
+                    emitExcludedSidecar: emitExcludedSidecar, emitExcludedReport: emitExcludedReport);
+                cacheOutcome.Published();
+                Console.Error.WriteLine(
+                    $"[deps] source-cache WROTE: {m.Name} v{m.Version} key={cacheKey[..12]} ({compile.AssemblyBytes!.Length} bytes, {sidecarCount} report-metadata entries, {enumSidecarCount} enum-registry entries)");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[deps] source-cache write failed for {m.Name}: {ex.Message}");
+            }
         }
         try { return (Assembly.Load(compile.AssemblyBytes!), cacheKey, EmptyAssemblies); }
         catch (Exception ex)
