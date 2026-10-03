@@ -3,8 +3,8 @@
 //
 // The bundled loop and --server compile such a package (BcCompiler.ScopeSymbolBearingDepsOnly keeps
 // it out of the spec list BC's package scanner reads, where it would answer AL1023 then AL1022).
-// Three more emit sites ran outside that scope and failed on AL1022: the --per-suite loop, and the
-// two pre-passes that compile a source dependency's symbols (sibling source app, layered impl).
+// Four more emit sites ran outside that scope and failed on AL1022: the --per-suite loop, --precompile,
+// and the two pre-passes that compile a source dependency's symbols (sibling source app, layered impl).
 // Runner-only claim: which site applies the scope is the runner's own wiring, and the bundled run of
 // a suite declaring the package is the reference.
 //
@@ -161,6 +161,11 @@ public sealed class PerSuiteSymbolLessDependencyTests : IDisposable
         AssertPassedOne(run);
         Assert.DoesNotContain("AL1022", run.Output);
         Assert.Contains("[source-dep] Lib B", run.Output); // the pre-pass under test ran
+
+        // Warm, same --cache root: what the cold run wrote is served, and still passes.
+        var warm = Run(fx, perSuite: false);
+        AssertPassedOne(warm);
+        Assert.Contains("[source-dep] cache HIT Lib B", warm.Output);
     }
 
     /// <summary>The same dependency handed to the CLI as a second bundle: the layered pre-pass.</summary>
@@ -175,6 +180,10 @@ public sealed class PerSuiteSymbolLessDependencyTests : IDisposable
         AssertPassedOne(run);
         Assert.DoesNotContain("AL1022", run.Output);
         Assert.Contains("[layered] pre-built 1 impl package(s)", run.Output); // the pre-pass under test ran
+
+        var warm = Run(fx, perSuite: false, fx.Library!);
+        AssertPassedOne(warm);
+        Assert.Contains("[layered] cache HIT Lib B", warm.Output);
     }
 
     /// <summary>
@@ -193,6 +202,39 @@ public sealed class PerSuiteSymbolLessDependencyTests : IDisposable
         Assert.NotEqual(0, run.ExitCode);
         Assert.Contains(DepName, run.Output);
         Assert.DoesNotMatch(@"passed\s+1\b", run.Output);
+    }
+
+    /// <summary>
+    /// --precompile of a source .app that declares the symbol-less package: the emit used to fail
+    /// the module on AL1022 and write no DLL.
+    /// </summary>
+    [SkippableFact]
+    public void Precompile_AppDeclaringASymbolLessPackage_WritesTheDll()
+    {
+        TestArtifacts.SkipIfMissing();
+        var fx = Arrange("precompile-pass", PassingCodeunit, withPackage: true, declareDependency: false);
+        var app = WriteSourceApp(fx.PkgDir, GoodLibrarySource);
+
+        var run = RunPrecompile(fx, app);
+
+        Assert.True(run.ExitCode == 0, $"exit {run.ExitCode}\n{run.Output}");
+        Assert.DoesNotContain("AL1022", run.Output);
+        Assert.True(new FileInfo(Path.Combine(fx.CacheDir, "out.dll")).Length > 0, run.Output);
+    }
+
+    /// <summary>The scope hides the package, not the app's own errors: --precompile still fails on AL0185.</summary>
+    [SkippableFact]
+    public void Precompile_SymbolLessPackageDeclared_AGenuineAlErrorStillFails()
+    {
+        TestArtifacts.SkipIfMissing();
+        var fx = Arrange("precompile-real-error", PassingCodeunit, withPackage: true, declareDependency: false);
+        var app = WriteSourceApp(fx.PkgDir, BrokenLibrarySource);
+
+        var run = RunPrecompile(fx, app);
+
+        Assert.NotEqual(0, run.ExitCode);
+        Assert.Contains("AL0185", run.Output);
+        Assert.False(File.Exists(Path.Combine(fx.CacheDir, "out.dll")), "a DLL was written for a module that did not compile");
     }
 
     // ── fixture ───────────────────────────────────────────────────────────────────────────
@@ -335,6 +377,63 @@ public sealed class PerSuiteSymbolLessDependencyTests : IDisposable
         Assert.True(Regex.IsMatch(run.Output, @"Tests:\s+1\s+passed\s+1\s+failed\s+0\s+errors\s+0"), run.Output);
     }
 
+
+    private const string GoodLibrarySource = """
+        codeunit 60800 "PerSuite Lib Api"
+        {
+            procedure Answer(): Integer
+            begin
+                exit(42);
+            end;
+        }
+        """;
+
+    private const string BrokenLibrarySource = """
+        codeunit 60800 "PerSuite Lib Api"
+        {
+            procedure Answer(): Integer
+            var
+                Api: Codeunit "PerSuite Does Not Exist";
+            begin
+                exit(Api.Foo());
+            end;
+        }
+        """;
+
+    /// <summary>A source-only NAVX .app (manifest plus src/*.al) declaring the symbol-less package.</summary>
+    private static string WriteSourceApp(string dir, string source)
+    {
+        var xml = $"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
+              <App Id="{LibraryId}" Name="Lib B" Publisher="AL Runner" Version="1.0.0.0"/>
+              <Dependencies><Dependency Id="{DepId}" Name="{DepName}" Publisher="{DepPublisher}" MinVersion="{DepVersion}"/></Dependencies>
+            </Package>
+            """;
+        using var ms = new MemoryStream();
+        using (var zip = new System.IO.Compression.ZipArchive(
+                   ms, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+        {
+            using (var w = new StreamWriter(zip.CreateEntry("NavxManifest.xml").Open(), Encoding.UTF8)) w.Write(xml);
+            using (var w = new StreamWriter(zip.CreateEntry("src/Lib.Codeunit.al").Open(), Encoding.UTF8)) w.Write(source);
+        }
+        var zipBytes = ms.ToArray();
+        var result = new byte[8 + zipBytes.Length];
+        result[0] = (byte)'N'; result[1] = (byte)'A'; result[2] = (byte)'V'; result[3] = (byte)'X';
+        BitConverter.TryWriteBytes(result.AsSpan(4, 4), (uint)8);
+        zipBytes.CopyTo(result, 8);
+        var path = Path.Combine(dir, "AL Runner_Lib B_1.0.0.0.app");
+        File.WriteAllBytes(path, result);
+        return path;
+    }
+
+    private static (int ExitCode, string Output) RunPrecompile(Fixture fx, string app) =>
+        // --precompile is a mode, read only as the first argument.
+        Spawn(new StringBuilder(TestBuildConfig.RunArgs(ProjectPath))
+            .Append($" --precompile \"{app}\" --out \"{Path.Combine(fx.CacheDir, "out.dll")}\"")
+            .Append(TestBuildConfig.BcVersionArg)
+            .Append($" --package-cache \"{fx.PkgDir}\" --cache \"{fx.CacheDir}\"").ToString());
+
     private static (int ExitCode, string Output) Run(Fixture fx, bool perSuite, params string[] extraPaths)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
@@ -343,9 +442,14 @@ public sealed class PerSuiteSymbolLessDependencyTests : IDisposable
         foreach (var extra in extraPaths) args.Append($" \"{extra}\"");
         args.Append($" --package-cache \"{fx.PkgDir}\" --cache \"{fx.CacheDir}\"");
         if (perSuite) args.Append(" --per-suite");
+        return Spawn(args.ToString());
+    }
+
+    private static (int ExitCode, string Output) Spawn(string arguments)
+    {
         var psi = new ProcessStartInfo
         {
-            FileName = "dotnet", Arguments = args.ToString(),
+            FileName = "dotnet", Arguments = arguments,
             RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
         };

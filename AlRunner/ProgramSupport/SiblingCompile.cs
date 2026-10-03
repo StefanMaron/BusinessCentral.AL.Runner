@@ -203,7 +203,10 @@ internal static partial class ProgramSupport
         BcEmitOutput emitOut;
         try
         {
-            emitOut = compiler.Emit(new[] { tempDir }, manifest.Name, tempDir);
+            // #5132: a dependency of this app whose .app carries no SymbolReference.json would fail
+            // the emit on AL1022 for a package the scanner cannot read. See ScopeSymbolBearingDepsOnly.
+            using (BcCompiler.ScopeSymbolBearingDepsOnly())
+                emitOut = compiler.Emit(new[] { tempDir }, manifest.Name, tempDir);
         }
         catch (Exception ex)
         {
