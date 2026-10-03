@@ -126,16 +126,48 @@ the array.` instead of returning rows.
 
 The dirs the run compiles are marked when they are registered
 (`RecordPatches.AddExecutionSourceDirs`, called by the two suite-registration loops in
-`Program.cs`), and the map is built from `AlCoverageSourceMap.RootsForRegisteredDirs`, so the same
-`Build` rule applies as for the report: a sibling supplies an object no compiled folder declares and
-never replaces one. A dir a source impl registered first is marked all the same, and the marks are
-part of the map's memo key and are cleared by `ResetForReload`. The map still covers only the
-registered dirs; a packaged dependency compiled from its embedded AL is not in it (#4984).
+`Program.cs`: the one-shot CLI loop and the `--server` loop that `--dap` also runs through), and the
+map is built from `AlCoverageSourceMap.RootsForRegisteredDirs`, so the same `Build` rule applies as
+for the report: a sibling supplies an object no compiled folder declares and never replaces one. A
+dir a source impl registered first is marked all the same, and the marks are part of the map's memo
+key and are cleared by `ResetForReload`. The map still covers only the registered dirs; a packaged
+dependency compiled from its embedded AL is not in it (#4984).
 
 Pinned by `CodeCoverageLogSiblingSourceTests` (the layout through the CLI, cold and warm, and a
-guard that every production `Build` caller goes through one of the two root helpers) and
-`CodeCoverageLogSiblingSourceServedTextTests` (the served text in process). Not exercised: the
-`--server` registration site, which makes the same call.
+guard that every production `Build` caller goes through one of the two root helpers),
+`CodeCoverageLogSiblingSourceServedTextTests` (the served text in process) and
+`CodeCoverageLogServerRequestTests` (the layout through `--server`, which is what pins the
+`--server` registration site).
+
+### No folder is marked: `al-runner tests` alone (#5259)
+
+With `tests/` alone there is no execution root for the app: the source-dependency pre-pass finds
+`bundle/` and `src/` beside it by app id, registers both, compiles both to packages and the loader
+runs one. Nothing marks which, so "the last registered wins" was right for half of the layouts and
+threw `Index was outside the bounds of the array.` (or put hits on the wrong lines) for the other:
+the pre-pass lists the folders in directory order and the resolver takes the first package of an
+app id, so the folder the map takes and the folder that ran are the first and the last of the same
+list.
+
+The package that loaded is on record (`PackagedDependencySources`), which is what `--coverage`
+already read. `RootsForRegisteredDirs` now puts that package's root first for every app id a
+registered, non-execution folder carries, and marks such a folder to be verified against it, the
+rule of [#4991](#a-sibling-source-folder-next-to-a-package-4991): the object is the folder's only if
+the texts are equal, otherwise the package's embedded AL, which is what ran. A package no registered
+folder carries the id of is not added, so a packaged dependency with no source folder still has no
+text here (#4984). The package registrations are part of the memo key. A precompiled package beside
+folders is not covered (#5155), as for the report.
+
+### One server, several requests (#5260)
+
+BC's `ALCodeEnvironment` keeps three caches keyed by object id: the object's source info (the
+statement lines, read off the compiled type), its text and its scope contexts. The runner seeds ONE
+environment for the process, and a `--server` request or `--watch` cycle compiles its objects anew,
+so a request that took an app id from another folder than an earlier one read the earlier request's
+statement lines over its own text: an exception when they ran past it, hits on other lines when they
+did not. `RecordPatches.ResetForReload` now calls BC's own `ClearCaches` with the rest of the
+per-request source state (`CodeCoveragePatches.ResetCodeEnvironmentForReload`). Pinned, in both
+orders of the same two folders, by `CodeCoverageLogServerRequestTests`.
 
 ## The resolution chain
 

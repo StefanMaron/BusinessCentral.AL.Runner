@@ -3322,11 +3322,11 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
         // #3735: exactly the folders the compile reads (ProgramSupport.SuiteRegistrationDirs),
         // each with the app.json that compile reads (#4071).
         //
-        // This is the ONLY AddSourceDirs call for these dirs, and it must stay that way.
         // AddSourceDirs de-dups on the directory and keeps the FIRST registration
-        // (`if (_sourceDirs.Contains(dir)) continue;`), so an earlier plain-overload call
-        // over the same dirs wins and this manifest-carrying one becomes a silent no-op —
-        // every #if branch then resolves against a guessed app.json with nothing failing.
+        // (`if (_sourceDirs.Contains(dir)) continue;`), so a dir an earlier caller registered (the
+        // source-impl pre-pass registers an impl's own dir with the plain overload) keeps THAT
+        // call's manifest, and this one only marks it. Pass the manifest here for every dir no
+        // earlier call registered, or its `#if` branches resolve against a guessed app.json.
         // #5250: AddExecutionSourceDirs, not AddSourceDirs: these are the dirs the run compiles,
         // which the Code Coverage line rows must prefer over a same-app-id sibling folder.
         AlRunner.Patches.RecordPatches.AddExecutionSourceDirs(

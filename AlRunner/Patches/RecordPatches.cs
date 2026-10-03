@@ -543,6 +543,7 @@ public static partial class RecordPatches
         _executionSourceDirs.Clear();
         AlRunner.Infrastructure.PackagedDependencySources.ResetForReload();
         CodeCoveragePatches.ResetSourceMapForReload();   // same dirs, edited files (#4572 review)
+        CodeCoveragePatches.ResetCodeEnvironmentForReload();   // BC's per-object caches (#5260)
         _compileManifestByDir.Clear();
         _manifestSymbolsByPath.Clear();   // a --watch edit to app.json is re-read (#4071)
         _installBaseline = null;
@@ -642,9 +643,12 @@ public static partial class RecordPatches
     {
         var batch = dirs.ToList();
         AddSourceDirs(batch);
+        // Matched the way AddSourceDirs de-dups (ordinal, ignoring case), so the dir marked is the
+        // spelling that is in the registry. A different spelling of one directory is registered as
+        // a second entry with the same text, so it needs no canonical form here.
         foreach (var (dir, _) in batch)
         {
-            var registered = _sourceDirs.FirstOrDefault(r => SameDirectory(r, dir));
+            var registered = _sourceDirs.FirstOrDefault(r => string.Equals(r, dir, StringComparison.OrdinalIgnoreCase));
             if (registered != null && !_executionSourceDirs.Contains(registered, StringComparer.Ordinal))
                 _executionSourceDirs.Add(registered);
         }
@@ -657,18 +661,6 @@ public static partial class RecordPatches
     /// never replaces an object these declare (#5222, #5250).
     /// </summary>
     internal static IReadOnlyList<string> RegisteredExecutionSourceDirs() => _executionSourceDirs.ToList();
-
-    private static bool SameDirectory(string a, string b)
-    {
-        static string Canonical(string p)
-        {
-            try { return Path.GetFullPath(p).Replace('\\', '/').TrimEnd('/'); }
-            catch (ArgumentException) { return p; }
-            catch (NotSupportedException) { return p; }
-            catch (PathTooLongException) { return p; }
-        }
-        return string.Equals(Canonical(a), Canonical(b), StringComparison.OrdinalIgnoreCase);
-    }
 
     /// <summary>
     /// Runs all eight source extractors (table, tableextension, page, report, query,

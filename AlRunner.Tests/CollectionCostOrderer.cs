@@ -170,6 +170,11 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // (load average about 6); a reviewer saw 67-69s under heavier load. Re-record from the
             // first CI leg that reports it.
             ["DeferredAttemptDependencyFloorTests"] = 46,
+            // #5259/#5260: runner spawns on one cache root (the CLI layout cold and warm, `tests`
+            // alone cold and warm) and two --server processes of three requests. LOCAL figures:
+            // 67s and 36s, not yet on CI.
+            ["CodeCoverageLogSiblingSourceTests"] = 67,
+            ["CodeCoverageLogServerRequestTests"] = 36,
             // #4204: five collections absent from this table on run 35017043142's BC 28.4
             // leg. FloorOnlyBundleEnumFieldTests at 76.4s crossed the >= 75s band and failed
             // the leg; the other four sat in the >= 60s advisory band, and

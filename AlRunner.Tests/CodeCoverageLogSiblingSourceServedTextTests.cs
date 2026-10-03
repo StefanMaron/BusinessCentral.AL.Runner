@@ -8,6 +8,7 @@
 // BcEngineCollection, because AddSourceDirs parses with BC's parser in-process; the class calls
 // ResetForReload, which ParserStaticsIsolationGuardTests admits for this collection.
 
+using AlRunner.Infrastructure;
 using AlRunner.Patches;
 using Xunit;
 
@@ -26,7 +27,7 @@ public sealed class CodeCoverageLogSiblingSourceServedTextTests : IDisposable
 
     public void Dispose()
     {
-        RecordPatches.ResetForReload();
+        RecordPatches.ResetForReload();   // also forgets the package a fact registered
         try { Directory.Delete(_root, recursive: true); } catch { }
     }
 
@@ -139,5 +140,132 @@ public sealed class CodeCoverageLogSiblingSourceServedTextTests : IDisposable
         RecordPatches.AddSourceDirs(new[] { Bundle });
         RecordPatches.AddSourceDirs(new[] { Source });
         Assert.Equal(SiblingObjectB, Served(63701));
+    }
+
+    // AddSourceDirs de-dups on the dir ignoring case and skips one that does not exist; the mark
+    // follows it: it names the spelling in the registry (the one Build compares roots by), and
+    // never a dir that was not registered. (#5257 review: the path canonicalization this replaces
+    // was unpinned and could not change a served text.)
+    [SkippableFact]
+    public void TheMark_IsTheRegisteredSpelling_AndNeverADirThatWasNotRegistered()
+    {
+        RequireEngine();
+        RecordPatches.ResetForReload();
+        WriteFolders();
+        RecordPatches.AddSourceDirs(new[] { Bundle });
+
+        RecordPatches.AddExecutionSourceDirs(new[]
+        {
+            (Bundle.ToUpperInvariant(), (string?)null),                 // the registered dir, spelled differently
+            (Path.Combine(_root, "never-written"), (string?)null),      // not a directory: never registered
+        });
+
+        Assert.Equal(new[] { Bundle }, RecordPatches.RegisteredExecutionSourceDirs());
+        Assert.Equal(new[] { Bundle }, RecordPatches.RegisteredSourceDirs());
+    }
+
+    // ---- #5259: two UNMARKED folders (the source-dependency pre-pass registers both and marks
+    // neither); the package the loader ran is what says which one's text is the compiled one. ----
+
+    private static readonly Guid SharedAppId = Guid.Parse("c9a37e51-6d24-4b83-a15f-8e2760d4bb31");
+
+    private void WriteSharedAppFolders(string firstText, string secondText, out string first, out string second)
+    {
+        first = Path.Combine(_root, "first");
+        second = Path.Combine(_root, "second");
+        foreach (var (dir, text) in new[] { (first, firstText), (second, secondText) })
+        {
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, "app.json"), $"{{\"id\":\"{SharedAppId}\",\"name\":\"Shared\",\"publisher\":\"AL Runner\",\"version\":\"1.0.0.0\"}}");
+            File.WriteAllText(Path.Combine(dir, "Pair.Codeunit.al"), text);
+        }
+    }
+
+    private string PackageRootHolding(string text)
+    {
+        var root = Path.Combine(_root, "package.src");
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "app.json"), "{}");
+        File.WriteAllText(Path.Combine(root, "Pair.Codeunit.al"), text);
+        return root;
+    }
+
+    private IReadOnlyList<string>? MapServed(IReadOnlyList<string> registered, string packageRoot, Guid appId)
+        => AlCoverageSourceMap.Build(AlCoverageSourceMap.RootsForRegisteredDirs(
+                registered, Array.Empty<string>(), new[] { (appId, packageRoot) }))
+            .ObjectSourceLines("CodeUnit", 63701);
+
+    // Either registration order, either package text: the object is the package's, which is what
+    // ran. Both orders, because "the last registered wins" is right for exactly one of them.
+    [SkippableFact]
+    public void TwoUnmarkedFolders_TakeTheTextOfThePackageThatLoaded_InEitherOrder()
+    {
+        RequireEngine();
+        RecordPatches.ResetForReload();
+        WriteSharedAppFolders(string.Join("\n", CompiledLines) + "\n", string.Join("\n", SiblingLines) + "\n",
+            out var compiledFolder, out var siblingFolder);
+        var compiledPackage = PackageRootHolding(string.Join("\n", CompiledLines) + "\n");
+
+        Assert.Equal(CompiledObjectB, MapServed(new[] { compiledFolder, siblingFolder }, compiledPackage, SharedAppId));
+        Assert.Equal(CompiledObjectB, MapServed(new[] { siblingFolder, compiledFolder }, compiledPackage, SharedAppId));
+
+        var siblingPackage = PackageRootHolding(string.Join("\n", SiblingLines) + "\n");
+        Assert.Equal(SiblingObjectB, MapServed(new[] { compiledFolder, siblingFolder }, siblingPackage, SharedAppId));
+        Assert.Equal(SiblingObjectB, MapServed(new[] { siblingFolder, compiledFolder }, siblingPackage, SharedAppId));
+    }
+
+    // The package of another app is not a root of this map: a package no registered folder carries
+    // the id of is the #4984 case, and what the map serves for it did not change.
+    [SkippableFact]
+    public void APackageNoRegisteredFolderCarriesTheIdOf_IsNotAddedToTheRoots()
+    {
+        RequireEngine();
+        RecordPatches.ResetForReload();
+        WriteSharedAppFolders(string.Join("\n", CompiledLines) + "\n", string.Join("\n", SiblingLines) + "\n",
+            out var first, out var second);
+        var otherPackage = PackageRootHolding(string.Join("\n", CompiledLines) + "\n");
+
+        var roots = AlCoverageSourceMap.RootsForRegisteredDirs(
+            new[] { first, second }, Array.Empty<string>(), new[] { (Guid.NewGuid(), otherPackage) });
+
+        Assert.Equal(new[] { first, second }, roots);
+        Assert.Empty(roots.PackagedRootOfSibling);
+        // Last registered wins, as before the package existed.
+        Assert.Equal(SiblingObjectB, MapServed(new[] { first, second }, otherPackage, Guid.NewGuid()));
+    }
+
+    // The production route, with a real package: the served text follows the package that is
+    // REGISTERED, and a package registered after the map was served changes it (the memo key).
+    [SkippableFact]
+    public void TheServedText_FollowsThePackageTheLoaderRegistered_EvenAfterTheMapWasServed()
+    {
+        RequireEngine();
+        RecordPatches.ResetForReload();
+        var fixtureText = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "..", "..", "..",
+            "Fixtures", "CoverageDependencySource", "dep", "CdsSubject.Codeunit.al"));
+        var edited = "\n" + fixtureText;
+        WriteSharedAppFolders(fixtureText, edited, out var compiledFolder, out var editedFolder);
+        // Same app id as the package BuildSubjectApp writes.
+        foreach (var dir in new[] { compiledFolder, editedFolder })
+            File.WriteAllText(Path.Combine(dir, "app.json"),
+                $"{{\"id\":\"{CoveragePackagedDependencyTests.DepAppId}\",\"name\":\"Shared\",\"publisher\":\"AL Runner\",\"version\":\"1.0.0.0\"}}");
+        foreach (var f in new[] { compiledFolder, editedFolder })
+            File.Move(Path.Combine(f, "Pair.Codeunit.al"), Path.Combine(f, "CdsSubject.Codeunit.al"));
+        RecordPatches.AddSourceDirs(new[] { compiledFolder });
+        RecordPatches.AddSourceDirs(new[] { editedFolder });
+        // What each folder alone serves: the compiled one's text, and the edited one's.
+        var compiledAlone = AlCoverageSourceMap.Build(new[] { compiledFolder }).ObjectSourceLines("CodeUnit", 70860)!;
+        var editedAlone = AlCoverageSourceMap.Build(new[] { editedFolder }).ObjectSourceLines("CodeUnit", 70860)!;
+        Assert.NotEqual(compiledAlone, editedAlone);
+
+        // Nothing loaded a package yet: the last registered folder wins, as before.
+        Assert.Equal(editedAlone, CodeCoveragePatches.SourceCodeLinesFor(new { ObjectType = "Codeunit", ObjectNumber = 70860 }).SourceCodeLines);
+
+        var app = Path.Combine(_root, "dep.app");
+        File.WriteAllBytes(app, CoveragePackagedDependencyTests.BuildSubjectApp());
+        PackagedDependencySources.Register(Guid.Parse(CoveragePackagedDependencyTests.DepAppId), "AL Runner", app,
+            "cc5259-" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(app)))[..16]);
+
+        Assert.Equal(compiledAlone, CodeCoveragePatches.SourceCodeLinesFor(new { ObjectType = "Codeunit", ObjectNumber = 70860 }).SourceCodeLines);
     }
 }

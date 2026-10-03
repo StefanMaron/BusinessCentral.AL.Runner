@@ -26,6 +26,9 @@ public static class CodeCoveragePatches
     private static object? _nclMetadata;
     private static MethodInfo? _getMetaApplicationObject;
     private static object? _emitVersionDefault;
+    // The one ALCodeEnvironment the process seeds, and its public ClearCaches (#5260).
+    private static object? _codeEnvironment;
+    private static MethodInfo? _clearCodeEnvironmentCaches;
 
     /// <summary>
     /// Assign a real <c>ALCodeEnvironment</c> to <paramref name="nclMetadata"/>'s
@@ -58,6 +61,9 @@ public static class CodeCoveragePatches
             ?? throw ShapeGap("ALCodeEnvironment(Func<ApplicationObjectId, NCLMetaApplicationObject>, "
                 + "Func<int, NavAppGroup>, ...) constructor not found");
 
+        var clearCaches = envType.GetMethod("ClearCaches", BindingFlags.Public | BindingFlags.Instance, Type.EmptyTypes)
+            ?? throw ShapeGap("ALCodeEnvironment.ClearCaches() not found");
+
         _nclMetadata = nclMetadata;
         _getMetaApplicationObject = getMeta;
         _emitVersionDefault = emitVersion.HasDefaultValue ? emitVersion.DefaultValue : 0;
@@ -69,7 +75,28 @@ public static class CodeCoveragePatches
         for (int i = 2; i < ctorParams.Length; i++)
             args[i] = ctorParams[i].HasDefaultValue ? ctorParams[i].DefaultValue : null;
 
-        FieldPoke.SetInstance(field, nclMetadata, ctor.Invoke(args));
+        var environment = ctor.Invoke(args);
+        FieldPoke.SetInstance(field, nclMetadata, environment);
+        _codeEnvironment = environment;
+        _clearCodeEnvironmentCaches = clearCaches;
+    }
+
+    /// <summary>
+    /// Drops what BC's ALCodeEnvironment memoized about the PREVIOUS run's objects (source info, text
+    /// and scope contexts, keyed by object id): the environment is seeded once per process, so a later
+    /// --server request or --watch cycle read the earlier compile's statement lines over its own text
+    /// (#5260). Called from <see cref="RecordPatches.ResetForReload"/>.
+    /// <para>OBSERVABLY EQUIVALENT: BC's own public ClearCaches, whose body clears exactly those three
+    /// caches and nothing else (same body on the 27.5 and 28.4 Ncl builds); the next read recomputes
+    /// from the current compile, as on a first request. Settled by
+    /// CodeCoverageLogServerRequestTests; the rows themselves by corpus 60341. TRAP: a cache BC adds
+    /// later that ClearCaches does not cover would bring the stale read back. No environment seeded
+    /// means nothing cached.</para>
+    /// </summary>
+    internal static void ResetCodeEnvironmentForReload()
+    {
+        if (_codeEnvironment != null)
+            _clearCodeEnvironmentCaches!.Invoke(_codeEnvironment, null);
     }
 
     /// <summary>BC's getter: <c>GetMetaApplicationObject(id, requireCompiled: true)</c>, with a
@@ -161,8 +188,10 @@ public static class CodeCoveragePatches
     /// every object it finds in 2000000207.</para>
     /// <para>The text is the compiled folder's, never a same-app-id sibling source folder's: the
     /// statement lines are numbered in the compiled text (#5250, docs/coverage-attribution.md
-    /// #a-sibling-source-folder-beside-an-execution-root-5222). A service tier has one deployed
-    /// app, so the sibling folder is a runner layout BC has no counterpart for.</para>
+    /// #a-sibling-source-folder-beside-an-execution-root-5222), and where no folder is marked as
+    /// compiled (the source-dependency pre-pass), the Tier-3 package the loader ran decides (#5259). A
+    /// service tier has one deployed app, so a sibling folder is a runner layout BC has no
+    /// counterpart for.</para>
     /// <para>An object the run did not compile from source (a precompiled dependency) refuses by
     /// name: BC would read its text from the database, and the runner does not serve a
     /// dependency's embedded source yet.</para>
@@ -210,9 +239,11 @@ public static class CodeCoveragePatches
     {
         var dirs = RecordPatches.RegisteredSourceDirs();
         var execution = RecordPatches.RegisteredExecutionSourceDirs();
-        // Both lists are in the key: the same dirs with another one marked as compiled map
-        // differently (#5250), and a key without that term would replay the old map.
-        var key = string.Join("\n", dirs) + "\n#execution\n" + string.Join("\n", execution);
+        // Every input of the roots is in the key: the same dirs with another one marked as compiled
+        // map differently (#5250), and so do the same dirs beside another loaded package (#5259);
+        // a key without that term would replay the old map.
+        var key = string.Join("\n", dirs) + "\n#execution\n" + string.Join("\n", execution)
+            + "\n#packages\n" + PackagedDependencySources.RegistrationKey();
         lock (_mapLock)
         {
             if (_map == null || _mapKey != key)

@@ -326,14 +326,38 @@ public static class AlCoverageSourceMap
     /// they pulled in: <paramref name="executionDirs"/> are the registered dirs the run compiled,
     /// so <see cref="Build"/> applies the same precedence as for
     /// <see cref="RootsWithParsedSourceDependencies"/> - a sibling source folder beside one never
-    /// replaces an object it declares (#5222, #5250). No packaged roots: this map's contract is
-    /// the dirs the run parsed as AL (the #4984 gap is separate).
-    /// <para>Every production <c>Build</c> caller goes through one of the two, pinned by
-    /// CodeCoverageLogSiblingSourceTests, so a plain list cannot bring the last-root-wins back.</para>
+    /// replaces an object it declares (#5222, #5250).
+    ///
+    /// <para>#5259: a registered folder that is not an execution root may still not be the code that
+    /// ran. Two folders with one app id registered by the source-dependency pre-pass are both
+    /// compiled to packages and the loader runs one; nothing marks which. The package that loaded is
+    /// recorded by <see cref="PackagedDependencySources"/>, so its root, for an app id a registered
+    /// non-execution folder carries, goes first and the folder is verified against it exactly as in
+    /// <see cref="RootsWithParsedSourceDependencies"/> (#4991). A package no registered folder
+    /// carries the id of is NOT added: that is #4984, and what this map serves for it is unchanged.
+    /// <paramref name="packagedRoots"/> is a test seam; null means the registered packages.</para>
     /// </summary>
     internal static CoverageRoots RootsForRegisteredDirs(
-        IReadOnlyList<string> registeredDirs, IReadOnlyCollection<string> executionDirs)
-        => new(registeredDirs, new Dictionary<string, string>(StringComparer.Ordinal), executionDirs);
+        IReadOnlyList<string> registeredDirs, IReadOnlyCollection<string> executionDirs,
+        IEnumerable<(Guid AppId, string Root)>? packagedRoots = null)
+    {
+        var siblingAppId = new Dictionary<string, Guid>(StringComparer.Ordinal);
+        if (packagedRoots != null || PackagedDependencySources.RegisteredCount > 0)
+            foreach (var dir in registeredDirs)
+                if (!executionDirs.Contains(dir)
+                    && InProcessAppPackager.ReadIdentity(Path.Combine(dir, "app.json")) is { } identity)
+                    siblingAppId[dir] = identity.AppId;
+        var wanted = new HashSet<Guid>(siblingAppId.Values);
+        var packaged = wanted.Count == 0
+            ? new List<(Guid AppId, string Root)>()
+            : (packagedRoots ?? PackagedDependencySources.RootsByApp(wanted.Contains))
+                .Where(p => wanted.Contains(p.AppId)).ToList();
+        var rootOfApp = packaged.ToDictionary(p => p.AppId, p => p.Root);
+        var packagedRootOfSibling = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (dir, appId) in siblingAppId)
+            if (rootOfApp.TryGetValue(appId, out var root)) packagedRootOfSibling[dir] = root;
+        return new(packaged.Select(p => p.Root).Concat(registeredDirs).ToList(), packagedRootOfSibling, executionDirs);
+    }
 
     /// <summary>
     /// How <see cref="Build"/> lists a root: the .al files under it, and the directories it
