@@ -59,7 +59,12 @@ public class TddRunResult : IDisposable
         if (!p.WaitForExit(240_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
         p.WaitForExit();
         lock (outSb) lock (errSb)
-            return (errSb.ToString(), p.ExitCode, JsonDocument.Parse(outSb.ToString().Trim()));
+        {
+            // A run that stopped before its summary prints no JSON: the test's own exit-code
+            // assertion then names what happened, instead of a parse error naming nothing.
+            var json = outSb.ToString().Trim();
+            return (errSb.ToString(), p.ExitCode, JsonDocument.Parse(json.Length == 0 ? "{\"tests\":[]}" : json));
+        }
     }
 
     public JsonElement Find(string name) =>

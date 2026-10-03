@@ -27,6 +27,20 @@ public sealed class TddLibBundleRun : TddRunResult
         AppDir, Path.Combine(Root, "lib"), Path.Combine(Root, "lib2"), Path.Combine(Root, "test")) { }
 }
 
+/// <summary>
+/// The same four bundles listed test first. The libraries are then compiled only as dependencies of the
+/// test bundle, and their own bundle iterations reuse those modules.
+/// </summary>
+public sealed class TddLibBundleReversedRun : TddRunResult
+{
+    private static readonly string Root = Path.Combine(
+        Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..")),
+        "AlRunner.Tests", "Fixtures", "TddLibBundle");
+
+    public TddLibBundleReversedRun() : base(
+        Path.Combine(Root, "test"), Path.Combine(Root, "lib2"), Path.Combine(Root, "lib"), Path.Combine(Root, "app")) { }
+}
+
 /// <summary>app, lib and test: the library calls a member --tdd refuses to generate.</summary>
 public sealed class TddLibBundleRefusedRun : TddRunResult
 {
@@ -38,14 +52,17 @@ public sealed class TddLibBundleRefusedRun : TddRunResult
         Path.Combine(Root, "app"), Path.Combine(Root, "lib"), Path.Combine(Root, "test")) { }
 }
 
-public sealed class TddLibBundleTests : IClassFixture<TddLibBundleRun>, IClassFixture<TddLibBundleRefusedRun>
+public sealed class TddLibBundleTests
+    : IClassFixture<TddLibBundleRun>, IClassFixture<TddLibBundleReversedRun>, IClassFixture<TddLibBundleRefusedRun>
 {
     private readonly TddLibBundleRun _run;
+    private readonly TddLibBundleReversedRun _reversed;
     private readonly TddLibBundleRefusedRun _refused;
 
-    public TddLibBundleTests(TddLibBundleRun run, TddLibBundleRefusedRun refused)
+    public TddLibBundleTests(TddLibBundleRun run, TddLibBundleReversedRun reversed, TddLibBundleRefusedRun refused)
     {
         _run = run;
+        _reversed = reversed;
         _refused = refused;
     }
 
@@ -85,10 +102,30 @@ public sealed class TddLibBundleTests : IClassFixture<TddLibBundleRun>, IClassFi
     {
         TestArtifacts.SkipIfMissing();
 
+        Assert.True(_run.Exit == 0, $"exit {_run.Exit}\n{_run.StdErr}");
         Assert.Equal(new[] { Stub }, _run.StubsOf("ViaLibrary_RunsAgainstTheGeneratedStub"));
         Assert.Equal(new[] { Stub }, _run.StubsOf("ViaTwoLibraries_RunsAgainstTheGeneratedStub"));
         Assert.Empty(_run.StubsOf("LibraryProcedureThatReachesNothingMissing_IsNotAnnotated"));
         Assert.Contains("--tdd: 2 test(s) reach generated stubs this run:", _run.StdErr);
+    }
+
+    /// <summary>
+    /// Listed test first, the libraries are compiled only as dependencies of the test bundle, where the
+    /// member is asked for. It is still generated once, listed once, and the tests still name it: no
+    /// bundle iteration compiles those modules, so none of them reports the member.
+    /// </summary>
+    [SkippableFact]
+    public void BundlesListedTestFirst_StillListAndAnnotateTheMember()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        Assert.True(_reversed.Exit == 0, $"exit {_reversed.Exit}\n{_reversed.StdErr}");
+        Assert.Equal(3, _reversed.Tests.Count);
+        Assert.Contains("--tdd: generated 1 member(s) this run:", _reversed.StdErr);
+        Assert.DoesNotContain("no members were generated", _reversed.StdErr);
+        Assert.Equal(new[] { Stub }, _reversed.StubsOf("ViaLibrary_RunsAgainstTheGeneratedStub"));
+        Assert.Equal(new[] { Stub }, _reversed.StubsOf("ViaTwoLibraries_RunsAgainstTheGeneratedStub"));
+        Assert.Empty(_reversed.StubsOf("LibraryProcedureThatReachesNothingMissing_IsNotAnnotated"));
     }
 
     /// <summary>

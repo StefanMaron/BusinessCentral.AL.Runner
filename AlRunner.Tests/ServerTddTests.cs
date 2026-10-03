@@ -508,4 +508,31 @@ public sealed class ServerTddTests : IClassFixture<SharedCliServer>
         Assert.True(plain.ExitCode == 3, plain.Raw);
         Assert.Empty(plain.Tests);
     }
+
+    /// <summary>
+    /// #5243, #5161 over the server: the call that names the member sits in a library bundle between
+    /// the app and the tests. The member is generated into the app within the request, the tests run
+    /// against it, the ones that reach it through the libraries name it and the one that does not
+    /// does not, and nothing reaches the disk.
+    /// </summary>
+    [SkippableFact]
+    public async Task LibraryBundleBetween_GeneratesIntoTheAppBundle_AndNamesTheStubOnTheTestsThatReachIt()
+    {
+        TestArtifacts.SkipIfMissing();
+        var root = Path.Combine(RepoRoot, "AlRunner.Tests", "Fixtures", "TddLibBundle");
+        var app = Path.Combine(root, "app");
+        var before = HashDir(app);
+
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
+        var r = await Send(server,
+            new[] { app, Path.Combine(root, "lib"), Path.Combine(root, "lib2"), Path.Combine(root, "test") }, tdd: true);
+
+        Assert.True(r.ExitCode == 0, r.Raw);
+        Assert.Equal(3, r.Tests.Count);
+        const string stub = "Lib Bundle Loyalty: procedure \"Missing\"(Arg1: Integer): Integer";
+        Assert.Equal(new[] { stub }, r.Stubs("ViaLibrary_RunsAgainstTheGeneratedStub"));
+        Assert.Equal(new[] { stub }, r.Stubs("ViaTwoLibraries_RunsAgainstTheGeneratedStub"));
+        Assert.Empty(r.Stubs("LibraryProcedureThatReachesNothingMissing_IsNotAnnotated"));
+        Assert.Equal(before, HashDir(app));
+    }
 }
