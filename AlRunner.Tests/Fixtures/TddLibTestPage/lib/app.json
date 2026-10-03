@@ -1,0 +1,23 @@
+{
+  "id": "5301b0c1-1111-4e8f-9a2c-6d4e8f0a1b01",
+  "name": "Runner Tests Fixture - Tdd Lib TestPage Lib",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "The #5301 library: a table with triggers, its page, and a helper that opens a TestPage on it.",
+  "description": "The #5301 library: a table with triggers, its page, and a helper that opens a TestPage on it.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 72700,
+      "to": 72709
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
