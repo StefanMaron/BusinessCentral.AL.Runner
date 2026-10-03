@@ -94,17 +94,6 @@ internal sealed partial class TddCallGraph
             ? baseTable
             : Name(o.Name);
 
-    /// <summary>The name a node is keyed by: a method's own; a table trigger's operation trigger when exactly
-    /// one starts it (OnAfterInsert -> OnInsert), so a later bundle's raise finds it.</summary>
-    private static string KeyMethodName(NavSyntax.ObjectSyntax o, Node method)
-    {
-        var name = Name(method.Name);
-        if (method is NavSyntax.MethodDeclarationSyntax || o is not (NavSyntax.TableSyntax or NavSyntax.TableExtensionSyntax))
-            return name;
-        var started = StartedBy(name);
-        return started.Count == 1 ? started[0] : name;
-    }
-
     private void CollectTriggers(NavCA.SemanticModel model, NavCA.SyntaxNode root)
     {
         foreach (var obj in root.DescendantNodesAndSelf().OfType<NavSyntax.ObjectSyntax>())
