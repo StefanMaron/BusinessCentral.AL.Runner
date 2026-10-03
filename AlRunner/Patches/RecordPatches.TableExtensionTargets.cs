@@ -75,6 +75,8 @@ public static partial class RecordPatches
     /// in front of a dependency's name is not compared and two dependencies sharing a table name are
     /// not told apart (#5288 item 2 is the page-side statement of that limit).
     /// An extension with no recorded target is matched by name, as before.
+    /// Observably equivalent to BC, which extends the one table the clause resolves to: corpus
+    /// codeunit 69428 (corpus PR 541) asks a service tier, docs/tableextension-binding.md has the limits.
     /// </summary>
     internal static bool ExtensionAttachesToTable(int extensionId, string tableName, int tableId, bool sourceParsed)
     {
@@ -98,11 +100,18 @@ public static partial class RecordPatches
         if (!_extensionIdsByBaseTable.TryGetValue(table.TableName.ToLowerInvariant(), out var all))
             return Array.Empty<int>();
         if (_tableExtensionTargets.Count == 0) return all;
-        var attached = new List<int>(all.Count);
-        foreach (var id in all)
-            if (ExtensionAttachesToTable(id, table)) attached.Add(id);
-        narrowed = attached.Count != all.Count;
-        return narrowed ? attached : all;
+        // Asked per record creation: allocate only once an extension is actually left out.
+        List<int>? attached = null;
+        for (var i = 0; i < all.Count; i++)
+        {
+            if (ExtensionAttachesToTable(all[i], table)) attached?.Add(all[i]);
+            else
+            {
+                attached ??= new List<int>(all.Take(i));
+                narrowed = true;
+            }
+        }
+        return attached ?? all;
     }
 
     internal static IReadOnlyList<int> ExtensionIdsForTable(ParsedTable table)
