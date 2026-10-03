@@ -2615,6 +2615,15 @@ var watchCycleSources = watchMode ? WatchSource.SourceSnapshot.Capture(bundles) 
     if (prePassExit != null) return prePassExit.Value;
 }
 
+// #5267: a --jobs worker is also handed the source folders its bundles depend on that another worker
+// runs. They stay in `bundles`, so everything before the loop (provisioning, the two pre-passes above)
+// sees the set a plain run sees, and they are compiled as dependencies. This is the list of what is
+// RUN: the bundle loop, the progress lines and the expectations audit read it, so a dependency that
+// has tests of its own reports them once, from the worker that owns it. Same list instance when the
+// parent marked nothing, so an ordinary run is untouched.
+var runBundles = AlRunner.Infrastructure.JobsSourceDependencies.RunBundles(
+    bundles, AlRunner.Infrastructure.JobsSourceDependencies.FromEnvironment());
+
 // ── --server: stay resident. Warm state (BC patches + the dep symbol loader) is
 // now established; each request re-emits the requested bundle (warm) and runs it
 // in-process, resetting bundle-derived caches between requests so an edited
@@ -2958,7 +2967,7 @@ if (watchUi && !AlRunner.Log.Verbose)
 // whole set: every bundle named is installed together. --per-suite keeps one pass per bundle, and
 // so does AL_RUNNER_SEQUENTIAL_BUNDLES=1: the ordered-bundle CI steps need an earlier bundle to run
 // before a later one registers, which is the order their cache-poisoning defects need (#4450).
-var deferBundleRuns = bundledMode && bundles.Count > 1 && !watchAffected
+var deferBundleRuns = bundledMode && runBundles.Count > 1 && !watchAffected
     && Environment.GetEnvironmentVariable("AL_RUNNER_SEQUENTIAL_BUNDLES") != "1";
 var deferredBundleRuns = new List<Action>();
 if (deferBundleRuns) BcRuntime.BeginBundleEpoch();
@@ -2978,7 +2987,7 @@ if (watchAffected)
     watchAffectedLines = WatchAffectedReport.Describe(affectedOutcome.Selection, stillFailing);
 }
 int i2 = 0;
-foreach (var bundle in watchAffected ? new List<string>() : bundles)
+foreach (var bundle in watchAffected ? new List<string>() : runBundles)
 {
     i2++;
     var bundleAbs = Path.GetFullPath(bundle);
@@ -3305,7 +3314,7 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
         suites = EnumerateSuites(bundleAbs).ToList();
     if (suites.Count == 0)
     {
-        Console.WriteLine($"[{i2}/{bundles.Count}] {Reporter.BundleLabel(rel)} ... SKIP (no suites)");
+        Console.WriteLine($"[{i2}/{runBundles.Count}] {Reporter.BundleLabel(rel)} ... SKIP (no suites)");
         // No BucketResult for this bundle, so the closing block never sees its gaps and the
         // next bundle's Reset() drops them: print them now (finished buckets print at the end).
         Reporter.PrintActionNeededOnAbort(Array.Empty<BucketResult>(), bundleProvisionGaps);
@@ -3314,8 +3323,8 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
     // #4562: one app's progress line repeats the summary. Per-app lines print for more than one
     // app, or when PASS lines are listed (--show-pass / --verbose) — the same rule as the
     // `=== <app> ===` header in Reporter.PrintPerTest.
-    if (bundles.Count > 1 || (showPassChoice ?? AlRunner.Log.Verbose))
-        Console.WriteLine($"[{i2}/{bundles.Count}] {Reporter.BundleLabel(rel)} — {suites.Count} suites");
+    if (runBundles.Count > 1 || (showPassChoice ?? AlRunner.Log.Verbose))
+        Console.WriteLine($"[{i2}/{runBundles.Count}] {Reporter.BundleLabel(rel)} — {suites.Count} suites");
 
     // Pre-register every src dir for RecordPatches at the bundle level. Batched via
     // AddSourceDirs (#1833) so the NCLMetadata cache pass runs ONCE for the whole suite
@@ -4696,7 +4705,7 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
             foreach (var line in AlRunner.Infrastructure.BundleProgressLine.Render(
                          sP, sF, sE, bundleTests.Count, bundleErrors,
                          bundleEmit + bundleComp + bundleRun)
-                         .Skip(bundles.Count > 1 || (showPassChoice ?? AlRunner.Log.Verbose) ? 0 : 1))
+                         .Skip(runBundles.Count > 1 || (showPassChoice ?? AlRunner.Log.Verbose) ? 0 : 1))
                 Console.WriteLine(line);
     }
     // Deliberately still gated on an EMPTY bundle. A non-Ran stage suppresses the bucket's
@@ -5178,10 +5187,10 @@ if (expectationsRequireMatch)
         // directory is shared by every invocation in this repo and only the corpus step
         // passes this flag, so before this the first entry naming a runner-extras codeunit
         // failed the corpus leg with exit 5 for an entry that was entirely correct.
-        var unmatched = expectations.FindUnmatchedEntries(bundles);
+        var unmatched = expectations.FindUnmatchedEntries(runBundles);
         var audited = expectations.Entries.Count
             - expectations.CompanyInitAcceptances.Count
-            - expectations.EntriesOutOfScopeFor(bundles).Count;
+            - expectations.EntriesOutOfScopeFor(runBundles).Count;
         if (unmatched.Count > 0)
         {
             expectationsMatchFailure = true;
@@ -5204,7 +5213,7 @@ if (expectationsRequireMatch)
             // vacuous green this message exists to rule out — it is reported separately, by
             // name, so a scope that quietly exempts an entry from EVERY run is visible in the
             // log of the run that should have owned it.
-            var outOfScope = expectations.EntriesOutOfScopeFor(bundles);
+            var outOfScope = expectations.EntriesOutOfScopeFor(runBundles);
             Console.Error.WriteLine(
                 $"[expectations] match audit: all {audited} entr"
                 + $"{(audited == 1 ? "y" : "ies")} in scope for this run matched a discovered test"
@@ -5333,7 +5342,7 @@ else
         Reporter.PrintFailureClassification(results, Console.Out);
     Reporter.PrintSummary(results, Console.Out, ProgramSupport.CarriedFromEarlierAttempts(mergeCountsFiles),
         new Reporter.SummaryOptions(AlRunner.Log.Verbose, AlRunner.Infrastructure.RunSeed.Value,
-            string.Join(" ", bundles.Select(b =>
+            string.Join(" ", runBundles.Select(b =>
             {
                 var shown = AlRunner.Infrastructure.WorkingDirectory.DisplayPath(b, AlRunner.Infrastructure.WorkingDirectory.TryGet());
                 return shown.Contains(' ') ? $"\"{shown}\"" : shown;

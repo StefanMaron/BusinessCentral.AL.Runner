@@ -1,0 +1,23 @@
+{
+  "id": "7a1e5c10-3b2d-4f60-9a11-5d0e8c4b7a01",
+  "name": "Runner Tests Fixture - Jobs Deps Base",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "The bottom of the #5267 chain: a codeunit the other folders reach, and two tests of its own.",
+  "description": "The bottom of the #5267 chain: a codeunit the other folders reach, and two tests of its own.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65700,
+      "to": 65709
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

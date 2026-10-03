@@ -1,0 +1,23 @@
+{
+  "id": "7a1e5c10-3b2d-4f60-9a11-5d0e8c4b7a06",
+  "name": "Runner Tests Fixture - Jobs Deps Solo",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Depends on nothing, so a --jobs plan still gives it a worker of its own.",
+  "description": "Depends on nothing, so a --jobs plan still gives it a worker of its own.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65750,
+      "to": 65759
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

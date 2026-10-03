@@ -408,8 +408,15 @@ internal static class ParallelFanOut
         // worker — not debug chatter. Tagging it hid it completely, the same way the
         // "[bc] selected BC" line was once hidden (and cost 42 tests before anyone noticed).
         Console.WriteLine($"jobs: {bundles.Count} bundle(s) across {shards.Count} worker process(es)");
+        // #5267: a bundle's source dependencies that another shard runs. Worked out once per shard
+        // here, and handed to that worker as extra, dependency-only folders (below).
+        var dependencyOnly = shards.Select(s => JobsSourceDependencies.OutsideShard(
+            s.Select(x => x.Name).ToList(), bundles)).ToList();
         for (var i = 0; i < shards.Count; i++)
-            Console.WriteLine($"jobs:   shard {i}: {shards[i].Count} bundle(s), weight {shards[i].Sum(x => x.Weight)}");
+            Console.WriteLine($"jobs:   shard {i}: {shards[i].Count} bundle(s), weight {shards[i].Sum(x => x.Weight)}"
+                + (dependencyOnly[i].Count == 0 ? "" : $", plus {dependencyOnly[i].Count} source dependency folder(s) "
+                    + "it compiles and does not run: "
+                    + string.Join(", ", dependencyOnly[i].Select(Reporter.BundleLabel))));
         if (plan.MemoryNote != null) Console.WriteLine($"jobs: {plan.MemoryNote}");
         foreach (var name in plan.SplitBundles.OrderBy(n => n, StringComparer.Ordinal))
             Console.WriteLine($"jobs:   {name} is shared by {shards.Count(sh => sh.Any(x => x.Name == name))} "
@@ -429,7 +436,8 @@ internal static class ParallelFanOut
         for (var i = 0; i < shards.Count; i++)
         {
             var junit = Path.Combine(tempDir, $"shard-{i}.xml");
-            var childArgs = BuildChildArgs(originalArgs, shards[i].Select(x => x.Name).ToList(), bundles, junit);
+            var childArgs = BuildChildArgs(originalArgs,
+                shards[i].Select(x => x.Name).Concat(dependencyOnly[i]).ToList(), bundles, junit);
 
             var psi = new System.Diagnostics.ProcessStartInfo
             {
@@ -454,6 +462,9 @@ internal static class ParallelFanOut
                          Environment.GetEnvironmentVariable("AL_RUNNER_TEST_TIMEOUT_SEC")))
                 psi.Environment[kv.Key] = kv.Value;
             psi.Environment[TestSelectionAudit.WorkerEnvVar] = "1";
+            // Always set, so a value in the parent's own environment never reaches a worker that has none.
+            psi.Environment[JobsSourceDependencies.DependencyOnlyEnvVar] =
+                JobsSourceDependencies.Format(dependencyOnly[i]);
             if (claimDir != null)
             {
                 psi.Environment[UnitClaimQueue.DirEnvVar] = claimDir;
@@ -648,7 +659,7 @@ internal static class ParallelFanOut
         return false;
     }
 
-    private static string Normalize(string p)
+    internal static string Normalize(string p)
     {
         try { return Path.GetFullPath(p).TrimEnd(Path.DirectorySeparatorChar); }
         catch { return p.TrimEnd('/', '\\'); }
