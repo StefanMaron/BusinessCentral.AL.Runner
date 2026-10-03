@@ -1,0 +1,30 @@
+{
+  "id": "7a1e5c10-3b2d-4f60-9a11-5d0e8c4b7a03",
+  "name": "Runner Tests Fixture - Jobs Deps Top",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Depends on mid only, so base is a transitive dependency. Three test codeunits, so it outweighs the others.",
+  "description": "Depends on mid only, so base is a transitive dependency. Three test codeunits, so it outweighs the others.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "7a1e5c10-3b2d-4f60-9a11-5d0e8c4b7a02",
+      "name": "Runner Tests Fixture - Jobs Deps Mid",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65720,
+      "to": 65729
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

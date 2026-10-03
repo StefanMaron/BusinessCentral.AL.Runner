@@ -607,6 +607,9 @@ internal static partial class ProgramSupport
             var implKey = ComputeSourceWorkspaceKey(new[] { implPath }, idByKey, implDeps, implResolveFailure);
             var wsDir = Path.Combine(workspaceRoot, implKey[..12]);
             Directory.CreateDirectory(wsDir);
+            // #5267: held until this iteration ends, BEFORE hadApp/hadSymbols are read, so a process
+            // that waited finds the finished entry as a HIT instead of a half-written one.
+            using var wsLock = AcquireWorkspaceLock(wsDir, implId.Name);
             if (!implDirs.Contains(wsDir, StringComparer.OrdinalIgnoreCase))
                 implDirs.Add(wsDir);
             if (!workspaceDirsOut.Contains(wsDir, StringComparer.OrdinalIgnoreCase))
@@ -768,6 +771,21 @@ internal static partial class ProgramSupport
             return sb.ToString();
         }
     }
+
+    /// <summary>
+    /// The lock one process holds while it writes a source dependency's workspace directory
+    /// (<c>workspace-deps/&lt;key&gt;</c>): the package and its <c>*.symbols.json</c> sidecar are
+    /// written in place, so a second process on the same cache that finds the package present reads
+    /// a file still being written, and one writing the sidecar at the same time fails with a sharing
+    /// violation. `--jobs` makes that routine: every worker whose bundles depend on one source folder
+    /// builds it (#5267). A waiter takes the lock when the writer lets go and finds a HIT.
+    /// Same lock, wait bound and degraded behaviour as the compile entries (<see cref="CacheCompileLock"/>).
+    /// </summary>
+    private static AlRunner.Infrastructure.CacheCompileLock AcquireWorkspaceLock(string wsDir, string appName)
+        => AlRunner.Infrastructure.CacheCompileLock.Acquire(
+            Path.Combine(wsDir, "workspace.compile.lock"), $"source dependency '{appName}'",
+            AlRunner.Infrastructure.CacheCompileLock.MaxWaitFromEnvironment(Console.Error.WriteLine),
+            Console.Error.WriteLine);
 
     /// <summary>
     /// The workspace dirs a compile may see symbols from: those the dependency resolver picked a
@@ -973,6 +991,8 @@ internal static partial class ProgramSupport
             var depKey = ComputeSourceWorkspaceKey(new[] { dir }, sourceApps, resolvedDepDeps, resolutionFailure: null);
             var wsDir = Path.Combine(workspaceRoot, depKey[..12]);
             Directory.CreateDirectory(wsDir);
+            // #5267: see the same lock in RunLayeredPrePass.
+            using var wsLock = AcquireWorkspaceLock(wsDir, sid.Name);
             if (!depDirs.Contains(wsDir, StringComparer.OrdinalIgnoreCase))
                 depDirs.Add(wsDir);
             if (!workspaceDirsOut.Contains(wsDir, StringComparer.OrdinalIgnoreCase))

@@ -1,0 +1,30 @@
+{
+  "id": "7a1e5c10-3b2d-4f60-9a11-5d0e8c4b7a02",
+  "name": "Runner Tests Fixture - Jobs Deps Mid",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Depends on base, is depended on by top and top two, and has a test of its own.",
+  "description": "Depends on base, is depended on by top and top two, and has a test of its own.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "7a1e5c10-3b2d-4f60-9a11-5d0e8c4b7a01",
+      "name": "Runner Tests Fixture - Jobs Deps Base",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65710,
+      "to": 65719
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

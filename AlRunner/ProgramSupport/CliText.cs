@@ -582,6 +582,9 @@ internal static partial class ProgramSupport
         w.WriteLine("                          compile it: one takes the whole compile and the others wait");
         w.WriteLine("                          for it (AL_RUNNER_CACHE_LOCK_WAIT_SEC, default 1800) and load");
         w.WriteLine("                          the result; a wait that expires says so and compiles there.");
+        w.WriteLine("                          A listed folder that another listed folder depends on is also");
+        w.WriteLine("                          handed to each worker whose bundles need it, to compile and");
+        w.WriteLine("                          not run: its own tests run once, on the worker that owns it.");
         w.WriteLine("                          See docs/jobs-unit-claiming.md.");
         w.WriteLine("                          Ignored by --watch/--server/--dap (long-lived warm state)");
         w.WriteLine("                          and by a single-bundle run that is not shared. Default: 1.");

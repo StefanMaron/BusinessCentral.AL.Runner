@@ -222,6 +222,10 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // --per-suite, two memory-limited plans and an unusable override). 68s locally for the
             // class, rounded down; a LOCAL value, to be re-recorded from the first CI leg's weight step.
             ["JobsSharedBundleEndToEndTests"] = 68,
+            // #5267: a plain run and a cold and a warm `--jobs 2` run of six folders in one class, and two more fan-outs
+            // in the other. 56s and 52s locally, rounded down, LOCAL values: re-record from the first CI leg's weight step.
+            ["JobsSourceDependencyEndToEndTests"] = 56,
+            ["JobsSourceDependencySameParentTests"] = 52,
             // #5238: recorded from Test Matrix run 37080059144 (head 465ed74f), at the lower leg rounded
             // down. CacheCompileLockEndToEndTests: 110.1s on 27.5, 123.1s on 28.5.
             // CacheCompileLockWaitersEndToEndTests: 107.4s on 27.5, 123.8s on 28.5, for FOUR rows; it
