@@ -21,6 +21,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **tdd:** a chain one link past the re-run limit reports the limit instead of a dependency-load FATAL
 - **per-suite:** scope symbol-less dependency packages out of four emit sites; fail a suite whose every object fails to emit
 - **tdd:** follow table triggers, database events and Codeunit.Run to generated stubs
 - **tableext:** resolve a source tableextension's target table by namespace, not by name alone
