@@ -40,6 +40,15 @@ reading as claimed (that would drop the codeunit) or as free (that would run it 
 The claim comes after `--test`/`--filter` selection, so a deselected codeunit is never claimed and
 the workers' selected counts sum to the run's.
 
+A test codeunit the compile drops (EMIT-EXCLUDED, #3476) is never run, so it is never offered as a
+unit, yet every worker compiles the bundle and finds the same drop. Each dropped object is claimed
+through the same directory (`UnitClaimQueue.ClaimDropped`) and only the worker that wins reports its
+`[Test]` procedures as SKIPPED, so the aggregate and the merged JUnit count them once, as a single
+process does (#5256). Every worker still prints the EMIT-EXCLUDED line, and a worker left with no
+test of its own and nothing but that drop to report is a partial bundle, not a COMPILE FAIL one
+(`BundleFailureStage.OnlyDropsAPeerReports`). The `--tdd` branch reports an excluded object's
+synthetic FAILED tests the same way from every worker and is not covered (#5262).
+
 A watchdog abort in a shared bundle ends that worker's run of it. The abort line counts the later
 codeunits nobody has claimed yet, and only those: one another worker already claimed is not lost.
 Whether the worker resumes depends on that count (`AbortResumePlan.AbandonedLaterCodeunits`), so a

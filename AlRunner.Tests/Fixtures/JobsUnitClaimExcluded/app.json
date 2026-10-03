@@ -1,0 +1,23 @@
+{
+  "id": "c2c3d4e5-f6a7-4809-9b1c-2c3d4e5f6131",
+  "name": "Runner Tests Fixture - Jobs Unit Claim Excluded",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "--jobs sharing (#5256): a shared bundle with one test codeunit that cannot bind, so every worker drops it.",
+  "description": "Used by AlRunner.Tests/JobsSharedBundleEmitExcludedTests.cs.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 50980,
+      "to": 50999
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

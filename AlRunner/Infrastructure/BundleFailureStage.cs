@@ -100,6 +100,16 @@ internal static class BundleFailureStage
     }
 
     /// <summary>
+    /// A shared-bundle worker (#5256) whose own tests are none because another worker reports the
+    /// dropped objects' SKIPPED tests, and whose every error is that EMIT-EXCLUDED drop: the module
+    /// compiled and ran, so it is not a failed compile and the empty-bundle classification must not
+    /// apply. One other error (a watchdog abort, an emit failure) and it does.
+    /// </summary>
+    internal static bool OnlyDropsAPeerReports(IReadOnlyList<string> errors, bool droppedReportedByPeer)
+        => droppedReportedByPeer && errors.Count > 0
+           && errors.All(e => string.Equals(MarkerOf(e), "EMIT-EXCLUDED", StringComparison.Ordinal));
+
+    /// <summary>
     /// The stage to report for a bundle that produced no tests. ExecuteFailed only when every
     /// error is an execution-stage failure; anything else — including an unrecognised marker —
     /// stays CompileFailed, which is the conservative direction because that path prints the
