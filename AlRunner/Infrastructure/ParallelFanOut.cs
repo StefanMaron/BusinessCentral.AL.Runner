@@ -510,7 +510,7 @@ internal static class ParallelFanOut
             // reason, so counting only the compile header would have re-introduced #2715's
             // silent loss for every execution failure.
             foreach (var header in NotRunHeaders)
-                notRun += CountOccurrences(stdout, header) + CountOccurrences(stderr, header);
+                notRun += CountBundleHeaders(stdout, header) + CountBundleHeaders(stderr, header);
             shardOutput[i] = stdout + "\n" + stderr;
 
             // #2762: the sibling shape. A bundle that lost SOME suites and still produced tests
@@ -518,8 +518,8 @@ internal static class ParallelFanOut
             // missing would overstate the loss. But it covers less than it declares, and the
             // aggregate is the only summary a --jobs caller reads; without this the parent
             // reprints a clean total for a run in which whole suites never compiled.
-            partial += CountOccurrences(stdout, PartialLossHeader)
-                     + CountOccurrences(stderr, PartialLossHeader);
+            partial += CountBundleHeaders(stdout, PartialLossHeader)
+                     + CountBundleHeaders(stderr, PartialLossHeader);
         }
 
         // A bundle several workers share prints its COMPILE FAIL / EXEC FAIL / SUITE ERRORS header
@@ -671,9 +671,62 @@ internal static class ParallelFanOut
     internal static int ExtraSightings(IReadOnlyList<string> shardOutput, IReadOnlyList<int> sharing, string needle)
     {
         if (sharing.Count < 2) return 0;
-        var perShard = sharing.Select(sh => CountOccurrences(shardOutput[sh], needle)).ToList();
+        var perShard = sharing.Select(sh => CountAcrossAttempts(shardOutput[sh], needle)).ToList();
         var common = perShard.Min();
         return common * (sharing.Count - 1);
+    }
+
+    // The one counts line each attempt of a worker prints (Reporter.PrintSummary, #4562), after its
+    // per-bundle headers and before it resumes into the next attempt (#5269).
+    private static readonly System.Text.RegularExpressions.Regex AttemptSummaryLine =
+        new(@"^Tests: \d+ .*$", System.Text.RegularExpressions.RegexOptions.Multiline);
+
+    /// <summary>A worker that resumes after a watchdog abort (#2280) writes every attempt into the one
+    /// output, each ending in its own counts line. Cut there: the headers of one attempt are one
+    /// sighting each, and a bundle failing the same way in the next attempt is not a second bundle.</summary>
+    internal static IReadOnlyList<string> Attempts(string output)
+    {
+        var attempts = new List<string>();
+        var from = 0;
+        foreach (System.Text.RegularExpressions.Match m in AttemptSummaryLine.Matches(output))
+        {
+            attempts.Add(output.Substring(from, m.Index + m.Length - from));
+            from = m.Index + m.Length;
+        }
+        if (from < output.Length) attempts.Add(output.Substring(from));
+        return attempts;
+    }
+
+    /// <summary><paramref name="needle"/> counted in the attempt that printed it most, never summed over
+    /// attempts: a resumed worker reruns its bundles, so the same bundle reports it once per attempt.</summary>
+    internal static int CountAcrossAttempts(string output, string needle)
+        => Attempts(output).Select(a => CountOccurrences(a, needle)).DefaultIfEmpty(0).Max();
+
+    /// <summary>How many bundles a worker's output reports under <paramref name="headerSuffix"/> (` — SUITE
+    /// ERRORS (`, ` — COMPILE FAIL ===`): per bundle label, the most any one attempt printed, summed over
+    /// labels. A bundle that fails identically in every attempt of a resumed worker is one bundle (#5269).</summary>
+    internal static int CountBundleHeaders(string output, string headerSuffix)
+    {
+        var mostInOneAttempt = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var attempt in Attempts(output))
+        {
+            var inThisAttempt = new Dictionary<string, int>(StringComparer.Ordinal);
+            var idx = 0;
+            while ((idx = attempt.IndexOf(headerSuffix, idx, StringComparison.Ordinal)) >= 0)
+            {
+                // The label is what the line carries between its `=== ` and the suffix; a header with
+                // no `=== ` before it (never printed today) counts under the whole prefix.
+                var lineStart = attempt.LastIndexOf('\n', idx) + 1;
+                var prefix = attempt.Substring(lineStart, idx - lineStart);
+                var open = prefix.LastIndexOf("=== ", StringComparison.Ordinal);
+                var label = open >= 0 ? prefix.Substring(open + 4) : prefix;
+                inThisAttempt[label] = inThisAttempt.GetValueOrDefault(label) + 1;
+                idx += headerSuffix.Length;
+            }
+            foreach (var (label, n) in inThisAttempt)
+                if (n > mostInOneAttempt.GetValueOrDefault(label)) mostInOneAttempt[label] = n;
+        }
+        return mostInOneAttempt.Values.Sum();
     }
 
     /// <summary>How many times a bundle reported COMPILE FAIL or EXEC FAIL in a shard's captured

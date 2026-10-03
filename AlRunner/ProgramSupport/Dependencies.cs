@@ -1124,7 +1124,8 @@ internal static partial class ProgramSupport
         {
             var t = AlRunner.Infrastructure.JUnitCounts.Read(f);
             total += new AlRunner.Reporter.CarriedTotals(
-                (int)t.Tests, (int)(t.Tests - t.Failures - t.Errors - t.Skipped), (int)t.Failures, (int)t.Errors);
+                (int)t.Tests, (int)(t.Tests - t.Failures - t.Errors - t.Skipped), (int)t.Failures, (int)t.Errors,
+                (int)t.Skipped);
         }
         return total;
     }
