@@ -102,6 +102,7 @@ public sealed class TddTriggerEventsTests : IClassFixture<TddTriggerEventsRun>
         AssertStubs("CodeunitRunWithARecord_RunsOnRun", "MissingRunRec");
         AssertStubs("CodeunitRun_RaisesTheEventItsOnRunRaises", "MissingRunEvent");
         AssertStubs("CodeunitRunOfAQuietCodeunit_IsNotAnnotated");
+        AssertStubs("CodeunitRunOfAQuietVariable_IsNotAnnotated");
     }
 
     /// <summary>
@@ -136,7 +137,7 @@ public sealed class TddTriggerEventsTests : IClassFixture<TddTriggerEventsRun>
         AssertStubs("Quiet_IsNotAnnotated");
         // Every member is generated, and the tests naming one are counted: the controls are not among them.
         Assert.Contains("--tdd: generated 15 member(s) this run:", _run.StdErr);
-        Assert.Equal(28, _run.Tests.Count);
+        Assert.Equal(29, _run.Tests.Count);
         Assert.Equal(21, _run.Tests.Count(t => t.TryGetProperty("generatedStubs", out _)));
     }
 }

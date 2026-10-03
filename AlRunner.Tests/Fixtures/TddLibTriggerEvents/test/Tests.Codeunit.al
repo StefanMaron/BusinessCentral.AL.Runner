@@ -9,9 +9,9 @@ codeunit 72421 "TLib Tests"
     TestPermissions = Disabled;
 
     [Test]
-    procedure InsertTrue_RunsTheTriggerOfTheAppsTable()
+    procedure InsertTrue_RunsTheTriggerOfTheLibrarysTable()
     var
-        Rec: Record "TLib Trig Rec";
+        Rec: Record "TLib Lib Rec";
     begin
         Rec.PK := 'T01';
         Rec.Insert(true);
@@ -78,14 +78,6 @@ codeunit 72421 "TLib Tests"
     end;
 
     [Test]
-    procedure AppProcedureInsertingThroughARecordRef_StartsTheTriggerOfAnyTable()
-    var
-        Writer: Codeunit "TLib Writer";
-    begin
-        Writer.InsertAny(Database::"TLib Trig Rec", 'T09');
-    end;
-
-    [Test]
     procedure AppProcedureInsertingThroughARecordRef_StartsTheTriggerOfALaterBundlesTable()
     var
         Writer: Codeunit "TLib Writer";
@@ -94,11 +86,11 @@ codeunit 72421 "TLib Tests"
     end;
 
     [Test]
-    procedure RecordRefInsertInTheTestBundle_StartsTheTriggerOfTheAppsTable()
+    procedure RecordRefInsertInTheTestBundle_StartsTheTriggerOfTheLibrarysTable()
     var
         RecRef: RecordRef;
     begin
-        RecRef.Open(Database::"TLib Trig Rec");
+        RecRef.Open(Database::"TLib Lib Rec");
         RecRef.Field(1).Value := 'T13';
         RecRef.Insert(true);
     end;

@@ -1,3 +1,11 @@
+/// <summary>#5286: where the library's members are generated, into the library's own compile.</summary>
+codeunit 72414 "TLib Lib Target"
+{
+    procedure Placeholder()
+    begin
+    end;
+}
+
 /// <summary>
 /// #5286: a subscriber of a database event of the app's table, in a bundle compiled after the one that
 /// starts the event. It calls a member the app does not declare.
@@ -7,7 +15,7 @@ codeunit 72410 "TLib Subscriber"
     [EventSubscriber(ObjectType::Table, Database::"TLib Rec", 'OnAfterInsertEvent', '', false, false)]
     local procedure HandleAfterInsert(var Rec: Record "TLib Rec"; RunTrigger: Boolean)
     var
-        Target: Codeunit "TLib Target";
+        Target: Codeunit "TLib Lib Target";
         Result: Integer;
     begin
         Result := Target.MissingLibEvent(1);
@@ -19,7 +27,7 @@ tableextension 72411 "TLib Rec Ext" extends "TLib Rec"
 {
     trigger OnModify()
     var
-        Target: Codeunit "TLib Target";
+        Target: Codeunit "TLib Lib Target";
         Result: Integer;
     begin
         Result := Target.MissingExtTrigger(1);
@@ -31,7 +39,7 @@ codeunit 72412 "TLib Runner"
 {
     trigger OnRun()
     var
-        Target: Codeunit "TLib Target";
+        Target: Codeunit "TLib Lib Target";
         Result: Integer;
     begin
         Result := Target.MissingLibRun(1);
@@ -47,7 +55,7 @@ table 72413 "TLib Lib Rec"
 
     trigger OnInsert()
     var
-        Target: Codeunit "TLib Target";
+        Target: Codeunit "TLib Lib Target";
         Result: Integer;
     begin
         Result := Target.MissingLibTrigger(1);

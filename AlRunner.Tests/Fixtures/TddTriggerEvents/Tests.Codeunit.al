@@ -254,4 +254,12 @@ codeunit 72310 "Trg Tests"
         Values.Add('a');
         Values.Insert(1, 'b');
     end;
+
+    [Test]
+    procedure CodeunitRunOfAQuietVariable_IsNotAnnotated()
+    var
+        Runner: Codeunit "Trg Quiet Runner";
+    begin
+        Runner.Run();
+    end;
 }

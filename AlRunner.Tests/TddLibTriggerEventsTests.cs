@@ -31,12 +31,15 @@ public sealed class TddLibTriggerEventsTests : IClassFixture<TddLibTriggerEvents
 
     public TddLibTriggerEventsTests(TddLibTriggerEventsRun run) => _run = run;
 
-    private static string Stub(string member) => $"TLib Target: procedure \"{member}\"(Arg1: Integer): Integer";
+    private static string Stub(string member) => $"TLib Lib Target: procedure \"{member}\"(Arg1: Integer): Integer";
+
+    private static string TestStub(string member) => $"TLib Test Target: procedure \"{member}\"(Arg1: Integer): Integer";
 
     private static void AssertStubs(TddRunResult run, string test, params string[] members)
     {
         Assert.Equal("pass", run.Find(test).GetProperty("status").GetString());
-        Assert.Equal(members.Select(Stub).OrderBy(x => x, StringComparer.Ordinal).ToArray(),
+        // The test bundle's own members are named by their own codeunit.
+        Assert.Equal(members.Select(m => m is "MissingTestDelete" or "MissingChain" ? TestStub(m) : Stub(m)).OrderBy(x => x, StringComparer.Ordinal).ToArray(),
             run.StubsOf(test).OrderBy(x => x, StringComparer.Ordinal).ToArray());
     }
 
@@ -44,11 +47,12 @@ public sealed class TddLibTriggerEventsTests : IClassFixture<TddLibTriggerEvents
     internal static void AssertAnnotated(TddRunResult run, string which)
     {
         Assert.True(run.Exit == 0, $"{which}: exit {run.Exit}\n{run.StdErr}");
-        Assert.Equal(14, run.Tests.Count);
+        Assert.Equal(13, run.Tests.Count);
         Assert.All(run.Tests, t => Assert.Equal("pass", t.GetProperty("status").GetString()));
 
-        // The trigger is in the app's own table, the stub is generated into the app's own compile.
-        AssertStubs(run, "InsertTrue_RunsTheTriggerOfTheAppsTable", "MissingAppTrigger");
+        // The trigger is in the library's table and its stub in the library's own compile, which the test
+        // bundle's Insert(true) reaches (the key of the trigger is kept for the later compile).
+        AssertStubs(run, "InsertTrue_RunsTheTriggerOfTheLibrarysTable", "MissingLibTrigger");
         // The subscriber is in the library: the test inserts itself, or calls the app procedure that does.
         AssertStubs(run, "Insert_RaisesTheEventTheLibrarySubscribesTo", "MissingLibEvent");
         AssertStubs(run, "AppProcedureInserting_RaisesTheEventTheLibrarySubscribesTo", "MissingLibEvent");
@@ -63,20 +67,17 @@ public sealed class TddLibTriggerEventsTests : IClassFixture<TddLibTriggerEvents
         AssertStubs(run, "AppProcedureRunningById_RunsTheLibrarysOnRun", "MissingLibRun");
         // A RecordRef names no table: the app's insert by table id starts the trigger of the library's table,
         // and every other subscriber of an insert, and no other operation's.
-        foreach (var test in new[]
+        var viaApp = run.StubsOf("AppProcedureInsertingThroughARecordRef_StartsTheTriggerOfALaterBundlesTable");
+        // The RecordRef is in the test bundle itself, the trigger in the library compiled before it.
+        var direct = run.StubsOf("RecordRefInsertInTheTestBundle_StartsTheTriggerOfTheLibrarysTable");
+        foreach (var stubs in new[] { viaApp, direct })
         {
-            "AppProcedureInsertingThroughARecordRef_StartsTheTriggerOfAnyTable",
-            "AppProcedureInsertingThroughARecordRef_StartsTheTriggerOfALaterBundlesTable",
-        })
-        {
-            var stubs = run.StubsOf(test);
-            foreach (var member in new[] { "MissingLibTrigger", "MissingAppTrigger", "MissingLibEvent", "MissingChain" })
-                Assert.Contains(Stub(member), stubs);
-            foreach (var member in new[] { "MissingExtTrigger", "MissingTestDelete", "MissingLibRun" })
+            foreach (var member in new[] { "MissingLibTrigger", "MissingLibEvent", "MissingChain" })
+                Assert.Contains(member == "MissingChain" ? TestStub(member) : Stub(member), stubs);
+            foreach (var member in new[] { "MissingExtTrigger", "MissingLibRun" })
                 Assert.DoesNotContain(Stub(member), stubs);
+            Assert.DoesNotContain(TestStub("MissingTestDelete"), stubs);
         }
-        // The RecordRef is in the test bundle and the trigger in the app, compiled before it.
-        Assert.Contains(Stub("MissingAppTrigger"), run.StubsOf("RecordRefInsertInTheTestBundle_StartsTheTriggerOfTheAppsTable"));
         // Subscribers in the test bundle, the second started by a procedure of the first (a second round).
         AssertStubs(run, "InsertIntoTheChainTable_NeedsASecondRound", "MissingChain");
         // The controls.
@@ -94,7 +95,7 @@ public sealed class TddLibTriggerEventsTests : IClassFixture<TddLibTriggerEvents
     {
         TestArtifacts.SkipIfMissing();
         AssertAnnotated(_run, "app lib test");
-        Assert.Contains("--tdd: generated 7 member(s) this run:", _run.StdErr);
+        Assert.Contains("--tdd: generated 6 member(s) this run:", _run.StdErr);
     }
 
     /// <summary>
