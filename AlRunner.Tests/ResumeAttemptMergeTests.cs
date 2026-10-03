@@ -155,6 +155,23 @@ public sealed class ResumeAttemptMergeTests : IDisposable
     }
 
     [Fact]
+    public void ProvisionGaps_AnAttemptOtherThanTheLastHad_AreKept()
+    {
+        // The gap only the FIRST attempt reported: the last attempt alone would lose it.
+        Assert.Equal(new[] { "g1", "g2" }, Merge(new[] { B("/x/a", gaps: new[] { "g1" }) },
+            new[] { B("/x/a", gaps: new[] { "g2" }) }).Single().ProvisionGaps);
+    }
+
+    [Fact]
+    public void TwoCompanyInitAborts_ThatDifferOnlyInTheirMessage_AreTwo()
+    {
+        var one = new CompanyInitFailure(2, "Company-Initialize", "NullReferenceException", "first cause");
+        var two = one with { Message = "second cause" };
+        var merged = Merge(new[] { B("/x/a", init: new[] { one }) }, new[] { B("/x/a", init: new[] { two }) }).Single();
+        Assert.Equal(new[] { "first cause", "second cause" }, merged.CompanyInitFailures!.Select(f => f.Message));
+    }
+
+    [Fact]
     public void ProcessErrors_AreKeptDistinct()
     {
         Assert.Equal("boom; bang", Merge(new[] { B("/x/a", processError: "boom") },
