@@ -31,7 +31,11 @@ public static partial class RecordPatches
     // Source table ids each scoped extension resolves to, memoised because the question is asked per
     // record creation. Cleared whenever the answer can move: a table parsed, an extension merged, a
     // reload (InvalidateExtensionTargetCache).
-    private static readonly ConcurrentDictionary<int, IReadOnlyList<int>> _extensionSourceTargetCache = new();
+    private static readonly ConcurrentDictionary<int, SourceTargets> _extensionSourceTargetCache = new();
+
+    // The source tables a clause resolves to, and whether it is undecided between them and a
+    // dependency's table of the name (see SourceTableIdsTargetedBy).
+    private readonly record struct SourceTargets(IReadOnlyList<int> Ids, bool AlsoDependency);
 
     private static void InvalidateExtensionTargetCache() => _extensionSourceTargetCache.Clear();
 
@@ -45,8 +49,13 @@ public static partial class RecordPatches
     /// one in the global namespace or a namespace the file imports with <c>using</c> (the order
     /// <see cref="ResolveInFileScope"/> applies to a table's own names, #4133). Empty means the
     /// clause names a dependency's table.
+    /// <para><b>A bare clause resolved only through the global namespace or a <c>using</c> is
+    /// undecided</b> (<c>AlsoDependency</c>): the compiler takes the own namespace first, and a
+    /// dependency table carries no namespace here, so the runner cannot see that the own namespace
+    /// holds one. It then keeps the dependency's table too, a superset as before #5289 and never
+    /// lost from the table the extension extends (docs/tableextension-binding.md).</para>
     /// </summary>
-    private static IReadOnlyList<int> SourceTableIdsTargetedBy(int extensionId, TableExtensionTarget ext)
+    private static SourceTargets SourceTableIdsTargetedBy(int extensionId, TableExtensionTarget ext)
         => _extensionSourceTargetCache.GetOrAdd(extensionId, _ =>
         {
             var named = InAppGroupScope("table", _parsedTables)
@@ -54,6 +63,7 @@ public static partial class RecordPatches
                     && string.Equals(t.TableName, ext.BaseName, StringComparison.OrdinalIgnoreCase))
                 .ToList();
             IEnumerable<ParsedTable> hit;
+            var undecided = false;
             if (ext.BaseNamespace != null)
                 hit = named.Where(t => NamespaceEquals(t.Namespace, ext.BaseNamespace));
             else
@@ -63,27 +73,31 @@ public static partial class RecordPatches
                     ? own
                     : named.Where(t => t.Namespace == null
                         || ext.Usings.Contains(t.Namespace, StringComparer.OrdinalIgnoreCase));
+                undecided = own.Count == 0;
             }
-            return hit.Select(t => t.TableId).Distinct().ToList();
+            var ids = hit.Select(t => t.TableId).Distinct().ToList();
+            return new SourceTargets(ids, undecided && ids.Count > 0);
         });
 
     /// <summary>
     /// Whether tableextension <paramref name="extensionId"/> extends the table of that name and id.
     /// <paramref name="sourceParsed"/> is true for a table parsed from AL source, whose namespace is
     /// known, and false for one read from a dependency's symbols, which carries none: a dependency
-    /// table is extended only when the clause resolves to no source table, so the namespace written
+    /// table is extended when the clause resolves to no source table, or only through a <c>using</c> or the
+    /// global namespace (undecided, see <see cref="SourceTableIdsTargetedBy"/>), so the namespace written
     /// in front of a dependency's name is not compared and two dependencies sharing a table name are
     /// not told apart (#5288 item 2 is the page-side statement of that limit).
     /// An extension with no recorded target is matched by name, as before.
-    /// Observably equivalent to BC, which extends the one table the clause resolves to: corpus
-    /// codeunit 69428 (corpus PR 541) asks a service tier, docs/tableextension-binding.md has the limits.
+    /// Observably equivalent to BC, which extends the one table the clause resolves to, except for the
+    /// undecided clause above, where it extends a superset: corpus codeunit 69428 (corpus PR 541) asks a
+    /// service tier, docs/tableextension-binding.md has the limits.
     /// </summary>
     internal static bool ExtensionAttachesToTable(int extensionId, string tableName, int tableId, bool sourceParsed)
     {
         if (!_tableExtensionTargets.TryGetValue(extensionId, out var ext)) return true;
         if (!string.Equals(ext.BaseName, tableName, StringComparison.OrdinalIgnoreCase)) return false;
         var sources = SourceTableIdsTargetedBy(extensionId, ext);
-        return sourceParsed ? sources.Contains(tableId) : sources.Count == 0;
+        return sourceParsed ? sources.Ids.Contains(tableId) : sources.Ids.Count == 0 || sources.AlsoDependency;
     }
 
     internal static bool ExtensionAttachesToTable(int extensionId, ParsedTable table)

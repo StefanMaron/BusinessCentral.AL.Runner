@@ -124,7 +124,9 @@ public sealed class TableExtensionTargetNamespaceTests : IDisposable
         ParseTheShape();
 
         Assert.Equal(new[] { ExtQualA, ExtOwn, ExtImporter }, Sorted(RecordPatches.ExtensionIdsForTable(Table(TableA))));
-        Assert.Equal(new[] { ExtQualDep, ExtElsewhere }, Sorted(RecordPatches.ExtensionIdsForTable(Table(TableDep))));
+        // ExtImporter reaches table A only through a `using`, so it is undecided and the dependency's
+        // table keeps it too (BareClauseResolvedOnlyThroughAUsing_...).
+        Assert.Equal(new[] { ExtQualDep, ExtElsewhere, ExtImporter }, Sorted(RecordPatches.ExtensionIdsForTable(Table(TableDep))));
         // Positive control: the table whose name is unique keeps its extension.
         Assert.Equal(new[] { ExtUnique }, Sorted(RecordPatches.ExtensionIdsForTable(Table(TableUnique))));
     }
@@ -141,7 +143,7 @@ public sealed class TableExtensionTargetNamespaceTests : IDisposable
 
         Assert.Equal(new[] { SharedFieldId, 88129102, 88129104 }, Sorted(onA.Keys));
         Assert.Equal("TX Qual A", onA[SharedFieldId].FieldName);
-        Assert.Equal(new[] { SharedFieldId, 88129103 }, Sorted(onDep.Keys));
+        Assert.Equal(new[] { SharedFieldId, 88129103, 88129104 }, Sorted(onDep.Keys));
         Assert.Equal("TX Qual Dep", onDep[SharedFieldId].FieldName);
         Assert.Equal(new[] { 88129105 }, RecordPatches.ExtensionFieldsFor(Table(TableUnique)).Select(f => f.FieldId).ToArray());
     }
@@ -163,7 +165,7 @@ public sealed class TableExtensionTargetNamespaceTests : IDisposable
 
         Assert.Equal(new[] { 1, SharedFieldId, 88129102, 88129104 },
             Sorted(RecordPatches.GetAllFieldsIncludingExtensions(Table(TableA)).Select(f => f.FieldId)));
-        Assert.Equal(new[] { 1, SharedFieldId, 88129103 },
+        Assert.Equal(new[] { 1, SharedFieldId, 88129103, 88129104 },
             Sorted(RecordPatches.GetAllFieldsIncludingExtensions(Table(TableDep)).Select(f => f.FieldId)));
     }
 
@@ -207,7 +209,7 @@ public sealed class TableExtensionTargetNamespaceTests : IDisposable
         Assert.Equal(new[] { TableA }, RecordPatches.ExtensionBaseObjectIds("TableExtension", ExtQualA));
         Assert.Equal(new[] { TableDep }, RecordPatches.ExtensionBaseObjectIds("TableExtension", ExtQualDep));
         Assert.Equal(new[] { TableDep }, RecordPatches.ExtensionBaseObjectIds("TableExtension", ExtElsewhere));
-        Assert.Equal(new[] { TableA }, RecordPatches.ExtensionBaseObjectIds("TableExtension", ExtImporter));
+        Assert.Equal(new[] { TableA, TableDep }, RecordPatches.ExtensionBaseObjectIds("TableExtension", ExtImporter));
     }
 
     [Fact]
@@ -227,7 +229,7 @@ public sealed class TableExtensionTargetNamespaceTests : IDisposable
         ParseTheShape();
 
         Assert.Equal(new[] { ExtQualA, ExtOwn, ExtImporter }, Sorted(RecordPatches.ExtensionIdsOfBaseObject("Table", TableA)));
-        Assert.Equal(new[] { ExtQualDep, ExtElsewhere }, Sorted(RecordPatches.ExtensionIdsOfBaseObject("Table", TableDep)));
+        Assert.Equal(new[] { ExtQualDep, ExtElsewhere, ExtImporter }, Sorted(RecordPatches.ExtensionIdsOfBaseObject("Table", TableDep)));
     }
 
     // The same question for a dependency table nothing has faulted into the parsed registry yet: its
@@ -254,6 +256,37 @@ public sealed class TableExtensionTargetNamespaceTests : IDisposable
         Assert.False(ParsedTables().Contains(TableDep), "the dependency table must not be parsed yet");
         Assert.Equal(new[] { ExtElsewhere }, RecordPatches.ExtensionIdsOfBaseObject("Table", TableDep));
         Assert.Equal(new[] { ExtQualA }, RecordPatches.ExtensionIdsOfBaseObject("Table", TableA));
+    }
+
+    // The compiler resolves a bare clause in the file's own namespace first, and a dependency table
+    // carries no namespace here, so a clause that reaches a source table only through a `using` (or the
+    // global namespace) may really mean the dependency's table in its own namespace: Base Application's
+    // own namespace holds its table, and the extension imports a same-named source table. The
+    // dependency's table keeps the extension, as it did before #5289; dropping it loses the extension
+    // from the table the compiler bound.
+    [Fact]
+    public void BareClauseResolvedOnlyThroughAUsing_ExtendsTheSourceTableAndKeepsTheDependencyTable()
+    {
+        ParseSourceTable("TxA", TableA, "TX Shared");
+        AddDependencyTable(TableDep, "TX Shared");
+        ParseExtension("TxOwnsDependencyTable", "TxA", ExtImporter, "\"TX Shared\"", "");
+        ParseExtension(null, "TxA", ExtElsewhere, "\"TX Shared\"", "");
+
+        Assert.Equal(new[] { ExtElsewhere, ExtImporter }, Sorted(RecordPatches.ExtensionIdsForTable(Table(TableA))));
+        Assert.Equal(new[] { ExtElsewhere, ExtImporter }, Sorted(RecordPatches.ExtensionIdsForTable(Table(TableDep))));
+    }
+
+    // Control: a source table in the extension's OWN namespace decides the clause, so the dependency's
+    // table does not take the extension (the compiler looks there first).
+    [Fact]
+    public void BareClauseOfTheSourceTablesOwnNamespace_DoesNotExtendTheDependencyTable()
+    {
+        ParseSourceTable("TxA", TableA, "TX Shared");
+        AddDependencyTable(TableDep, "TX Shared");
+        ParseExtension("TxA", "TxA", ExtOwn, "\"TX Shared\"", "");
+
+        Assert.Equal(new[] { ExtOwn }, RecordPatches.ExtensionIdsForTable(Table(TableA)));
+        Assert.Empty(RecordPatches.ExtensionIdsForTable(Table(TableDep)));
     }
 
     // An extension parsed BEFORE the source table it extends reads as extending the dependency's

@@ -20,9 +20,22 @@ the clause names:
   compiler resolves first, and otherwise the one in the global namespace or in a namespace the file
   imports with `using` (the order `ResolveInFileScope` applies to a table's own names, #4133).
 
-A dependency's table is extended exactly when the clause names **no** source table. A dependency's
-table carries no namespace in the symbol cache, so the namespace written in front of a dependency's
-name is not compared.
+A dependency's table is extended when the clause names **no** source table, and also when a bare
+clause reaches a source table only through the global namespace or a `using` (see "Undecided
+clauses"). A dependency's table carries no namespace in the symbol cache, so the namespace written
+in front of a dependency's name is not compared.
+
+## Undecided clauses
+
+The compiler resolves a bare clause in the file's own namespace first. If that namespace holds a
+dependency's table of the name, which the runner cannot see, and the file also imports a same-named
+source table, the extension extends the dependency's table (BC's compiler binds it: the field compiles
+on that table and not on the source one). So a bare clause with no own-namespace source table and a
+source hit through the global namespace or a `using` keeps the dependency's table of that name as well.
+That is a superset, as before #5289: never lost from the table the compiler bound, and still also
+attached to the source table when the compiler bound the dependency's. Corpus codeunit 69428
+(`BareClauseFromTheBaseNamespaceExtendsTheBaseTableDespiteAnImportedLocalTable`) asserts the
+right-table direction. Reading the compiler's own resolution would settle it exactly (#5296).
 
 ## Where it applies
 
@@ -48,9 +61,9 @@ by id.
   told apart, and a bare clause is not checked against the `using`s when the table is a dependency's.
   Reading it needs `BcAppSymbolCache` to carry the namespace, which changes the symbol payload and
   needs a cache version bump (#5288 item 2 for pages).
-- A bare clause from a namespace that holds a **dependency** table of the name, with a `using` that
-  imports a source table of that name, reads as the source table; the compiler takes the own
-  namespace (#5224).
+- An undecided clause (above) still attaches to the source table when the compiler bound the
+  dependency's. The compiler's own target would remove that (#5296). #5224 is the relation-name
+  twin of the scoping gap, not this one.
 
 ## Measurement
 
