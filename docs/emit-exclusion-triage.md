@@ -110,3 +110,8 @@ rather than a wrong verdict, and it is left alone here rather than changed in pa
 - `--server`'s `runTests` asks the same question (`ExcludedObjectTriage.TriageDrops`) and gives the
   same answer: survivors run, the dropped tests stream as `skipped`, exit 3 (#5118; docs/server-mode.md).
   `execute` and `--dap` still refuse outright, having no row to show a skipped test in.
+- `--per-suite` asks it for each suite (#5300), through the one helper the bundled loop calls
+  (`ReportNonTddEmitDrops` in Program.cs): a safe drop runs the suite's survivors with the dropped tests
+  as SKIPPED rows, a refused drop runs nothing of that suite, and either way the suite error and exit 3
+  stand. A drop in one suite changes nothing about the next. A suite whose objects ALL fail to emit is
+  not this path: it stays EMIT-ZERO (#5299).

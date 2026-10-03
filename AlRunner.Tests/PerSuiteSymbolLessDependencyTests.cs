@@ -28,6 +28,13 @@ public sealed class PerSuiteSymbolLessDependencyTests : IDisposable
     private const string DepName = "Fabrikam Dep Y";
     private const string DepVersion = "1.0.0.0";
 
+    // The shipped System Application, which carries SymbolReference.json: the dependency the scope must KEEP
+    // beside the symbol-less package (#5303). Its code is a real value to assert (Base64 Convert), so a scope
+    // that dropped every dependency fails on AL0185 instead of passing. The minimum is the oldest major a
+    // leg runs; the runner resolves the one the engine was built for.
+    private const string SystemApplicationDep =
+        """{ "id": "63ca2fa4-4f03-4f2b-a480-172fef340d3f", "name": "System Application", "publisher": "Microsoft", "version": "27.0.0.0" }""";
+
     private const string PassingCodeunit = """
         codeunit 60795 "PerSuite Probe"
         {
@@ -36,6 +43,22 @@ public sealed class PerSuiteSymbolLessDependencyTests : IDisposable
             [Test]
             procedure ProbeWorks()
             begin
+            end;
+        }
+        """;
+
+    private const string Base64Codeunit = """
+        codeunit 60795 "PerSuite Probe"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure ProbeWorks()
+            var
+                B64: Codeunit "Base64 Convert";
+            begin
+                if B64.ToBase64('A') <> 'QQ==' then
+                    Error('wrong encoding');
             end;
         }
         """;
@@ -237,6 +260,69 @@ public sealed class PerSuiteSymbolLessDependencyTests : IDisposable
         Assert.False(File.Exists(Path.Combine(fx.CacheDir, "out.dll")), "a DLL was written for a module that did not compile");
     }
 
+    // ── the scope keeps a symbol-bearing dependency (#5303) ───────────────────────────────
+
+    /// <summary>
+    /// The scope drops the symbol-less package and ONLY that: the System Application, declared beside it,
+    /// carries symbols and must stay, or the suite's own call into it fails to bind. A scope that dropped
+    /// every dependency passes every test above, because none of them has a symbol-bearing one.
+    /// </summary>
+    [SkippableFact]
+    public void PerSuite_ASymbolBearingDependencyBesideASymbolLessOne_StaysInTheCompile()
+    {
+        TestArtifacts.SkipIfMissing();
+        var fx = Arrange("keep-per-suite", Base64Codeunit, withPackage: true, systemApplication: true);
+
+        var run = Run(fx, perSuite: true);
+
+        AssertPassedOne(run);
+        Assert.DoesNotContain("AL1022", run.Output);
+        Assert.DoesNotContain("AL0185", run.Output);
+    }
+
+    /// <summary>The same keep side at the sibling pre-pass: the source dependency's own call into the System Application binds.</summary>
+    [SkippableFact]
+    public void SiblingSourceDependency_ASymbolBearingDependencyBesideASymbolLessOne_StaysInTheCompile()
+    {
+        TestArtifacts.SkipIfMissing();
+        var fx = ArrangeLibrary("keep-sibling", withPackage: true, systemApplication: true);
+
+        var run = Run(fx, perSuite: false);
+
+        AssertPassedOne(run);
+        Assert.Contains("[source-dep] Lib B", run.Output); // the pre-pass under test ran
+    }
+
+    /// <summary>The same keep side at the layered pre-pass.</summary>
+    [SkippableFact]
+    public void LayeredImplementation_ASymbolBearingDependencyBesideASymbolLessOne_StaysInTheCompile()
+    {
+        TestArtifacts.SkipIfMissing();
+        var fx = ArrangeLibrary("keep-layered", withPackage: true, systemApplication: true);
+
+        var run = Run(fx, perSuite: false, fx.Library!);
+
+        AssertPassedOne(run);
+        Assert.Contains("[layered] pre-built 1 impl package(s)", run.Output); // the pre-pass under test ran
+    }
+
+    /// <summary>The same keep side under --precompile: the DLL is written, which it is not when the call cannot bind.</summary>
+    [SkippableFact]
+    public void Precompile_ASymbolBearingDependencyBesideASymbolLessOne_StaysInTheCompile()
+    {
+        TestArtifacts.SkipIfMissing();
+        // --precompile does not provision: the System Application comes from the platform package cache.
+        TestArtifacts.SkipIfDirectoryMissing(TestArtifacts.PlatformAppsDir(), "the platform package cache");
+        var fx = Arrange("keep-precompile", PassingCodeunit, withPackage: true, declareDependency: false);
+        var app = WriteSourceApp(fx.PkgDir, Base64LibrarySource, systemApplication: true);
+
+        var run = RunPrecompile(fx, app, TestArtifacts.PlatformAppsDir());
+
+        Assert.True(run.ExitCode == 0, $"exit {run.ExitCode}\n{run.Output}");
+        Assert.DoesNotContain("AL0185", run.Output);
+        Assert.True(new FileInfo(Path.Combine(fx.CacheDir, "out.dll")).Length > 0, run.Output);
+    }
+
     // ── fixture ───────────────────────────────────────────────────────────────────────────
 
     private sealed record Fixture(string Suite, string PkgDir, string CacheDir, string? Library = null);
@@ -246,7 +332,8 @@ public sealed class PerSuiteSymbolLessDependencyTests : IDisposable
     /// resolved closure is exactly what this test declares
     /// (.claude/rules/no-base-app-in-csharp-tests.md).
     /// </summary>
-    private Fixture Arrange(string name, string codeunit, bool withPackage, bool declareDependency = true)
+    private Fixture Arrange(string name, string codeunit, bool withPackage, bool declareDependency = true,
+        bool systemApplication = false)
     {
         var root = Path.Combine(_scratch, name);
         var suite = Path.Combine(root, "suite");
@@ -256,9 +343,13 @@ public sealed class PerSuiteSymbolLessDependencyTests : IDisposable
         Directory.CreateDirectory(pkgDir);
         Directory.CreateDirectory(cacheDir);
 
-        var deps = declareDependency
-            ? $$"""{ "id": "{{DepId}}", "name": "{{DepName}}", "publisher": "{{DepPublisher}}", "version": "{{DepVersion}}" }"""
-            : "";
+        var deps = string.Join(", ", new[]
+        {
+            declareDependency
+                ? $$"""{ "id": "{{DepId}}", "name": "{{DepName}}", "publisher": "{{DepPublisher}}", "version": "{{DepVersion}}" }"""
+                : "",
+            systemApplication ? SystemApplicationDep : "",
+        }.Where(d => d.Length > 0));
         File.WriteAllText(Path.Combine(suite, "app.json"), $$"""
         {
           "id": "{{SuiteId}}",
@@ -283,7 +374,7 @@ public sealed class PerSuiteSymbolLessDependencyTests : IDisposable
     /// directory; <c>lib</c> is the one declaring the (symbol-less) package, so nothing but the
     /// pre-pass that compiles <c>lib</c>'s symbols ever sees it.
     /// </summary>
-    private Fixture ArrangeLibrary(string name, bool withPackage)
+    private Fixture ArrangeLibrary(string name, bool withPackage, bool systemApplication = false)
     {
         var fx = Arrange(name, """
             codeunit 60795 "PerSuite Probe"
@@ -320,20 +411,12 @@ public sealed class PerSuiteSymbolLessDependencyTests : IDisposable
           "name": "Lib B",
           "publisher": "AL Runner",
           "version": "1.0.0.0",
-          "dependencies": [ { "id": "{{DepId}}", "name": "{{DepName}}", "publisher": "{{DepPublisher}}", "version": "{{DepVersion}}" } ],
+          "dependencies": [ { "id": "{{DepId}}", "name": "{{DepName}}", "publisher": "{{DepPublisher}}", "version": "{{DepVersion}}" }{{(systemApplication ? ", " + SystemApplicationDep : "")}} ],
           "idRanges": [ { "from": 60800, "to": 60810 } ],
           "runtime": "14.0"
         }
         """);
-        File.WriteAllText(Path.Combine(lib, "Lib.Codeunit.al"), """
-        codeunit 60800 "PerSuite Lib Api"
-        {
-            procedure Answer(): Integer
-            begin
-                exit(42);
-            end;
-        }
-        """);
+        File.WriteAllText(Path.Combine(lib, "Lib.Codeunit.al"), systemApplication ? Base64LibrarySource : GoodLibrarySource);
         if (withPackage) WriteSymbolLessApp(fx.PkgDir);
         return fx with { Library = lib };
     }
@@ -388,6 +471,21 @@ public sealed class PerSuiteSymbolLessDependencyTests : IDisposable
         }
         """;
 
+    // The answer comes from the System Application's code, so it is 42 only when that dependency was in the compile.
+    private const string Base64LibrarySource = """
+        codeunit 60800 "PerSuite Lib Api"
+        {
+            procedure Answer(): Integer
+            var
+                B64: Codeunit "Base64 Convert";
+            begin
+                if B64.ToBase64('A') = 'QQ==' then
+                    exit(42);
+                exit(0);
+            end;
+        }
+        """;
+
     private const string BrokenLibrarySource = """
         codeunit 60800 "PerSuite Lib Api"
         {
@@ -401,13 +499,13 @@ public sealed class PerSuiteSymbolLessDependencyTests : IDisposable
         """;
 
     /// <summary>A source-only NAVX .app (manifest plus src/*.al) declaring the symbol-less package.</summary>
-    private static string WriteSourceApp(string dir, string source)
+    private static string WriteSourceApp(string dir, string source, bool systemApplication = false)
     {
         var xml = $"""
             <?xml version="1.0" encoding="utf-8"?>
             <Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
               <App Id="{LibraryId}" Name="Lib B" Publisher="AL Runner" Version="1.0.0.0"/>
-              <Dependencies><Dependency Id="{DepId}" Name="{DepName}" Publisher="{DepPublisher}" MinVersion="{DepVersion}"/></Dependencies>
+              <Dependencies><Dependency Id="{DepId}" Name="{DepName}" Publisher="{DepPublisher}" MinVersion="{DepVersion}"/>{(systemApplication ? """<Dependency Id="63ca2fa4-4f03-4f2b-a480-172fef340d3f" Name="System Application" Publisher="Microsoft" MinVersion="27.0.0.0"/>""" : "")}</Dependencies>
             </Package>
             """;
         using var ms = new MemoryStream();
@@ -427,12 +525,13 @@ public sealed class PerSuiteSymbolLessDependencyTests : IDisposable
         return path;
     }
 
-    private static (int ExitCode, string Output) RunPrecompile(Fixture fx, string app) =>
+    private static (int ExitCode, string Output) RunPrecompile(Fixture fx, string app, string? platformApps = null) =>
         // --precompile is a mode, read only as the first argument.
         Spawn(new StringBuilder(TestBuildConfig.RunArgs(ProjectPath))
             .Append($" --precompile \"{app}\" --out \"{Path.Combine(fx.CacheDir, "out.dll")}\"")
             .Append(TestBuildConfig.BcVersionArg)
-            .Append($" --package-cache \"{fx.PkgDir}\" --cache \"{fx.CacheDir}\"").ToString());
+            .Append($" --package-cache \"{fx.PkgDir}\" --cache \"{fx.CacheDir}\"")
+            .Append(platformApps == null ? "" : $" --package-cache \"{platformApps}\"").ToString());
 
     private static (int ExitCode, string Output) Run(Fixture fx, bool perSuite, params string[] extraPaths)
     {

@@ -2793,6 +2793,110 @@ static string DescribeRefusals(
             : $"{v.Label} — {v.Reason}")) + ".";
 }
 
+// #3476 / #2238 / #5300: what a module that lost objects to the emit-retry loop reports, and whether its
+// survivors may run. The bundled loop and the --per-suite loop both call it, so the decision (one
+// ExcludedObjectTriage.TriageDrops), the SKIPPED rows, the console text and the suite error cannot drift
+// between them. `tag` is the caller's own prefix (`<bundled>` or the suite name) and
+// `subject` the module it names, or null to name only the tag; `survivorCount` is what the module still compiles. A failing drop returns EveryDropSafe false and the
+// caller must not run the module (a survivor may need what was dropped). Writes the console and adds the
+// one suite error; the caller owns the rows, the cache and `sources`.
+(bool AllProfiles, bool EveryDropSafe, IReadOnlyList<TestResult> Rows, bool ReportedByPeer) ReportNonTddEmitDrops(
+    BcEmitOutput emitOutput, string tag, string? subject, string moduleName, string bundleAbs,
+    IReadOnlyList<string> allPaths, int survivorCount, bool dependencyUnresolved, List<string> bundleErrors)
+{
+    var names = string.Join(", ", emitOutput.ExcludedObjects);
+    var consoleHead = subject != null ? $"{tag}: EMIT-EXCLUDED — {subject}:" : $"{tag}: EMIT-EXCLUDED —";
+    var errorHead = subject != null ? $"{tag}: EMIT-EXCLUDED for {subject}:" : $"{tag}: EMIT-EXCLUDED:";
+    // A profile declares no executable AL and no [Test] procedures (#2238). Typed to the "Profile " label
+    // BcCompiler's exclusion loop writes for one, so it is not a general "ignore whatever failed to emit".
+    var allProfiles = emitOutput.ExcludedObjects.All(
+        o => o.StartsWith("Profile ", StringComparison.Ordinal));
+    var exclDetails = emitOutput.ExcludedObjectDetails
+        ?? Array.Empty<TddExcludedObjectDetail>();
+    var (verdicts, everyDropSafe) = ProgramSupport.ExcludedObjectTriage.TriageDrops(
+        emitOutput.ExcludedObjects, exclDetails, allPaths);
+
+    // Reads ExcludedObjectDiagnostics, NOT the final round's diagnostics: the recovered compile has none
+    // left (#2207). Printed at default verbosity when the drop fails the run (#2949); a profile run
+    // continues and keeps them behind --verbose.
+    var exclDiags = emitOutput.ExcludedObjectDiagnostics ?? Array.Empty<string>();
+    var printExclDiagsNow = (!allProfiles || AlRunner.Log.Verbose) && exclDiags.Count > 0;
+
+    // The tests the dropped objects declared, counted from their own sources (they never reached Emit) and
+    // reported as SKIPPED when the module runs anyway, so the number that did not run is in the totals, the
+    // JUnit and --output-json, never merely absent.
+    // #5256: every worker of a shared --jobs bundle compiles it and finds the same drops; one claim per
+    // dropped object makes one worker report its tests, so the aggregate counts them once.
+    var reportedByPeer = false;
+    var dropClaim = everyDropSafe && !allProfiles
+        ? AlRunner.Infrastructure.UnitClaimQueue.ForBundle(bundleAbs)
+        : null;
+    var ownDetails = dropClaim == null ? exclDetails
+        : dropClaim.ClaimDropped(moduleName, exclDetails);
+    if (ownDetails.Count < exclDetails.Count) reportedByPeer = true;
+    var skippedForDrops = everyDropSafe && !allProfiles
+        ? TddSupport.BuildSkippedTests(ownDetails)
+        : Array.Empty<TestResult>();
+    // #5268: an earlier attempt of this resumed run already reported these rows and carries them.
+    var skippedNotYetReported = skippedForDrops.Count == 0 || carriedResults.Count == 0
+        ? skippedForDrops
+        : AlRunner.Infrastructure.ResumeCarry.NotYetReported(carriedResults, bundleAbs, skippedForDrops);
+    // Withheld rows are still reported, by the carry: a resumed bundle whose own codeunits all ran earlier
+    // has no other row, and must stay a partial bundle, not a failed compile.
+    if (skippedNotYetReported.Count < skippedForDrops.Count) reportedByPeer = true;
+    // The two sentences below say what this worker reports; a worker of a shared bundle reports only the
+    // objects it claimed.
+    var skippedNote = dropClaim == null
+        ? $"the {skippedForDrops.Count} [Test] procedure(s) the dropped object(s) declare are reported as SKIPPED."
+        : $"the dropped object(s) are shared out between this bundle's workers: the "
+          + $"{skippedForDrops.Count} [Test] procedure(s) of the ones this worker claimed are reported as "
+          + "SKIPPED here, and the worker that claimed each other object reports its own.";
+    var skippedErrorNote = dropClaim == null
+        ? $"{skippedForDrops.Count} [Test] procedure(s) did not run and are reported as SKIPPED; "
+        : $"{skippedForDrops.Count} [Test] procedure(s) did not run and are reported as SKIPPED by this worker "
+          + "(the worker that claimed each other dropped object reports its own); ";
+
+    // Untagged on purpose: a `[Component]` prefix would be swallowed by Log's filter at default verbosity,
+    // which was the original defect.
+    var exclHeadline =
+        $"{consoleHead} {emitOutput.ExcludedObjects.Count} object(s) " +
+        $"could not be compiled and were dropped from the module, so any tests they declare " +
+        $"are MISSING from this run: [{names}].";
+    Console.Error.WriteLine((allProfiles
+        ? $"{consoleHead} {emitOutput.ExcludedObjects.Count} " +
+          $"profile object(s) could not be compiled and were dropped from the module: " +
+          $"[{names}]. A profile declares no executable AL and no [Test] procedures, so " +
+          $"the module compiles and runs without it."
+        : everyDropSafe
+        ? exclHeadline +
+          $" Every dropped object is a test codeunit no surviving object in this module " +
+          $"references, by name or by object id, so the remaining {survivorCount} object(s) " +
+          $"still run — {skippedNote}"
+        : exclHeadline +
+          $" The module was NOT run: {DescribeRefusals(verdicts, emitOutput.ExcludedObjects)}")
+        + ExclusionDiagnosticAdvice(exclDiags, printExclDiagsNow));
+    if (printExclDiagsNow)
+    {
+        Console.Error.WriteLine($"{tag}: AL diagnostics that identified the excluded object(s):");
+        foreach (var line in DependencyResolveFailureOutput.AlDiagnosticListing(exclDiags, dependencyUnresolved, AlRunner.Log.Verbose))
+            Console.Error.WriteLine(line);
+    }
+    if (!allProfiles)
+    {
+        // The suite error stands either way — the run covers less than it discovered, which is exit code 3
+        // and a `partial` bucket whether or not the survivors ran (#3476).
+        bundleErrors.Add(
+            $"{errorHead} {emitOutput.ExcludedObjects.Count} " +
+            $"object(s) dropped from the module — tests they declare are missing: [{names}]. "
+            + (everyDropSafe
+                ? skippedErrorNote
+                  + $"the module's surviving {survivorCount} object(s) ran because "
+                  + $"nothing surviving references a dropped object."
+                : $"The module was NOT run: {DescribeRefusals(verdicts, emitOutput.ExcludedObjects)}"));
+    }
+    return (allProfiles, everyDropSafe, skippedNotYetReported, reportedByPeer);
+}
+
 // Console.KeyAvailable can still throw on some terminals even when stdin isn't
 // flagged redirected; treat any failure as "no key" so the watch loop never crashes.
 static bool SafeKeyAvailable()
@@ -3974,162 +4078,29 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                         }
                         else
                         {
-                            // Issue #2238: a `profile` object carries no executable AL at
-                            // all — no procedures, no [Test] attributes, nothing a headless
-                            // run could ever execute or observe. It is role-center
-                            // presentation metadata (Caption/Description/RoleCenter), which
-                            // this runner never renders. So when EVERY excluded object is a
-                            // profile, none of loud-failures.md's concern applies: there is
-                            // no test a profile could have declared to go silently missing.
-                            // (The crash this guards against — BC's own ProfileMetadataEmitter
-                            // throwing a NullReferenceException in SymbolExtensions.
-                            // ShouldBeEmitted when the profile's RoleCenter page reference
-                            // fails to bind — is otherwise atomic-per-module: without this,
-                            // one broken profile took every OTHER object in the same bundle
-                            // down with it, including codeunits that DO declare tests.)
-                            // This check is deliberately narrow and typed to the "Profile "
-                            // label prefix BcCompiler.cs's exclusion loop always writes for a
-                            // profile — not a general "ignore whatever failed to emit", which
-                            // is exactly the mechanism .claude/rules/loud-failures.md forbids.
-                            // A single non-profile object in the excluded set still fails the
-                            // whole bundle via the branch below.
-                            var allProfiles = emitOutput.ExcludedObjects.All(
-                                o => o.StartsWith("Profile ", StringComparison.Ordinal));
-
-                            // #3476: the same question the profile carve-out answers, asked per
-                            // object instead of once for the whole module. Refusing the WHOLE
-                            // module over three dropped test codeunits is what costs Tests-Misc
-                            // (3,215 tests) and Tests-Integration (340) every result they have.
-                            // ExcludedObjectTriage's header has the two measurements the decision
-                            // rests on; docs/emit-exclusion-triage.md has the long form.
-                            var exclDetails = emitOutput.ExcludedObjectDetails
-                                ?? Array.Empty<TddExcludedObjectDetail>();
-                            var (verdicts, everyDropSafe) = ProgramSupport.ExcludedObjectTriage.TriageDrops(
-                                emitOutput.ExcludedObjects, exclDetails, allPaths);
-
-                            // #2207: the message below promises the AL diagnostics — actually
-                            // print them, gated on Log.Verbose directly (not
-                            // Console.Error.WriteLine's usual [Component] path) so a developer
-                            // following the instruction gets something, not another copy of the
-                            // same summary line. Deliberately reads
-                            // emitOutput.ExcludedObjectDiagnostics, NOT `alDiagnostics` — the
-                            // latter reflects only the final (recovered) compile round and
-                            // backs the EMIT-ZERO / AL-DIAGNOSTIC-FAIL guards below; it is
-                            // formatted alc-style with no leading `[Tag]`, so it is never eaten
-                            // by Log's filter either way.
-                            var exclDiags = emitOutput.ExcludedObjectDiagnostics ?? Array.Empty<string>();
-                            // #2949: when the exclusion FAILS the run (everything but the
-                            // all-profiles case below), these diagnostics are the only account
-                            // of why, so they print at default verbosity — the same choice the
-                            // EMIT-ZERO guard below and the --server path already make for a
-                            // compile failure's AL errors. Hiding the cause of a hard failure
-                            // behind a flag left the default-verbosity reader with an emitter
-                            // NRE and an AL0185 in a file that had nothing wrong with it.
-                            // Profiles keep the --verbose gate: that run continues and is not
-                            // a failure, so the same output would be noise.
-                            var printExclDiagsNow = (!allProfiles || AlRunner.Log.Verbose) && exclDiags.Count > 0;
-
-                            // #3476: the tests the dropped objects declared. Counted from their
-                            // own sources (they never reached Emit, so there is no IL to
-                            // reflect over) and reported as SKIPPED when the module runs
-                            // anyway, so the number that did not run is in the totals, the
-                            // JUnit and --output-json — never merely absent.
-                            // #5256: every worker of a shared --jobs bundle compiles it and finds
-                            // the same drops; one claim per dropped object makes one worker
-                            // report its tests, so the aggregate counts them once.
-                            var dropClaim = everyDropSafe && !allProfiles
-                                ? AlRunner.Infrastructure.UnitClaimQueue.ForBundle(bundleAbs)
-                                : null;
-                            var ownDetails = dropClaim == null ? exclDetails
-                                : dropClaim.ClaimDropped(moduleName, exclDetails);
-                            if (ownDetails.Count < exclDetails.Count) droppedReportedByPeer = true;
-                            var skippedForDrops = everyDropSafe && !allProfiles
-                                ? TddSupport.BuildSkippedTests(ownDetails)
-                                : Array.Empty<TestResult>();
-                            // #5268: an earlier attempt of this resumed run already reported these rows and
-                            // carries them; reporting them here too counts each once per attempt.
-                            var skippedNotYetReported = skippedForDrops.Count == 0 || carriedResults.Count == 0
-                                ? skippedForDrops
-                                : AlRunner.Infrastructure.ResumeCarry.NotYetReported(carriedResults, bundleAbs, skippedForDrops);
-                            // Withheld rows are still reported, by the carry: a resumed bundle whose own codeunits all
-                            // ran earlier has no other row, and must stay a partial bundle, not a failed compile.
-                            if (skippedNotYetReported.Count < skippedForDrops.Count) droppedReportedByPeer = true;
-                            // The two sentences below say what this worker reports; a worker of a
-                            // shared bundle reports only the objects it claimed.
-                            var skippedNote = dropClaim == null
-                                ? $"the {skippedForDrops.Count} [Test] procedure(s) the dropped object(s) declare are reported as SKIPPED."
-                                : $"the dropped object(s) are shared out between this bundle's workers: the "
-                                  + $"{skippedForDrops.Count} [Test] procedure(s) of the ones this worker claimed are reported as "
-                                  + "SKIPPED here, and the worker that claimed each other object reports its own.";
-                            var skippedErrorNote = dropClaim == null
-                                ? $"{skippedForDrops.Count} [Test] procedure(s) did not run and are reported as SKIPPED; "
-                                : $"{skippedForDrops.Count} [Test] procedure(s) did not run and are reported as SKIPPED by this worker "
-                                  + "(the worker that claimed each other dropped object reports its own); ";
-
-                            // Untagged on purpose: a `[Component]` prefix would be swallowed by
-                            // Log's filter at default verbosity, which is the original defect.
-                            var exclHeadline =
-                                $"<bundled>: EMIT-EXCLUDED — {moduleName}: {emitOutput.ExcludedObjects.Count} object(s) " +
-                                $"could not be compiled and were dropped from the module, so any tests they declare " +
-                                $"are MISSING from this run: [{names}].";
-                            Console.Error.WriteLine((allProfiles
-                                ? $"<bundled>: EMIT-EXCLUDED — {moduleName}: {emitOutput.ExcludedObjects.Count} " +
-                                  $"profile object(s) could not be compiled and were dropped from the module: " +
-                                  $"[{names}]. A profile declares no executable AL and no [Test] procedures, so " +
-                                  $"the module compiles and runs without it."
-                                : everyDropSafe
-                                ? exclHeadline +
-                                  $" Every dropped object is a test codeunit no surviving object in this module " +
-                                  $"references, by name or by object id, so the remaining {sources.Count} object(s) " +
-                                  $"still run — {skippedNote}"
-                                : exclHeadline +
-                                  $" The module was NOT run: {DescribeRefusals(verdicts, emitOutput.ExcludedObjects)}")
-                                + ExclusionDiagnosticAdvice(exclDiags, printExclDiagsNow));
-                            if (printExclDiagsNow)
+                            // #2238 (profiles), #3476 (a test codeunit nothing surviving reaches) and the
+                            // reporting of both are ReportNonTddEmitDrops, which --per-suite asks too (#5300).
+                            // Only what the loop does with the answer differs between the two.
+                            var drop = ReportNonTddEmitDrops(
+                                emitOutput, "<bundled>", moduleName, moduleName, bundleAbs,
+                                allPaths, sources.Count, bundleDependencyUnresolved, bundleErrors);
+                            if (drop.ReportedByPeer) droppedReportedByPeer = true;
+                            if (!drop.AllProfiles)
                             {
-                                Console.Error.WriteLine(
-                                    $"<bundled>: AL diagnostics that identified the excluded object(s):");
-                                foreach (var line in DependencyResolveFailureOutput.AlDiagnosticListing(exclDiags, bundleDependencyUnresolved, AlRunner.Log.Verbose))
-                                    Console.Error.WriteLine(line);
-                            }
-                            if (!allProfiles)
-                            {
-                                // The suite error stands either way — the run covers less than
-                                // it discovered, which is exit code 3 and a `partial` bucket
-                                // whether or not the survivors ran. What changes with #3476 is
-                                // only whether the survivors ran, and the sentence saying so.
-                                bundleErrors.Add(
-                                    $"<bundled>: EMIT-EXCLUDED for {moduleName}: {emitOutput.ExcludedObjects.Count} " +
-                                    $"object(s) dropped from the module — tests they declare are missing: [{names}]. "
-                                    + (everyDropSafe
-                                        ? skippedErrorNote
-                                          + $"the module's surviving {sources.Count} object(s) ran because "
-                                          + $"nothing surviving references a dropped object."
-                                        : $"The module was NOT run: {DescribeRefusals(verdicts, emitOutput.ExcludedObjects)}"));
-                                if (everyDropSafe)
+                                if (drop.EveryDropSafe)
                                 {
-                                    bundleTests.AddRange(skippedNotYetReported);
+                                    bundleTests.AddRange(drop.Rows);
                                     safeExcludedCount = emitOutput.ExcludedObjects.Count;
-                                    // Refuse to cache a module that is missing objects. The
-                                    // cache stores the compiled assembly and nothing else, so a
-                                    // later HIT skips Emit entirely — and with it this whole
-                                    // branch, the suite error, the SKIPPED results and exit 3.
-                                    // Measured while writing this: the second run of
-                                    // Fixtures/EmitExclusion in one `dotnet test` invocation
-                                    // reported `1 test, 1 pass, exit 0` off a warm entry, which
-                                    // is the silent-loss outcome this issue exists to remove.
-                                    // Before #3476 the case could not arise, because `sources`
-                                    // was cleared and nothing was ever compiled to cache.
-                                    // Both write sites are guarded on cachePath, so clearing it
-                                    // is the whole mechanism (same lever as #2954's NOKEY path).
+                                    // Refuse to cache a module that is missing objects: a later HIT skips Emit
+                                    // and with it the report, the SKIPPED rows and exit 3 (#3476, measured on
+                                    // Fixtures/EmitExclusion). Both write sites are guarded on cachePath.
                                     cachePath = null;
                                 }
                                 else
                                     sources = Array.Empty<EmittedSource>(); // a survivor may need what was dropped
                             }
-                            // allProfiles: keep `sources` as BcCompiler returned it (the
-                            // recovered set with only the broken profile(s) dropped) and do
-                            // NOT add to bundleErrors — this is not a compile failure.
+                            // allProfiles: keep `sources` as BcCompiler returned it and add no suite error:
+                            // not a compile failure.
                         }
                     }
 
@@ -4561,13 +4532,13 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
             var et = System.Diagnostics.Stopwatch.StartNew();
             IReadOnlyList<EmittedSource> sources;
             IReadOnlyList<string> suiteAlDiagnostics = Array.Empty<string>();
+            BcEmitOutput emitOutput;
             try
             {
                 // The bundled loop's scope (see bundleDepScope above), so a declared dependency whose
                 // .app carries no SymbolReference.json is not handed to BC's package scanner, which
                 // answers AL1022 for it and fails a suite the bundled run compiles (#5132). Only
                 // the Emit is scoped: assembler.Compile below is Roslyn and reads no package list.
-                BcEmitOutput emitOutput;
                 using (BcCompiler.ScopeSymbolBearingDepsOnly())
                     emitOutput = emitter.Emit(suitePaths, $"V2_{Path.GetFileName(suite)}", suite);
                 sources = emitOutput.Sources;
@@ -4616,6 +4587,22 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                     Console.Error.WriteLine(line);
                 bundleErrors.Add($"{suiteName}: EMIT-ZERO ({suiteAlDiagnostics.Count} AL error(s){DependencyResolveFailureOutput.DependencyUnresolvedSuffix(bundleDependencyUnresolved)})");
                 continue;
+            }
+            // #5300: the emit-retry loop dropped an object and recompiled the survivors, so `sources` is
+            // non-empty and the final round reports nothing. The suite is the unit here: the same question
+            // and the same report as the bundled loop's (#3476), and what is dropped or refused in this
+            // suite changes nothing about the next one. A refusal runs nothing of THIS suite.
+            if (emitOutput.ExcludedObjects.Count > 0)
+            {
+                var drop = ReportNonTddEmitDrops(
+                    emitOutput, suiteName, null, $"V2_{Path.GetFileName(suite)}", bundleAbs,
+                    suitePaths, sources.Count, bundleDependencyUnresolved, bundleErrors);
+                if (drop.ReportedByPeer) droppedReportedByPeer = true;
+                if (!drop.AllProfiles)
+                {
+                    if (!drop.EveryDropSafe) continue; // a survivor may need what was dropped
+                    bundleTests.AddRange(drop.Rows);
+                }
             }
 
             var ct = System.Diagnostics.Stopwatch.StartNew();
