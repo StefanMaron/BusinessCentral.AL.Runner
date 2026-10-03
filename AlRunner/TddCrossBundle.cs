@@ -144,9 +144,20 @@ public static class TddCrossBundle
         }
     }
 
-    /// <summary>True when a bundle of this run declares an <c>[EventSubscriber]</c>: the only way a
-    /// bundle's call edges are ever read (<see cref="CallersOf"/>). A text probe, so it may say yes for
-    /// a subscriber behind a disabled <c>#if</c>, never no for a real one. Computed once per cycle.</summary>
+    // What makes a bundle's call edges readable by another bundle (#5264, #5286): something in a LATER bundle
+    // that an operation of an earlier one starts. An [EventSubscriber]; a table extension, whose triggers run
+    // for the table of another bundle; a RecordRef or FieldRef, which writes to a table by id and so may start
+    // a trigger of a table a later bundle declares; a Codeunit.Run whose first argument is not a
+    // `Codeunit::Name`, which may run an OnRun of a later bundle (a codeunit named by `Codeunit::` or held in
+    // a variable is a dependency of the bundle naming it, so it is never later).
+    private static readonly System.Text.RegularExpressions.Regex KeyGraphProbe = new(
+        @"EventSubscriber|tableextension|RecordRef|FieldRef|Codeunit\s*\.\s*Run\s*\(\s*(?!Codeunit\s*::)",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>True when a bundle of this run declares something <see cref="KeyGraphProbe"/> matches: the
+    /// only way a bundle's call edges are ever read (<see cref="CallersOf"/>). A text probe, so it may say
+    /// yes for a match behind a disabled <c>#if</c> or in a comment, never no for a real one. Computed once
+    /// per cycle.</summary>
     internal static bool AnyBundleSubscribes()
     {
         List<string> dirs;
@@ -162,7 +173,7 @@ public static class TddCrossBundle
             {
                 try
                 {
-                    if (TddSourceOverlay.ReadAllText(file).Contains("EventSubscriber", StringComparison.OrdinalIgnoreCase))
+                    if (KeyGraphProbe.IsMatch(TddSourceOverlay.ReadAllText(file)))
                     {
                         found = true;
                         break;

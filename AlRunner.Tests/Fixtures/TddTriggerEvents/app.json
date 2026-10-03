@@ -1,0 +1,23 @@
+{
+  "id": "5286a0c1-7b3d-4e8f-9a2c-6d4e8f0a1b01",
+  "name": "Runner Tests Fixture - Tdd Trigger Events",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves --tdd (#5286) annotates a test that reaches a generated stub through a table trigger, a database event or Codeunit.Run.",
+  "description": "Proves --tdd (#5286) annotates a test that reaches a generated stub through a table trigger, a database event or Codeunit.Run, and leaves a test that touches none of them unannotated.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 72300,
+      "to": 72399
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

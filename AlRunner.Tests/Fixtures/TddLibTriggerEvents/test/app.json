@@ -1,0 +1,36 @@
+{
+  "id": "5286b0c1-3333-4e8f-9a2c-6d4e8f0a1b01",
+  "name": "Runner Tests Fixture - Tdd Lib Trigger Events Test",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "The #5286 tests: write to the app's tables and run its codeunits.",
+  "description": "The #5286 tests: write to the app's tables and run its codeunits.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "5286b0c1-1111-4e8f-9a2c-6d4e8f0a1b01",
+      "name": "Runner Tests Fixture - Tdd Lib Trigger Events App",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    },
+    {
+      "id": "5286b0c1-2222-4e8f-9a2c-6d4e8f0a1b01",
+      "name": "Runner Tests Fixture - Tdd Lib Trigger Events Lib",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 72420,
+      "to": 72429
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

@@ -1266,10 +1266,25 @@ It runs the same generation as the CLI and `--watch --tdd` (`--guide`, "TDD MODE
   codeunit in the same app, a handler the test names in `[HandlerFunctions(...)]`, or an
   `[EventSubscriber]` of a publisher procedure declared in the same app that a procedure the test
   reaches calls (#5161); a subscriber that names its publisher by a bare object id, not
-  `Codeunit::"Name"`, adds no edge. A branch that never ran still counts. An event a table raises itself
-  (`OnAfterInsertEvent` and the like), a table trigger and the event it raises, and `Codeunit.Run`
-  into an `OnRun` are not followed, so a test that reaches a stub only by inserting a record a
-  subscriber reacts to carries no `generatedStubs` (#5286). A procedure of another `sourcePaths` bundle
+  `Codeunit::"Name"`, adds no edge. A branch that never ran still counts. A table operation starts what the table
+  declares (#5286): `Insert`, `Modify`, `Delete`, `DeleteAll` and `ModifyAll` run the `OnInsert`,
+  `OnModify` or `OnDelete` trigger only when their `RunTrigger` argument is not omitted or `false`,
+  `Rename` and `Validate` always run theirs (`Validate` also the field's `OnValidate`), and each
+  counts as raising the database events around it, whatever `RunTrigger` says (`OnBeforeInsertEvent` and the like).
+  The trigger, and every subscriber of those events in any bundle of the request, is reached by a test
+  that runs the operation, directly or through a procedure that does; a table extension's trigger
+  counts for its base table: its `OnBefore` and `OnAfter` `Insert`, `Modify`, `Delete` and `Rename`, and the
+  `OnBeforeValidate` and `OnAfterValidate` of a `modify()` block, are started by the operation of that name,
+  under the same `RunTrigger` rule; a trigger name this list does not know counts as started by every
+  operation, and a lookup, drill-down or assist-edit trigger, a page's, by none. The table is the one the record variable is declared with: a `RecordRef`,
+  a `FieldRef` or a record that is not a variable (a procedure's return value) names none, so its
+  operation counts for every table. `Codeunit.Run` reaches the
+  `OnRun` of the codeunit named by `Codeunit::Name` or declared on the variable, and any `OnRun` when it
+  is given an id or an expression. Not followed, so a test that reaches a stub only that way carries no
+  `generatedStubs`: the triggers of a page, report, query or xmlport, a `TestPage`'s actions, a `TestPage`'s
+  `OpenNew`, `SetValue` or `Close` running a table trigger (#5301), and a table operation or `Codeunit.Run`
+  inside a precompiled `.app` that the test only calls.
+  A procedure of another `sourcePaths` bundle
   is (a test library app compiled separately, #5161): when the member's call sits in a library, a
   test that calls a procedure of it that reaches the call, directly or through further libraries,
   names the member. Such a procedure is told apart from another by its object's name and its own
