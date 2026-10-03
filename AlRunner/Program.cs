@@ -6717,14 +6717,16 @@ return strictExitCode ? computedExitCode : 0;
                         {
                             droppedNonProfile = true;
                             droppedSkipped = TddSupport.BuildSkippedTests(excludedDetails);
+                            // One entry, diagnostics inside it: this suite error is counted once, as the CLI's is
+                            // (a --watch --affected cycle reads each entry as one lost suite).
                             compileErrors.Add(
                                 $"EMIT-EXCLUDED: {excludedObjects.Count} object(s) dropped from the module — " +
                                 $"tests they declare are missing: [{names}]. Every dropped object is a test codeunit no " +
                                 $"surviving object in this module references, by name or by object id, so the remaining " +
                                 $"{sources.Count} object(s) still run — the {droppedSkipped.Count} [Test] procedure(s) the " +
                                 "dropped object(s) declare are reported as skipped." +
-                                ExclusionDiagnosticAdvice(excludedObjectDiagnostics, printedAlongside: true));
-                            foreach (var d in excludedObjectDiagnostics) compileErrors.Add(d);
+                                ExclusionDiagnosticAdvice(excludedObjectDiagnostics, printedAlongside: true) +
+                                string.Concat(excludedObjectDiagnostics.Select(d => "\n" + d)));
                             dropError = new CompilationErrorGroup(moduleName, compileErrors);
                         }
                     }
