@@ -41,7 +41,8 @@ public sealed class CacheCompileLockTests : IDisposable
     public void ASecondAcquire_WaitsForTheHolder_ThenTakesTheLock()
     {
         var first = CacheCompileLock.Acquire(LockPath(), "thing", Long, _ => { });
-        var second = Task.Run(() => CacheCompileLock.Acquire(LockPath(), "thing", Long, _ => { }));
+        var second = BlockedWaiter.StartUntilBlocked(
+            () => CacheCompileLock.Acquire(LockPath(), "thing", Long, _ => { }), Long);
 
         Assert.False(second.Wait(TimeSpan.FromMilliseconds(600)),
             "the second acquire returned while the first still held the lock");
@@ -152,7 +153,7 @@ public sealed class CacheCompileLockTests : IDisposable
     {
         var holder = CacheCompileLock.Acquire(LockPath(), "thing", Long, _ => { });
         var quiet = new List<string>();
-        var shortWait = Task.Run(() => CacheCompileLock.Acquire(LockPath(), "thing", Long, quiet.Add));
+        var shortWait = BlockedWaiter.StartUntilBlocked(() => CacheCompileLock.Acquire(LockPath(), "thing", Long, quiet.Add), Long);
         Thread.Sleep(300);
         holder.Dispose();
         using (shortWait.Result) { }

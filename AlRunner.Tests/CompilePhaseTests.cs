@@ -86,7 +86,10 @@ public sealed class CompilePhaseTests : IDisposable
         leader.NoteCompiling();
 
         var follower = Another();
-        var waiting = Task.Run(() => follower.EnterToCompile("dep A", Long, _ => { }));
+        // Released only once the follower is blocked on the held phase (#5276): a bare wait for "has
+        // not finished" passes when the pool is slow to start it, and the follower then finds the
+        // phase free after the leader is disposed and is not told it waited.
+        var waiting = BlockedWaiter.StartUntilBlocked(() => follower.EnterToCompile("dep A", Long, _ => { }), Long);
         Assert.False(waiting.Wait(TimeSpan.FromMilliseconds(600)),
             "the follower went on while the leader still held the compile phase");
 
