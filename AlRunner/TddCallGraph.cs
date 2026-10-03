@@ -4,6 +4,7 @@
 using NavCA = Microsoft.Dynamics.Nav.CodeAnalysis;
 using NavSyntax = Microsoft.Dynamics.Nav.CodeAnalysis.Syntax;
 using NavDiag = Microsoft.Dynamics.Nav.CodeAnalysis.Diagnostics;
+using Node = Microsoft.Dynamics.Nav.CodeAnalysis.Syntax.MethodOrTriggerDeclarationSyntax;
 
 namespace AlRunner;
 
@@ -21,15 +22,15 @@ namespace AlRunner;
 /// <see cref="TddCrossBundle.CallersOf"/> follows through the graphs of the bundles compiled before. Over-approximates execution — a branch that never runs still counts — which keeps
 /// the annotation a statement about what the test's code references.
 /// </summary>
-internal sealed class TddCallGraph
+internal sealed partial class TddCallGraph
 {
-    private readonly Dictionary<NavSyntax.MethodDeclarationSyntax, List<NavSyntax.MethodDeclarationSyntax>> _callers = new();
+    private readonly Dictionary<Node, List<Node>> _callers = new();
     // Invocations that bind to a procedure this compile does not declare (a dependency's), by the
     // dependency procedure's ProcKey: the way a graph reaches into another bundle (#5161).
-    private readonly List<(NavSyntax.MethodDeclarationSyntax Caller, string Key)> _externalCalls = new();
+    private readonly List<(Node Caller, string Key)> _externalCalls = new();
     // [EventSubscriber]s whose publisher procedure this compile does not declare, by the publisher's
     // ProcKey (#5264): raising it elsewhere calls them, and nothing in this graph says who raises it.
-    private readonly List<(NavSyntax.MethodDeclarationSyntax Subscriber, string PublisherKey)> _externalSubscribers = new();
+    private readonly List<(Node Subscriber, string PublisherKey)> _externalSubscribers = new();
 
     private TddCallGraph() { }
 
@@ -45,6 +46,7 @@ internal sealed class TddCallGraph
             try { model = compilation.GetSemanticModel(tree); }
             catch { failed++; continue; }
             var root = tree.GetRoot();
+            g.CollectTriggers(model, root);
             foreach (var inv in root.DescendantNodes().OfType<NavSyntax.InvocationExpressionSyntax>())
             {
                 invocations++;
@@ -57,6 +59,7 @@ internal sealed class TddCallGraph
                     if (g.AddEdge(caller, declared)) edges++;
                     if (declared == null && bound?.ContainingType is { } owner && bound.Name.Length > 0)
                         g._externalCalls.Add((caller, ProcKey(owner.Name, bound.Name)));
+                    if (declared == null) g.AddEntryPointCalls(model, inv, caller);
                 }
                 catch
                 {
@@ -92,7 +95,7 @@ internal sealed class TddCallGraph
         return g;
     }
 
-    private bool AddEdge(NavSyntax.MethodDeclarationSyntax caller, NavSyntax.MethodDeclarationSyntax? callee)
+    private bool AddEdge(Node caller, Node? callee)
     {
         if (callee == null || ReferenceEquals(callee, caller)) return false;
         if (!_callers.TryGetValue(callee, out var list)) _callers[callee] = list = new();
@@ -202,12 +205,12 @@ internal sealed class TddCallGraph
     internal static string ProcKey(string objectName, string procedureName)
         => $"{objectName}|{procedureName}".ToLowerInvariant();
 
-    private static string? KeyOf(NavSyntax.MethodDeclarationSyntax method)
+    private string? KeyOf(Node method)
     {
         for (NavCA.SyntaxNode? n = method; n != null; n = n.Parent)
             if (n is NavSyntax.ObjectSyntax o)
             {
-                var objName = Name(o.Name);
+                var objName = KeyObjectName(o, method);
                 var methodName = Name(method.Name);
                 return objName.Length == 0 || methodName.Length == 0 ? null : ProcKey(objName, methodName);
             }
@@ -227,7 +230,8 @@ internal sealed class TddCallGraph
         var keys = new List<string>();
         var reached = ReachClosure(new[] { start }, out var raisers);
         foreach (var m in reached)
-            if (KeyOf(m) is { } k && !keys.Contains(k)) keys.Add(k);
+            foreach (var k in KeysOf(m))
+                if (!keys.Contains(k)) keys.Add(k);
         foreach (var k in raisers)
             if (!keys.Contains(k)) keys.Add(k);
         return keys;
@@ -244,7 +248,7 @@ internal sealed class TddCallGraph
     {
         var procedures = new List<(string, TddGeneratedMember)>();
         var tests = new List<(string, TddGeneratedMember)>();
-        var byMember = new Dictionary<TddGeneratedMember, List<NavSyntax.MethodDeclarationSyntax>>();
+        var byMember = new Dictionary<TddGeneratedMember, List<Node>>();
         foreach (var (caller, key) in _externalCalls)
             foreach (var member in membersOf(key))
             {
@@ -256,7 +260,7 @@ internal sealed class TddCallGraph
             var reached = ReachClosure(seeds, out var raisers);
             foreach (var m in reached)
             {
-                if (KeyOf(m) is { } k) procedures.Add((k, member));
+                foreach (var k in KeysOf(m)) procedures.Add((k, member));
                 if (TestLabel(m) is { } label) tests.Add((label, member));
             }
             foreach (var k in raisers) procedures.Add((k, member));
@@ -265,11 +269,11 @@ internal sealed class TddCallGraph
     }
 
     /// <summary>Every procedure that is, or transitively calls, one of <paramref name="seeds"/>.</summary>
-    private List<NavSyntax.MethodDeclarationSyntax> Closure(IEnumerable<NavSyntax.MethodDeclarationSyntax> seeds)
+    private List<Node> Closure(IEnumerable<Node> seeds)
     {
-        var seen = new HashSet<NavSyntax.MethodDeclarationSyntax>();
-        var order = new List<NavSyntax.MethodDeclarationSyntax>();
-        var queue = new Queue<NavSyntax.MethodDeclarationSyntax>();
+        var seen = new HashSet<Node>();
+        var order = new List<Node>();
+        var queue = new Queue<Node>();
         foreach (var s in seeds)
             if (seen.Add(s)) { order.Add(s); queue.Enqueue(s); }
         while (queue.Count > 0)
@@ -290,20 +294,20 @@ internal sealed class TddCallGraph
     /// publisher and of each of its known raisers: a bundle compiled after this one enters through
     /// those. Over-approximates like every edge here: a subscriber with manual binding, or a
     /// publisher no path of the run raises, still counts.</summary>
-    private List<NavSyntax.MethodDeclarationSyntax> ReachClosure(
-        IEnumerable<NavSyntax.MethodDeclarationSyntax> seeds, out HashSet<string> raisers)
+    private List<Node> ReachClosure(
+        IEnumerable<Node> seeds, out HashSet<string> raisers)
     {
         var order = Closure(seeds);
         raisers = new HashSet<string>(StringComparer.Ordinal);
-        if (_externalSubscribers.Count == 0) return order;
-        var seen = new HashSet<NavSyntax.MethodDeclarationSyntax>(order);
+        if (_externalSubscribers.Count == 0 && _triggers.Count == 0) return order;
+        var seen = new HashSet<Node>(order);
         while (true)
         {
-            var more = new List<NavSyntax.MethodDeclarationSyntax>();
-            foreach (var (subscriber, publisherKey) in _externalSubscribers)
+            var more = new List<Node>();
+            foreach (var (subscriber, publisherKey) in _externalSubscribers.Concat(_triggers))
             {
                 if (!seen.Contains(subscriber)) continue;
-                foreach (var raiser in TddCrossBundle.CallersOf(publisherKey))
+                foreach (var raiser in RaiseKeys(publisherKey).SelectMany(TddCrossBundle.CallersOf))
                 {
                     if (!raisers.Add(raiser)) continue;
                     foreach (var (caller, key) in _externalCalls)
@@ -344,7 +348,7 @@ internal sealed class TddCallGraph
         if (start == null) return Array.Empty<string>();
 
         var labels = new List<string>();
-        foreach (var m in Closure(new[] { start }))
+        foreach (var m in ReachClosure(new[] { start }, out _))
             if (TestLabel(m) is { } label && !labels.Contains(label)) labels.Add(label);
         return labels;
     }
@@ -359,21 +363,21 @@ internal sealed class TddCallGraph
             ?? (b.CandidateSymbols.Length == 1 ? b.CandidateSymbols[0] as NavCA.IMethodSymbol : null);
     }
 
-    private static NavSyntax.MethodDeclarationSyntax? Declaration(NavCA.IMethodSymbol? method)
+    private static Node? Declaration(NavCA.IMethodSymbol? method)
     {
         var loc = method?.Location;
         if (loc?.SourceTree == null) return null;
         return EnclosingMethod(loc.SourceTree.GetRoot().FindToken(loc.SourceSpan.Start).Parent);
     }
 
-    private static NavSyntax.MethodDeclarationSyntax? EnclosingMethod(NavCA.SyntaxNode? node)
+    private static Node? EnclosingMethod(NavCA.SyntaxNode? node)
     {
         for (var n = node; n != null; n = n.Parent)
-            if (n is NavSyntax.MethodDeclarationSyntax m) return m;
+            if (n is Node m) return m;
         return null;
     }
 
-    private static string? TestLabel(NavSyntax.MethodDeclarationSyntax method)
+    private static string? TestLabel(Node method)
     {
         if (!method.Attributes.Any(a => string.Equals(Name(a.Name), "Test", StringComparison.OrdinalIgnoreCase)))
             return null;
