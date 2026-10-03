@@ -49,6 +49,12 @@ test of its own and nothing but that drop to report is a partial bundle, not a C
 (`BundleFailureStage.OnlyDropsAPeerReports`). The `--tdd` branch reports an excluded object's
 synthetic FAILED tests the same way from every worker and is not covered (#5262).
 
+A worker that resumes after a watchdog abort (#2280) compiles the bundle again and finds the same drop. It
+does not report SKIPPED rows its carried attempts already hold (`ResumeCarry.NotYetReported`, #5268), so
+the summary, the JUnit and `--output-json` count each once, and the aggregate counts a bundle once however
+many attempts its worker made, because each attempt prints its own `SUITE ERRORS` header
+(`ParallelFanOut.CountBundleHeaders`, #5269).
+
 A watchdog abort in a shared bundle ends that worker's run of it. The abort line counts the later
 codeunits nobody has claimed yet, and only those: one another worker already claimed is not lost.
 Whether the worker resumes depends on that count (`AbortResumePlan.AbandonedLaterCodeunits`), so a

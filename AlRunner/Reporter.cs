@@ -224,11 +224,11 @@ public static class Reporter
     /// these the final summary would report the last attempt's slice as if it were the whole run,
     /// which is a smaller number stated with more confidence than the truth.
     /// </summary>
-    public readonly record struct CarriedTotals(int Tests, int Pass, int Fail, int Error)
+    public readonly record struct CarriedTotals(int Tests, int Pass, int Fail, int Error, int Skipped = 0)
     {
         public static CarriedTotals operator +(CarriedTotals a, CarriedTotals b)
-            => new(a.Tests + b.Tests, a.Pass + b.Pass, a.Fail + b.Fail, a.Error + b.Error);
-        public bool IsEmpty => Tests == 0 && Pass == 0 && Fail == 0 && Error == 0;
+            => new(a.Tests + b.Tests, a.Pass + b.Pass, a.Fail + b.Fail, a.Error + b.Error, a.Skipped + b.Skipped);
+        public bool IsEmpty => Tests == 0 && Pass == 0 && Fail == 0 && Error == 0 && Skipped == 0;
     }
 
     /// <summary>
@@ -298,6 +298,9 @@ public static class Reporter
         if (!carried.IsEmpty)
         {
             totalTests += carried.Tests; pass += carried.Pass; fail += carried.Fail; err += carried.Error;
+            // #5268: Tests includes the carried skipped ones, so leaving them out here printed a total its
+            // own categories did not add up to.
+            skipped += carried.Skipped;
         }
         var wall = DateTime.Now - System.Diagnostics.Process.GetCurrentProcess().StartTime;
         w.WriteLine();
@@ -325,7 +328,8 @@ public static class Reporter
             // Named rather than folded in silently: these tests ran in an EARLIER process of this
             // same run, before a watchdog abort forced a resume (#2280).
             w.WriteLine($"  (carried from earlier attempt(s): {carried.Tests} tests, "
-                + $"{carried.Pass} pass, {carried.Fail} fail, {carried.Error} error)");
+                + $"{carried.Pass} pass, {carried.Fail} fail, {carried.Error} error"
+                + (carried.Skipped > 0 ? $", {carried.Skipped} skipped)" : ")"));
         // #2880: the single number the incident log did not have. `fail: 7` sitting next to
         // `partial: 1` leaves the reader to work out whether the 7 have anything to do with the
         // 1 — and the answer, that time, was "all of them". Printed only when there is something

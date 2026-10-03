@@ -29,6 +29,15 @@ internal static class AbortResume
     /// </summary>
     public const int DefaultBudget = 5;
 
+    /// <summary>The head of the stderr line a resuming attempt prints; <see cref="WasResumed"/> reads it back.</summary>
+    internal const string AttemptEndedNotice = "resume: a watchdog abort ended this attempt early";
+
+    /// <summary>Whether a worker's captured stderr says it resumed: the notice at the start of a line (#5269).</summary>
+    internal static bool WasResumed(string stderr)
+        => System.Text.RegularExpressions.Regex.IsMatch(
+            stderr ?? string.Empty, "^" + System.Text.RegularExpressions.Regex.Escape(AttemptEndedNotice),
+            System.Text.RegularExpressions.RegexOptions.Multiline);
+
     /// <summary>
     /// The child command line: this process's own arguments, with any previous
     /// <c>--exclude-test</c> / <c>--resume-aborts</c> pairs stripped and the accumulated ones
@@ -99,7 +108,7 @@ internal static class AbortResume
 
         Console.Error.WriteLine();
         Console.Error.WriteLine(
-            $"resume: a watchdog abort ended this attempt early. Continuing in a fresh process, "
+            $"{AttemptEndedNotice}. Continuing in a fresh process, "
             + $"skipping {exclusions.Count} codeunit(s) already attempted or hung; "
             + $"{remainingBudget} resume attempt(s) left after this one.");
         Console.Error.WriteLine(

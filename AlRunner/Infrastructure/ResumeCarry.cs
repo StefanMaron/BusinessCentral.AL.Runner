@@ -85,6 +85,23 @@ public static class ResumeCarry
     }
 
     /// <summary>
+    /// The <paramref name="rows"/> no carried attempt has reported for this bundle (#5268). A resumed
+    /// attempt recompiles the bundle and finds the same EMIT-EXCLUDED drop an earlier attempt already
+    /// reported as SKIPPED rows, and those rows arrive again through the carry, so adding them a second
+    /// time counts each once per attempt. Keyed on bundle, codeunit and method: a same-named codeunit in
+    /// another bundle is not this one's row.
+    /// </summary>
+    public static List<TestResult> NotYetReported(
+        IReadOnlyList<BucketResult> carried, string bucketPath, IReadOnlyList<TestResult> rows)
+    {
+        var reported = new HashSet<(string, string)>();
+        foreach (var b in carried)
+            if (string.Equals(b.BucketPath, bucketPath, StringComparison.Ordinal))
+                foreach (var t in b.Tests) reported.Add((t.Codeunit, t.Method));
+        return rows.Where(r => !reported.Contains((r.Codeunit, r.Method))).ToList();
+    }
+
+    /// <summary>
     /// Read every carry file back into BucketResults, in the order given. A file that is missing
     /// or will not parse contributes NOTHING rather than failing the run — the same stance
     /// JUnitReport takes for a carried JUnit, and the reason is the same: the run has already

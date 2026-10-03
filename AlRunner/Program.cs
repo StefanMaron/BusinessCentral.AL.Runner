@@ -2370,6 +2370,10 @@ if (excludeTests.Count > 0)
     executor.Exclusions = new AlRunner.Infrastructure.TestExclusionFilter(excludeTests);
 var depLoader = new DependencyLoader(emitter, assembler);
 var results = new List<BucketResult>();
+// The earlier attempts' full results (--merge-results, #2719). Read BEFORE the bundles run rather than
+// where the outputs below fold them in, because an EMIT-EXCLUDED drop the carry already reported must
+// not be reported again by this attempt (#5268).
+var carriedResults = AlRunner.Infrastructure.ResumeCarry.Read(mergeResultsFiles, out _);
 // --tdd (issue #2001) acceptance criterion 8: every member generated across the WHOLE run
 // (every bundle's Emit call), printed as one list at the end — see the print site below.
 var allTddGeneratedMembers = new List<TddGeneratedMember>();
@@ -3340,7 +3344,8 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
     var bundleErrors = new List<string>();
     var bundleStage = BucketStage.Ran;
     // #5256: set when a worker of a shared bundle left a dropped object's SKIPPED tests to the
-    // worker that claimed it, so a worker with none of its own is not a failed compile.
+    // worker that claimed it, so a worker with none of its own is not a failed compile; likewise when the carry of a
+    // resumed run holds them (#5268).
     var droppedReportedByPeer = false;
     int sP = 0, sF = 0, sE = 0;
     // --tdd: the tests whose compile referenced a generated member, populated wherever this
@@ -4023,6 +4028,14 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                             var skippedForDrops = everyDropSafe && !allProfiles
                                 ? TddSupport.BuildSkippedTests(ownDetails)
                                 : Array.Empty<TestResult>();
+                            // #5268: an earlier attempt of this resumed run already reported these rows and
+                            // carries them; reporting them here too counts each once per attempt.
+                            var skippedNotYetReported = skippedForDrops.Count == 0 || carriedResults.Count == 0
+                                ? skippedForDrops
+                                : AlRunner.Infrastructure.ResumeCarry.NotYetReported(carriedResults, bundleAbs, skippedForDrops);
+                            // Withheld rows are still reported, by the carry: a resumed bundle whose own codeunits all
+                            // ran earlier has no other row, and must stay a partial bundle, not a failed compile.
+                            if (skippedNotYetReported.Count < skippedForDrops.Count) droppedReportedByPeer = true;
                             // The two sentences below say what this worker reports; a worker of a
                             // shared bundle reports only the objects it claimed.
                             var skippedNote = dropClaim == null
@@ -4077,7 +4090,7 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                                         : $"The module was NOT run: {DescribeRefusals(verdicts, emitOutput.ExcludedObjects)}"));
                                 if (everyDropSafe)
                                 {
-                                    bundleTests.AddRange(skippedForDrops);
+                                    bundleTests.AddRange(skippedNotYetReported);
                                     safeExcludedCount = emitOutput.ExcludedObjects.Count;
                                     // Refuse to cache a module that is missing objects. The
                                     // cache stores the compiled assembly and nothing else, so a
@@ -4903,8 +4916,6 @@ foreach (var carriedFile in mergeCountsFiles.Concat(mergeResultsFiles))
     if (!string.IsNullOrEmpty(carriedDir))
         AlRunner.Infrastructure.ScratchDirs.AdoptIfHandedToThisProcess(carriedDir);
 }
-
-var carriedResults = AlRunner.Infrastructure.ResumeCarry.Read(mergeResultsFiles, out _);
 
 // #2747: every attempt this run was PROMISED must actually be here. Both carry readers shrug at
 // a file they cannot use — right for a corrupt one, wrong for a file that is simply GONE,
