@@ -535,4 +535,29 @@ public sealed class ServerTddTests : IClassFixture<SharedCliServer>
         Assert.Empty(r.Stubs("LibraryProcedureThatReachesNothingMissing_IsNotAnnotated"));
         Assert.Equal(before, HashDir(app));
     }
+    /// <summary>
+    /// #5265 over the server: a chain of source bundles one link past the re-run bound leaves the last
+    /// member generated and never compiled in. The request says so, leaves the member out of the list of
+    /// generated members, and names it again in the summary as not compiled in; the test that needs it
+    /// fails (it never compiled).
+    /// </summary>
+    [SkippableFact]
+    public async Task ChainPastTheRerunLimit_SaysSoAndDoesNotListTheLastMemberAsGenerated()
+    {
+        TestArtifacts.SkipIfMissing();
+        var root = Path.Combine(RepoRoot, "AlRunner.Tests", "Fixtures", "TddLibChain");
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
+        var mark = server.StdErrMark;
+        var r = await Send(server,
+            new[] { "app", "lib1", "lib2", "lib3", "test" }.Select(f => Path.Combine(root, f)).ToArray(), tdd: true);
+
+        Assert.True(r.ExitCode == 1, r.Raw);
+        Assert.True(r.Status("Reaches") == "fail", r.Raw);
+        const string last = "Lib Chain 3: procedure \"M4\"(Arg1: Integer): Integer";
+        await server.StdErrSinceAsync(mark,
+            $"--tdd: the re-run limit (3) was reached with 1 member(s) generated into another bundle and not compiled in: {last}.");
+        await server.StdErrSinceAsync(mark, "--tdd: generated 3 member(s) this request:");
+        var closing = await server.StdErrSinceAsync(mark, "--tdd: 1 more member(s) were generated into another bundle but not compiled in");
+        Assert.DoesNotContain("generated 4 member(s)", closing, StringComparison.Ordinal);
+    }
 }

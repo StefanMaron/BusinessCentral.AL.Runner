@@ -15,7 +15,10 @@ namespace AlRunner;
 /// a procedure (a table trigger event, an event of a precompiled object) adds no edge. Calls that
 /// do not bind (the missing member itself, a codeunit run by id) add no edge, and a call to a
 /// procedure another compile declares adds none inside this graph: it is kept as an external call,
-/// which <see cref="ReachThroughDependencies"/> follows into the bundles compiled before this one. Over-approximates execution — a branch that never runs still counts — which keeps
+/// which <see cref="ReachThroughDependencies"/> follows into the bundles compiled before this one.
+/// A subscriber whose publisher this compile does not declare (it is in another source bundle, #5264)
+/// is kept as an external subscriber: whoever raises that publisher reaches it, which
+/// <see cref="TddCrossBundle.CallersOf"/> follows through the graphs of the bundles compiled before. Over-approximates execution — a branch that never runs still counts — which keeps
 /// the annotation a statement about what the test's code references.
 /// </summary>
 internal sealed class TddCallGraph
@@ -24,6 +27,9 @@ internal sealed class TddCallGraph
     // Invocations that bind to a procedure this compile does not declare (a dependency's), by the
     // dependency procedure's ProcKey: the way a graph reaches into another bundle (#5161).
     private readonly List<(NavSyntax.MethodDeclarationSyntax Caller, string Key)> _externalCalls = new();
+    // [EventSubscriber]s whose publisher procedure this compile does not declare, by the publisher's
+    // ProcKey (#5264): raising it elsewhere calls them, and nothing in this graph says who raises it.
+    private readonly List<(NavSyntax.MethodDeclarationSyntax Subscriber, string PublisherKey)> _externalSubscribers = new();
 
     private TddCallGraph() { }
 
@@ -65,12 +71,21 @@ internal sealed class TddCallGraph
             // [EventSubscriber(...)]: raising the event calls the subscriber, so the publisher's
             // declaration is a caller of it, and whoever invokes the publisher reaches it.
             foreach (var method in root.DescendantNodes().OfType<NavSyntax.MethodDeclarationSyntax>())
-                foreach (var publisher in PublisherMethods(method, objects))
+            {
+                if (Subscription(method) is not { } sub) continue;
+                var declared = false;
+                foreach (var publisher in PublisherMethods(sub, objects))
+                {
+                    declared = true;
                     if (g.AddEdge(publisher, method)) subscriberEdges++;
+                }
+                if (!declared) g._externalSubscribers.Add((method, ProcKey(sub.ObjectName, sub.EventName)));
+            }
         }
         sw.Stop();
         PerfTrace.Log($"tdd call graph: {trees.Count} tree(s), {invocations} invocation(s), {edges} call edge(s), " +
-            $"{handlerEdges} handler edge(s), {subscriberEdges} subscriber edge(s), {failed} bind failure(s), {sw.ElapsedMilliseconds} ms");
+            $"{handlerEdges} handler edge(s), {subscriberEdges} subscriber edge(s), {g._externalSubscribers.Count} external subscriber(s), " +
+            $"{failed} bind failure(s), {sw.ElapsedMilliseconds} ms");
         if (failed > 0)
             Console.Error.WriteLine($"--tdd: {failed} call(s) could not be bound while finding the tests that reach " +
                 "generated members; a test reaching one only through such a call carries no generatedStubs.");
@@ -103,34 +118,44 @@ internal sealed class TddCallGraph
                 yield return m;
     }
 
-    /// <summary>The procedure an [EventSubscriber(ObjectType::X, X::"Name", 'Event', ...)] names, when
-    /// this compile declares it. A table's built-in events and an object this compile does not hold
-    /// have no procedure to be a caller, so they yield nothing. A publisher named by a bare object id
-    /// yields nothing either: there is no `X::` to read, and `X::Id` is a syntax error in AL (#5245).</summary>
-    private static IEnumerable<NavSyntax.MethodDeclarationSyntax> PublisherMethods(
-        NavSyntax.MethodDeclarationSyntax subscriber, IReadOnlyList<NavSyntax.ObjectSyntax> objects)
+    /// <summary>What an [EventSubscriber(ObjectType::X, X::"Name", 'Event', ...)] names: the publisher's
+    /// object kind and name and the event procedure. Null for a method with no such attribute, and for
+    /// a publisher named by a bare object id: there is no `X::` to read, and `X::Id` is a syntax error
+    /// in AL (#5245).</summary>
+    private readonly record struct SubscriptionTarget(string Kind, string ObjectName, string EventName);
+
+    private static SubscriptionTarget? Subscription(NavSyntax.MethodDeclarationSyntax subscriber)
     {
         var attr = subscriber.Attributes.FirstOrDefault(a =>
             string.Equals(Name(a.Name), "EventSubscriber", StringComparison.OrdinalIgnoreCase));
-        if (attr == null) yield break;
+        if (attr == null) return null;
         var text = attr.ToString();
         int open = text.IndexOf('('), close = text.LastIndexOf(')');
-        if (open < 0 || close <= open) yield break;
+        if (open < 0 || close <= open) return null;
         var args = SplitArguments(text[(open + 1)..close]);
-        if (args.Count < 3) yield break;
+        if (args.Count < 3) return null;
 
         var kind = AfterScope(args[0]).ToLowerInvariant();
         var target = args[1].Contains("::") ? args[1][(args[1].IndexOf("::", StringComparison.Ordinal) + 2)..].Trim() : "";
         var eventName = Unquote(args[2].Trim());
-        if (eventName.Length == 0 || target.Length == 0) yield break;
+        if (eventName.Length == 0 || target.Length == 0) return null;
         if (kind == "database") kind = "table";
         var objectName = Unquote(target.Contains('.') && !target.StartsWith('"') ? target[(target.LastIndexOf('.') + 1)..] : target);
+        return new SubscriptionTarget(kind, objectName, eventName);
+    }
+
+    /// <summary>The procedure a subscription names, when this compile declares it. A table's built-in
+    /// events and an object this compile does not hold have no procedure to be a caller, so they yield
+    /// nothing.</summary>
+    private static IEnumerable<NavSyntax.MethodDeclarationSyntax> PublisherMethods(
+        SubscriptionTarget sub, IReadOnlyList<NavSyntax.ObjectSyntax> objects)
+    {
         foreach (var obj in objects)
         {
-            if (!ObjectKind(obj).Equals(kind, StringComparison.OrdinalIgnoreCase)) continue;
-            if (!Name(obj.Name).Equals(objectName, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!ObjectKind(obj).Equals(sub.Kind, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!Name(obj.Name).Equals(sub.ObjectName, StringComparison.OrdinalIgnoreCase)) continue;
             foreach (var m in obj.DescendantNodes().OfType<NavSyntax.MethodDeclarationSyntax>())
-                if (Name(m.Name).Equals(eventName, StringComparison.OrdinalIgnoreCase))
+                if (Name(m.Name).Equals(sub.EventName, StringComparison.OrdinalIgnoreCase))
                     yield return m;
         }
     }
@@ -190,7 +215,9 @@ internal sealed class TddCallGraph
     }
 
     /// <summary>The key of every procedure of this compile that is, or transitively calls, the one
-    /// containing <paramref name="diag"/>: where another bundle's code enters a generated member.</summary>
+    /// containing <paramref name="diag"/>: where another bundle's code enters a generated member. A
+    /// subscriber on the way adds its publisher's key and the key of everything known to raise it
+    /// (#5264), which are not procedures of this compile.</summary>
     public IReadOnlyList<string> ProcedureKeysReaching(NavDiag.Diagnostic diag)
     {
         var tree = diag.Location.SourceTree;
@@ -198,8 +225,11 @@ internal sealed class TddCallGraph
         var start = EnclosingMethod(tree.GetRoot().FindToken(diag.Location.SourceSpan.Start).Parent);
         if (start == null) return Array.Empty<string>();
         var keys = new List<string>();
-        foreach (var m in Closure(new[] { start }))
+        var reached = ReachClosure(new[] { start }, out var raisers);
+        foreach (var m in reached)
             if (KeyOf(m) is { } k && !keys.Contains(k)) keys.Add(k);
+        foreach (var k in raisers)
+            if (!keys.Contains(k)) keys.Add(k);
         return keys;
     }
 
@@ -222,11 +252,15 @@ internal sealed class TddCallGraph
                 if (!seeds.Contains(caller)) seeds.Add(caller);
             }
         foreach (var (member, seeds) in byMember)
-            foreach (var m in Closure(seeds))
+        {
+            var reached = ReachClosure(seeds, out var raisers);
+            foreach (var m in reached)
             {
                 if (KeyOf(m) is { } k) procedures.Add((k, member));
                 if (TestLabel(m) is { } label) tests.Add((label, member));
             }
+            foreach (var k in raisers) procedures.Add((k, member));
+        }
         return (procedures, tests);
     }
 
@@ -248,8 +282,60 @@ internal sealed class TddCallGraph
         return order;
     }
 
+    /// <summary><see cref="Closure"/>, plus what a subscriber of a publisher declared in ANOTHER bundle
+    /// adds (#5264): raising that publisher calls the subscriber, so every procedure of this compile
+    /// that calls the publisher or anything known to raise it
+    /// (<see cref="TddCrossBundle.CallersOf"/>, from the bundles compiled before this one) reaches the
+    /// seeds as well, and so do the callers of those. <paramref name="raisers"/> is the key of the
+    /// publisher and of each of its known raisers: a bundle compiled after this one enters through
+    /// those. Over-approximates like every edge here: a subscriber with manual binding, or a
+    /// publisher no path of the run raises, still counts.</summary>
+    private List<NavSyntax.MethodDeclarationSyntax> ReachClosure(
+        IEnumerable<NavSyntax.MethodDeclarationSyntax> seeds, out HashSet<string> raisers)
+    {
+        var order = Closure(seeds);
+        raisers = new HashSet<string>(StringComparer.Ordinal);
+        if (_externalSubscribers.Count == 0) return order;
+        var seen = new HashSet<NavSyntax.MethodDeclarationSyntax>(order);
+        while (true)
+        {
+            var more = new List<NavSyntax.MethodDeclarationSyntax>();
+            foreach (var (subscriber, publisherKey) in _externalSubscribers)
+            {
+                if (!seen.Contains(subscriber)) continue;
+                foreach (var raiser in TddCrossBundle.CallersOf(publisherKey))
+                {
+                    if (!raisers.Add(raiser)) continue;
+                    foreach (var (caller, key) in _externalCalls)
+                        if (key == raiser && !seen.Contains(caller)) more.Add(caller);
+                }
+            }
+            if (more.Count == 0) return order;
+            foreach (var m in Closure(more))
+                if (seen.Add(m)) order.Add(m);
+        }
+    }
+
+    /// <summary>The edges of this graph by <see cref="ProcKey"/>, as (callee, caller): what a bundle
+    /// compiled later needs to follow a subscriber of one of this bundle's publishers back to the
+    /// procedures that raise it (#5264). A subscriber of a publisher declared elsewhere is an edge from
+    /// the publisher's key.</summary>
+    public IEnumerable<(string Callee, string Caller)> KeyEdges()
+    {
+        foreach (var (callee, callers) in _callers)
+            if (KeyOf(callee) is { } calleeKey)
+                foreach (var caller in callers)
+                    if (KeyOf(caller) is { } callerKey) yield return (calleeKey, callerKey);
+        foreach (var (caller, key) in _externalCalls)
+            if (KeyOf(caller) is { } callerKey) yield return (key, callerKey);
+        foreach (var (subscriber, publisherKey) in _externalSubscribers)
+            if (KeyOf(subscriber) is { } subscriberKey) yield return (subscriberKey, publisherKey);
+    }
+
     /// <summary>"ObjectName.MethodName" of every [Test] procedure that is, or transitively calls,
-    /// the procedure containing <paramref name="diag"/>.</summary>
+    /// the procedure containing <paramref name="diag"/>. A test that raises the event of a subscriber
+    /// in this compile is not named here: it is named by the compile after the re-run, which
+    /// follows the subscriber's raisers (<see cref="ReachClosure"/>, #5264).</summary>
     public IReadOnlyList<string> TestsReaching(NavDiag.Diagnostic diag)
     {
         var tree = diag.Location.SourceTree;

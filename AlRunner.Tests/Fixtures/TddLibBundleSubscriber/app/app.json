@@ -1,0 +1,23 @@
+{
+  "id": "a1b2c3d4-1111-4a61-8b93-0c7d5e9f1a01",
+  "name": "Runner Tests Fixture - Tdd Lib Subscriber App",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "The #5264 publisher: raises events whose subscribers sit in other bundles.",
+  "description": "The #5264 publisher: raises events whose subscribers sit in other bundles.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 71940,
+      "to": 71949
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

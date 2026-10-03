@@ -70,10 +70,50 @@ public static class TddSourceOverlay
 public static class TddCrossBundle
 {
     private static readonly object Sync = new();
-    private static readonly Dictionary<string, (string Dir, string? AppJson)> Impls = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, (string Dir, string? AppJson, Guid AppId)> Impls = new(StringComparer.OrdinalIgnoreCase);
+    // #5264: the call edges (callee key -> caller keys) of every source bundle another bundle depends on,
+    // by TddCallGraph.ProcKey, filled when that bundle compiles. A subscriber in a LATER bundle to one
+    // of its publishers is reached by whatever raises the publisher, which only these edges say.
+    private static readonly Dictionary<string, HashSet<string>> KeyCallers = new(StringComparer.Ordinal);
+    private static readonly HashSet<Guid> KeyGraphApps = new();
+    private static readonly HashSet<string> RunBundles = new(StringComparer.OrdinalIgnoreCase);
+    private static bool? _anySubscriber;
+    // #5266: codeunits of source bundles this run compiled and dropped, by id. Not per bundle: a library
+    // dropped in its own bundle iteration is still missing when a later bundle's test calls it.
+    private static readonly Dictionary<int, DroppedCodeunit> Dropped = new();
+
+    /// <summary>A codeunit a source bundle's compile dropped: the bundle, the codeunit's name and the
+    /// first AL diagnostic that identified it.</summary>
+    internal sealed record DroppedCodeunit(string App, string Name, string Diagnostic);
+
+    internal static void RegisterDroppedCodeunit(int id, DroppedCodeunit dropped)
+    {
+        lock (Sync) Dropped[id] = dropped;
+    }
+
+    // #5271: objects a DEPENDENCY LOAD dropped under --tdd, by display name, so the closing line does not say
+    // "no test referenced a missing symbol" when the library that referenced it was compiled only there.
+    private static readonly HashSet<string> DependencyDropped = new(StringComparer.Ordinal);
+
+    internal static void NoteDependencyDropped(IEnumerable<string> objectDisplayNames)
+    {
+        lock (Sync) foreach (var n in objectDisplayNames) DependencyDropped.Add(n);
+    }
+
+    internal static IReadOnlyList<string> DependencyDroppedNames()
+    {
+        lock (Sync) return DependencyDropped.ToList();
+    }
+
+    internal static DroppedCodeunit? DroppedCodeunitById(int id)
+    {
+        lock (Sync) return Dropped.TryGetValue(id, out var d) ? d : null;
+    }
     // Members generated into another bundle, with the module whose compile asked for them. Kept
     // across the re-run: on the re-run the dependent compiles clean and reports nothing itself.
     private static readonly List<(string DependentModule, TddGeneratedMember Member)> Generated = new();
+    // #5271: members generated into the compile that declares them, in a bundle another bundle depends on.
+    private static readonly List<TddGeneratedMember> GeneratedHere = new();
     // (file, kind, member) keys never tried again in this cycle, so a refused guess cannot re-run the
     // cycle forever: every key tried (Attempted), and the ones rolled back after a failed recompile (Refused).
     private static readonly HashSet<string> Refused = new(StringComparer.Ordinal);
@@ -84,22 +124,125 @@ public static class TddCrossBundle
     // name the stub on the tests that reach it. Kept across the re-run, like Generated.
     private static readonly Dictionary<string, List<TddGeneratedMember>> Reaching = new(StringComparer.Ordinal);
     private static bool _pending;
+    // The members of the batch waiting for the recompile (#5265): when the re-run limit stops that
+    // recompile, these are the members generated and never compiled in.
+    private static readonly List<TddGeneratedMember> PendingMembers = new();
 
-    public static void RegisterSourceImpl(string dir, string? appJsonPath)
+    public static void RegisterSourceImpl(string dir, string? appJsonPath, Guid appId = default)
     {
-        lock (Sync) Impls[Path.GetFullPath(dir)] = (Path.GetFullPath(dir), appJsonPath);
+        lock (Sync) Impls[Path.GetFullPath(dir)] = (Path.GetFullPath(dir), appJsonPath, appId);
+    }
+
+    /// <summary>Every bundle of a multi-bundle run, impl or not (#5264): the dirs whose text says whether
+    /// anything in the run subscribes to an event, which decides whether call edges are worth recording.</summary>
+    public static void RegisterRunBundle(string dir)
+    {
+        lock (Sync)
+        {
+            RunBundles.Add(Path.GetFullPath(dir));
+            _anySubscriber = null;
+        }
+    }
+
+    /// <summary>True when a bundle of this run declares an <c>[EventSubscriber]</c>: the only way a
+    /// bundle's call edges are ever read (<see cref="CallersOf"/>). A text probe, so it may say yes for
+    /// a subscriber behind a disabled <c>#if</c>, never no for a real one. Computed once per cycle.</summary>
+    internal static bool AnyBundleSubscribes()
+    {
+        List<string> dirs;
+        lock (Sync)
+        {
+            if (_anySubscriber is { } known) return known;
+            dirs = RunBundles.ToList();
+        }
+        var found = false;
+        foreach (var dir in dirs)
+        {
+            foreach (var file in AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.al"))
+            {
+                try
+                {
+                    if (TddSourceOverlay.ReadAllText(file).Contains("EventSubscriber", StringComparison.OrdinalIgnoreCase))
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+                catch (IOException) { found = true; break; } // unreadable: assume yes, never lose an edge
+            }
+            if (found) break;
+        }
+        lock (Sync) _anySubscriber = found;
+        return found;
+    }
+
+    /// <summary>The app of a source bundle another bundle depends on, when this run has a subscriber for
+    /// its call edges to serve (#5264).</summary>
+    internal static bool WantsKeyGraph(Guid appId) => IsSourceImpl(appId) && AnyBundleSubscribes();
+
+    /// <summary>True for the app of a source bundle another bundle of this run depends on.</summary>
+    internal static bool IsSourceImpl(Guid appId)
+    {
+        lock (Sync) return appId != Guid.Empty && Impls.Values.Any(i => i.AppId == appId);
+    }
+
+    /// <summary>True when that bundle has compiled in this cycle and left its call edges
+    /// (<see cref="RecordKeyGraph"/>). A compiled-deps cache hit compiles nothing, so
+    /// <c>DependencyLoader</c> recompiles such a bundle while this is false.</summary>
+    internal static bool HasKeyGraph(Guid appId)
+    {
+        lock (Sync) return KeyGraphApps.Contains(appId);
+    }
+
+    internal static void RecordKeyGraph(Guid appId, IEnumerable<(string Callee, string Caller)> edges)
+    {
+        lock (Sync)
+        {
+            KeyGraphApps.Add(appId);
+            foreach (var (callee, caller) in edges)
+            {
+                if (!KeyCallers.TryGetValue(callee, out var set)) KeyCallers[callee] = set = new(StringComparer.Ordinal);
+                set.Add(caller);
+            }
+        }
+    }
+
+    /// <summary><paramref name="key"/> and every procedure key that, through the recorded bundles'
+    /// call edges, transitively calls it. Keys are object and procedure name only (the
+    /// <see cref="TddCallGraph.ProcKey"/> over-approximation).</summary>
+    internal static IReadOnlyList<string> CallersOf(string key)
+    {
+        lock (Sync)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal) { key };
+            var order = new List<string> { key };
+            for (var i = 0; i < order.Count; i++)
+                if (KeyCallers.TryGetValue(order[i], out var callers))
+                    foreach (var c in callers)
+                        if (seen.Add(c)) order.Add(c);
+            return order;
+        }
     }
 
     /// <summary>--server (#5034): each request registers its own bundles; one from an earlier
     /// request is not a bundle this request compiles, so nothing may be generated into it.</summary>
     public static void ClearSourceImpls()
     {
-        lock (Sync) Impls.Clear();
+        lock (Sync)
+        {
+            Impls.Clear();
+            RunBundles.Clear();
+            Dropped.Clear();
+            DependencyDropped.Clear();
+            _anySubscriber = null;
+            KeyCallers.Clear();
+            KeyGraphApps.Clear();
+        }
     }
 
     internal static IReadOnlyList<(string Dir, string? AppJson)> SourceImpls()
     {
-        lock (Sync) return Impls.Values.ToList();
+        lock (Sync) return Impls.Values.Select(i => (i.Dir, i.AppJson)).ToList();
     }
 
     /// <summary>A new --tdd cycle: generation starts from the files on disk again, so a member
@@ -109,9 +252,16 @@ public static class TddCrossBundle
         lock (Sync)
         {
             Generated.Clear();
+            GeneratedHere.Clear();
+            PendingMembers.Clear();
             Refused.Clear();
             Attempted.Clear();
             Reaching.Clear();
+            KeyCallers.Clear();
+            KeyGraphApps.Clear();
+            Dropped.Clear();
+            DependencyDropped.Clear();
+            _anySubscriber = null;
             _pending = false;
         }
         TddSourceOverlay.Clear();
@@ -143,10 +293,8 @@ public static class TddCrossBundle
     /// as one member per generated member with those tests as its dependents. Its procedures that do
     /// are recorded too, so a bundle compiled after this one is followed through it.
     /// </summary>
-    internal static IReadOnlyList<TddGeneratedMember> ReachThroughDependencies(
-        NavCA.Compilation compilation, IReadOnlyList<NavSyntax.SyntaxTree> trees)
+    internal static IReadOnlyList<TddGeneratedMember> ReachThroughDependencies(TddCallGraph graph)
     {
-        var graph = TddCallGraph.Build(compilation, trees);
         var (procedures, tests) = graph.ReachThroughDependencies(ReachingMembers);
         foreach (var group in procedures.GroupBy(p => p.Member))
             RecordReaching(group.Select(p => p.Key), group.Key);
@@ -170,8 +318,18 @@ public static class TddCrossBundle
         lock (Sync)
         {
             Generated.Add((dependentModule, member));
+            PendingMembers.Add(member);
             _pending = true;
         }
+    }
+
+    /// <summary>A member generated into the compile of a bundle other bundles depend on, that compile
+    /// being the one that declares it (#5271). Nothing is pending: the compile holds it already. Listed
+    /// by <see cref="AllGenerated"/>, because a bundle compiled only as a dependency of another one
+    /// reports nothing through its own bundle iteration.</summary>
+    internal static void RecordGeneratedHere(TddGeneratedMember member)
+    {
+        lock (Sync) GeneratedHere.Add(member);
     }
 
     /// <summary>Every member generated into another bundle for <paramref name="dependentModule"/>
@@ -187,7 +345,7 @@ public static class TddCrossBundle
     /// never reports its members through <see cref="GeneratedFor"/>.</summary>
     internal static IReadOnlyList<TddGeneratedMember> AllGenerated()
     {
-        lock (Sync) return Generated.Select(g => g.Member).ToList();
+        lock (Sync) return Generated.Select(g => g.Member).Concat(GeneratedHere).ToList();
     }
 
     /// <summary>True while members generated into another bundle wait for that bundle's recompile.
@@ -205,7 +363,23 @@ public static class TddCrossBundle
         {
             var p = _pending;
             _pending = false;
+            PendingMembers.Clear();
             return p;
+        }
+    }
+
+    /// <summary>The re-run limit stopped the recompile that members generated into another bundle wait
+    /// for (#5265): they were never compiled in, so they are taken out of <see cref="Generated"/> (no
+    /// list names them as generated) and returned for the run to report. Empty when nothing waits.</summary>
+    public static IReadOnlyList<TddGeneratedMember> AbandonPending()
+    {
+        lock (Sync)
+        {
+            var batch = PendingMembers.ToList();
+            PendingMembers.Clear();
+            _pending = false;
+            Generated.RemoveAll(g => batch.Any(b => TddReport.Describe(b) == TddReport.Describe(g.Member)));
+            return batch;
         }
     }
 
@@ -218,6 +392,7 @@ public static class TddCrossBundle
         {
             foreach (var k in keys) Refused.Add(k);
             Generated.Clear();
+            PendingMembers.Clear();
             Reaching.Clear();
         }
         TddSourceOverlay.Clear();

@@ -1,0 +1,36 @@
+{
+  "id": "a1b2c3d4-3333-4a61-8b93-0c7d5e9f1a03",
+  "name": "Runner Tests Fixture - Tdd Lib Subscriber Test",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Tests that raise the app's events.",
+  "description": "Tests that raise the app's events.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "a1b2c3d4-1111-4a61-8b93-0c7d5e9f1a01",
+      "name": "Runner Tests Fixture - Tdd Lib Subscriber App",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    },
+    {
+      "id": "a1b2c3d4-2222-4a61-8b93-0c7d5e9f1a02",
+      "name": "Runner Tests Fixture - Tdd Lib Subscriber Lib",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 71960,
+      "to": 71969
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

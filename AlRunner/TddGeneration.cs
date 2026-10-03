@@ -86,7 +86,8 @@ public static class TddGeneration
         NavSyntax.SyntaxTree[] trees,
         NavCA.ParseOptions parseOptions,
         NavEmit.EmitResult emitResult,
-        string? moduleName = null)
+        string? moduleName = null,
+        bool hasDependents = false)
     {
         // Snapshot BEFORE any mutation: once a tree in `trees` is replaced (a second missing
         // member found on an object already patched earlier in this same pass), the ORIGINAL
@@ -167,7 +168,9 @@ public static class TddGeneration
                         if (!deps.Contains(label)) deps.Add(label);
                 // #5161: generated into another bundle, so a bundle compiled after this one reaches
                 // the member through whichever procedures of this compile lead to a call site.
-                if (member.GeneratedIntoFile != null)
+                // The same for a member generated into THIS compile when another bundle depends on it
+                // (#5271): its tests are not in this compile, they call into it.
+                if (member.GeneratedIntoFile != null || hasDependents)
                     TddCrossBundle.RecordReaching(diagsByKey[key].SelectMany(callGraph.ProcedureKeysReaching), member);
             }
             catch (Exception ex)
@@ -178,6 +181,8 @@ public static class TddGeneration
             var withDeps = member with { DependentTests = deps };
             if (withDeps.GeneratedIntoFile != null)
                 TddCrossBundle.RecordGenerated(moduleName ?? "", withDeps);
+            else if (hasDependents)
+                TddCrossBundle.RecordGeneratedHere(withDeps);
             generated.Add(withDeps);
         }
         return generated;

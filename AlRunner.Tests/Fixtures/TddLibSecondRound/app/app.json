@@ -1,0 +1,23 @@
+{
+  "id": "c4d5e6f7-1111-4a61-8b93-0c7d5e9f1d01",
+  "name": "Runner Tests Fixture - Tdd Lib Second Round App",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "The publisher: raises events whose subscribers sit in the library.",
+  "description": "The publisher: raises events whose subscribers sit in the library.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 72200,
+      "to": 72209
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
