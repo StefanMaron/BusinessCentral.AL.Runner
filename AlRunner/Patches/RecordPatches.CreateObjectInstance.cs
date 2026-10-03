@@ -291,8 +291,8 @@ public static partial class RecordPatches
     {
         if (tableId <= 0) return;
         if (!TryGetInAppGroupScope("table", _parsedTables, tableId, out var parsed)) return;
-        if (!_extensionIdsByBaseTable.TryGetValue(parsed.TableName.ToLowerInvariant(), out var extIds)
-            || extIds.Count == 0)
+        var extIds = ExtensionIdsForTable(parsed);
+        if (extIds.Count == 0)
             return;
 
         var already = rec.OrderedTableExtensions;

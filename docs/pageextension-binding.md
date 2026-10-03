@@ -106,7 +106,7 @@ together with #4738).
 
 The runner picks a source pageextension's base page by the name its `extends` clause states, not
 from the compiler's resolution (#5085). `RecordPatches.ExtendsTarget` splits the clause into the
-object name and the namespace written in front of it, and three predicates in
+object name and the namespace written in front of it, and two predicates in
 `RecordPatches.AlPageParser.cs` decide the match:
 
 - A **qualified** clause (`extends NS."Page"`) matches a source page of that name in namespace NS.
@@ -117,5 +117,5 @@ object name and the namespace written in front of it, and three predicates in
   name are not told apart, and a bare clause is not checked against the file's `using`s.
 
 Before this, the whole clause text was kept as the name, so a qualified clause equalled no page
-and the extension attached to nothing. A tableextension's clause is reduced to its last name
-segment, as a reportextension's already was, and is matched by name alone (#5223).
+and the extension attached to nothing. A tableextension's clause is split the same way and
+resolved by namespace in [tableextension-binding.md](tableextension-binding.md) (#5289).

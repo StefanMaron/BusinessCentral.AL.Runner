@@ -203,7 +203,7 @@ public static partial class RecordPatches
     /// see docs/object-metadata-from-bc.md#scope for what each case means. Written only from
     /// inside <see cref="MergeExtensionFields"/>, never at a call site.
     /// </summary>
-    internal static readonly Dictionary<string, List<(Guid? OwningAppId, bool HasModify)>>
+    internal static readonly Dictionary<string, List<(Guid? OwningAppId, bool HasModify, int ExtensionId)>>
         _extensionSourceInfo = new();
 
     /// <summary>
@@ -221,14 +221,33 @@ public static partial class RecordPatches
     /// are recorded HERE rather than through a second call a writer could forget.
     /// </summary>
     private static void MergeExtensionFields(string baseTableName, int extensionId, IEnumerable<ParsedField> fields,
-        IEnumerable<ParsedExtensionKey>? keys = null, Guid? owningAppId = null, bool hasModify = false)
+        IEnumerable<ParsedExtensionKey>? keys = null, Guid? owningAppId = null, bool hasModify = false,
+        TableExtensionTarget? target = null)
     {
         if (string.IsNullOrEmpty(baseTableName)) return;
         var key = baseTableName.ToLowerInvariant();
 
+        // Only a source extension states a target; see RecordPatches.TableExtensionTargets.cs. The
+        // registries below stay keyed by name, and a reader asks ExtensionIdsForTable which of them
+        // extend ITS table. Materialised first: `fields` is enumerated twice below.
+        var fieldList = fields as IList<ParsedField> ?? fields.ToList();
+        var keyList = keys == null ? null : (keys as IList<ParsedExtensionKey> ?? keys.ToList());
+        if (extensionId > 0)
+        {
+            if (target != null) _tableExtensionTargets[extensionId] = target;
+            if (!_extensionContributions.TryGetValue(extensionId, out var own))
+                _extensionContributions[extensionId] = own = (new List<ParsedField>(), new List<ParsedExtensionKey>());
+            var ownIds = new HashSet<int>(own.Fields.Select(f => f.FieldId));
+            foreach (var f in fieldList)
+                if (ownIds.Add(f.FieldId)) own.Fields.Add(f);
+            if (keyList != null)
+                foreach (var k in keyList) AddExtensionKeyDeduped(own.Keys, k);
+        }
+        InvalidateExtensionTargetCache();
+
         if (!_extensionSourceInfo.TryGetValue(key, out var sourceInfo))
             _extensionSourceInfo[key] = sourceInfo = new();
-        sourceInfo.Add((owningAppId, hasModify));
+        sourceInfo.Add((owningAppId, hasModify, extensionId));
 
         // De-dup by field id: the same extension can legitimately be scanned/merged more than
         // once (a dependency app's source dir registered both by its own suite AND by
@@ -237,11 +256,11 @@ public static partial class RecordPatches
         // #1686 / #1711). A duplicated field id corrupts NCLMetaTable's positional field-count
         // arithmetic.
         if (!_parsedExtensionFields.TryGetValue(key, out var existing))
-            _parsedExtensionFields[key] = new List<ParsedField>(fields);
+            _parsedExtensionFields[key] = new List<ParsedField>(fieldList);
         else
         {
             var existingIds = new HashSet<int>(existing.Select(f => f.FieldId));
-            foreach (var f in fields)
+            foreach (var f in fieldList)
                 if (existingIds.Add(f.FieldId))
                     existing.Add(f);
         }
@@ -254,20 +273,12 @@ public static partial class RecordPatches
         // part of the identity because two DIFFERENT tableextensions on one table may each
         // declare a key called "Key1" — AL only requires a key name to be unique within its own
         // object — so name alone would silently drop the second one.
-        if (keys != null)
+        if (keyList != null)
         {
             if (!_parsedExtensionKeys.TryGetValue(key, out var existingKeys))
                 _parsedExtensionKeys[key] = existingKeys = new List<ParsedExtensionKey>();
-            foreach (var k in keys)
-            {
-                if (k.FieldNames.Count == 0) continue;
-                if (existingKeys.Any(e => string.Equals(e.Name, k.Name, StringComparison.OrdinalIgnoreCase)
-                        && e.FieldNames.Count == k.FieldNames.Count
-                        && e.FieldNames.Zip(k.FieldNames, (a, b) =>
-                               string.Equals(a, b, StringComparison.OrdinalIgnoreCase)).All(x => x)))
-                    continue;
-                existingKeys.Add(k);
-            }
+            foreach (var k in keyList)
+                AddExtensionKeyDeduped(existingKeys, k);
         }
 
         if (extensionId > 0)
@@ -297,8 +308,8 @@ public static partial class RecordPatches
     /// </summary>
     internal static IEnumerable<ParsedField> GetAllFieldsIncludingExtensions(ParsedTable table)
     {
-        if (!_parsedExtensionFields.TryGetValue(table.TableName.ToLowerInvariant(), out var extFields)
-            || extFields.Count == 0)
+        var extFields = ExtensionFieldsFor(table);
+        if (extFields.Count == 0)
             return table.Fields;
 
         var baseFieldIds = new HashSet<int>(table.Fields.Select(f => f.FieldId));
@@ -316,13 +327,14 @@ public static partial class RecordPatches
         var result = new Dictionary<int, List<int>>();
         foreach (var (baseName, extIds) in _extensionIdsByBaseTable)
         {
-            var baseIds = _parsedTables.Values
+            var named = _parsedTables.Values
                 .Where(t => string.Equals(t.TableName, baseName, StringComparison.OrdinalIgnoreCase))
-                .Select(t => t.TableId).Distinct().ToList();
+                .ToList();
             foreach (var e in extIds)
             {
                 if (!result.TryGetValue(e, out var list)) result[e] = list = new List<int>();
-                foreach (var b in baseIds) if (!list.Contains(b)) list.Add(b);
+                foreach (var t in named)
+                    if (!list.Contains(t.TableId) && ExtensionAttachesToTable(e, t)) list.Add(t.TableId);
             }
         }
         return result;
@@ -402,6 +414,11 @@ public static partial class RecordPatches
         // #3600 — cleared alongside the two above for the same reason: a stale entry here
         // would attribute the PREVIOUS bundle's app boundaries to the next one's tables.
         _extensionSourceInfo.Clear();
+        // #5289 — the per-extension half of the same merge: a target or contribution surviving a
+        // reload would attach the previous bundle's extension to the next bundle's table.
+        _tableExtensionTargets.Clear();
+        _extensionContributions.Clear();
+        InvalidateExtensionTargetCache();
         // #2478: must invalidate _bcSymbolTableIndex too, not just _bcSymbolExtensionIndexBuilt —
         // EnsureBcSymbolExtensionIndex's only call site is inside EnsureBcSymbolTableIndex, gated
         // by `_bcSymbolTableIndex != null`. Leaving that index populated made the flag reset above

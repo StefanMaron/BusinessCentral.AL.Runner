@@ -93,11 +93,8 @@ public static partial class RecordPatches
     internal static bool ShouldBuildTableFromBcDocument(int tableId, ParsedTable parsed)
     {
         if (!HasBcTableMetadataDocument(tableId)) return false;
-        var key = parsed.TableName.ToLowerInvariant();
-        if (!_extensionSourceInfo.TryGetValue(key, out var extensions) || extensions.Count == 0)
-            return true;
-
-        foreach (var (owningAppId, hasModify) in extensions)
+        // Only the extensions of THIS table: another table's extension of the same name (#5289).
+        foreach (var (owningAppId, hasModify) in ExtensionSourceInfoFor(parsed))
         {
             if (hasModify) return false;
             if (owningAppId is not { } extApp
@@ -228,8 +225,7 @@ public static partial class RecordPatches
             // own FixupEnumFieldOptionMetadataAll call (BcRuntime.cs), which recomputes
             // extFields itself for every cached table regardless of route — so passing it
             // here too is redundant for enums, not wrong, and kept for AutoIncrement's sake.
-            var extFields = _parsedExtensionFields.TryGetValue(parsed.TableName.ToLowerInvariant(), out var ef)
-                ? ef : Enumerable.Empty<ParsedField>();
+            var extFields = ExtensionFieldsFor(parsed);
             ApplyRunnerFieldWiring(built, parsed, extFields, parsed.Fields.Concat(extFields));
             _bcDocumentBackedTables[kvp.Key] = 1;
             TraceTableMetadataSource(kvp.Key, "bc-document", built);

@@ -153,8 +153,7 @@ public static partial class RecordPatches
             if (!types.Contains(loaded)) types.Add(loaded);
 
         if (!TryGetInAppGroupScope("table", _parsedTables, tableId, out var parsed)) return types;
-        if (!_extensionIdsByBaseTable.TryGetValue(parsed.TableName.ToLowerInvariant(), out var extIds))
-            return types;
+        var extIds = ExtensionIdsForTable(parsed);
 
         foreach (var extensionId in extIds)
         {

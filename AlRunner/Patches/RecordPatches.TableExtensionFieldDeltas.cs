@@ -184,12 +184,15 @@ public static partial class RecordPatches
     /// compiler's — a shape gap worth a line on stderr rather than a silent no-op.</para>
     /// </summary>
     internal static IReadOnlyList<ParsedField> ApplyTableExtensionFieldDeltas(
-        string baseTableName, IReadOnlyList<ParsedField> fields)
+        ParsedTable table, IReadOnlyList<ParsedField> fields)
     {
-        if (string.IsNullOrEmpty(baseTableName) || fields.Count == 0) return fields;
-        if (!_extensionIdsByBaseTable.TryGetValue(baseTableName.ToLowerInvariant(), out var extIds)
-            || extIds.Count == 0)
+        if (string.IsNullOrEmpty(table.TableName) || fields.Count == 0) return fields;
+        // Only the extensions of THIS table: a field id in another table's modify(...) names a
+        // different field (#5289).
+        var extIds = ExtensionIdsForTable(table);
+        if (extIds.Count == 0)
             return fields;
+        var baseTableName = table.TableName;
 
         // Later extensions win on a contested field id, matching the order BC applies deltas
         // in — the registry is keyed per extension, and _extensionIdsByBaseTable preserves
@@ -256,7 +259,7 @@ public static partial class RecordPatches
             // changed nothing, so this asks "did any delta apply" without comparing captions
             // field by field.
             if (!ReferenceEquals(
-                    ApplyTableExtensionFieldDeltas(parsed.TableName, parsed.Fields), parsed.Fields))
+                    ApplyTableExtensionFieldDeltas(parsed, parsed.Fields), parsed.Fields))
                 toEvict.Add(parsed.TableName);
         }
 
