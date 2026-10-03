@@ -26,6 +26,9 @@ public static class CodeCoveragePatches
     private static object? _nclMetadata;
     private static MethodInfo? _getMetaApplicationObject;
     private static object? _emitVersionDefault;
+    // The one ALCodeEnvironment the process seeds, and its public ClearCaches (#5260).
+    private static object? _codeEnvironment;
+    private static MethodInfo? _clearCodeEnvironmentCaches;
 
     /// <summary>
     /// Assign a real <c>ALCodeEnvironment</c> to <paramref name="nclMetadata"/>'s
@@ -58,6 +61,9 @@ public static class CodeCoveragePatches
             ?? throw ShapeGap("ALCodeEnvironment(Func<ApplicationObjectId, NCLMetaApplicationObject>, "
                 + "Func<int, NavAppGroup>, ...) constructor not found");
 
+        var clearCaches = envType.GetMethod("ClearCaches", BindingFlags.Public | BindingFlags.Instance, Type.EmptyTypes)
+            ?? throw ShapeGap("ALCodeEnvironment.ClearCaches() not found");
+
         _nclMetadata = nclMetadata;
         _getMetaApplicationObject = getMeta;
         _emitVersionDefault = emitVersion.HasDefaultValue ? emitVersion.DefaultValue : 0;
@@ -69,7 +75,28 @@ public static class CodeCoveragePatches
         for (int i = 2; i < ctorParams.Length; i++)
             args[i] = ctorParams[i].HasDefaultValue ? ctorParams[i].DefaultValue : null;
 
-        FieldPoke.SetInstance(field, nclMetadata, ctor.Invoke(args));
+        var environment = ctor.Invoke(args);
+        FieldPoke.SetInstance(field, nclMetadata, environment);
+        _codeEnvironment = environment;
+        _clearCodeEnvironmentCaches = clearCaches;
+    }
+
+    /// <summary>
+    /// Drops what BC's ALCodeEnvironment cached about the PREVIOUS run's objects: per-object source
+    /// info (the statement lines read off the compiled type), the object's text and the scope
+    /// contexts, all keyed by object id. The environment is seeded once per process and a
+    /// --server request or --watch cycle compiles its objects anew, so without this a request that
+    /// takes an id from another folder reads the earlier request's statement lines over its own
+    /// text: an exception when they run past it, hits on the wrong lines when they do not (#5260).
+    /// Called from <see cref="RecordPatches.ResetForReload"/>.
+    /// <para>OBSERVABLY EQUIVALENT: ClearCaches is BC's own method, public, and drops only memoized
+    /// reads; the next read recomputes them from the current compile, as on a first request. No
+    /// environment seeded (the engine never booted) means nothing cached, so nothing to clear.</para>
+    /// </summary>
+    internal static void ResetCodeEnvironmentForReload()
+    {
+        if (_codeEnvironment != null)
+            _clearCodeEnvironmentCaches!.Invoke(_codeEnvironment, null);
     }
 
     /// <summary>BC's getter: <c>GetMetaApplicationObject(id, requireCompiled: true)</c>, with a
@@ -210,9 +237,11 @@ public static class CodeCoveragePatches
     {
         var dirs = RecordPatches.RegisteredSourceDirs();
         var execution = RecordPatches.RegisteredExecutionSourceDirs();
-        // Both lists are in the key: the same dirs with another one marked as compiled map
-        // differently (#5250), and a key without that term would replay the old map.
-        var key = string.Join("\n", dirs) + "\n#execution\n" + string.Join("\n", execution);
+        // Every input of the roots is in the key: the same dirs with another one marked as compiled
+        // map differently (#5250), and so do the same dirs beside another loaded package (#5259);
+        // a key without that term would replay the old map.
+        var key = string.Join("\n", dirs) + "\n#execution\n" + string.Join("\n", execution)
+            + "\n#packages\n" + PackagedDependencySources.RegistrationKey();
         lock (_mapLock)
         {
             if (_map == null || _mapKey != key)

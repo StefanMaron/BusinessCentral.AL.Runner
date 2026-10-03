@@ -45,6 +45,12 @@ internal static class PackagedDependencySources
 
     internal static int RegisteredCount => _apps.Count;
 
+    /// <summary>What is registered, as a string that changes when a registration does: the key of a
+    /// memo built over <see cref="RootsByApp(Func{Guid, bool}?)"/>, which would otherwise have to
+    /// extract the packages to learn whether anything moved (#5259).</summary>
+    internal static string RegistrationKey() =>
+        string.Join("\n", _apps.OrderBy(kv => kv.Key).Select(kv => kv.Key.ToString("N") + "|" + kv.Value.CacheKey));
+
     /// <summary>
     /// One directory per registered package holding the AL it was compiled from, written on first
     /// use. Called only when a coverage map is built, so a run without coverage never extracts.

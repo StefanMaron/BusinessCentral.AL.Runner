@@ -45,8 +45,9 @@ public sealed class CodeCoverageLogSiblingSourceTests : IDisposable
     // a helper that marks the execution roots. Reads the production source, so a new caller
     // fails here by name.
     //
-    // Allowlisted: the DAP syntax index builds over the launched bundle's own compiled folders
-    // only (Program.cs, `syntaxSourceMap`), so there is no sibling folder in that list to prefer.
+    // Allowlisted: `HandleServerExecute`'s `syntaxSourceMap` (server `execute` with captureValues or
+    // iterationTracking) builds over the request's own `sourcePaths`, every one of which that
+    // request compiles, so there is no sibling folder in that list to prefer.
     [Fact]
     public void EveryProductionBuildCaller_MarksTheExecutionRoots()
     {

@@ -29,7 +29,7 @@ public sealed class CoveragePackagedDependencyTests : IDisposable
     private static readonly string FixtureRoot =
         Path.Combine(RepoRoot, "AlRunner.Tests", "Fixtures", "CoverageDependencySource");
 
-    private const string DepAppId = "c9a37e51-6d24-4b83-a15f-8e2760d4bb31";
+    internal const string DepAppId = "c9a37e51-6d24-4b83-a15f-8e2760d4bb31";
     private const string DepName = "Runner Tests Fixture - Coverage Dependency Source Subject";
     private const string DepPublisher = "AL Runner";
     internal const string DepPackageFile = "AL Runner_" + DepName + "_1.0.0.0.app";
