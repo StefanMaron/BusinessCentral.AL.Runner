@@ -742,6 +742,10 @@ public sealed class DependencyLoader
         (Assembly? Asm, string? Tier3CacheKey, IReadOnlyList<Assembly> Assemblies)? TryServeFromSourceCache()
         {
             if (!File.Exists(cachedDll)) return null;
+            // #5263: the key has no --tdd term, so a plain run's partial answer (an object dropped for a
+            // missing member) shares this key. Served to a --tdd run it never compiles, the AL0132 that
+            // would trigger generation never appears, and nothing is generated. Recompile instead.
+            if (BcCompiler.IsTddMode() && CachedDropWasAMissingMember(emitExcludedSidecar)) return null;
             try
             {
                 var cachedBytes = File.ReadAllBytes(cachedDll);
@@ -896,6 +900,30 @@ public sealed class DependencyLoader
             throw new DependencyLoadException(m.Publisher, m.Name, m.Version.ToString(), "EMIT-FAIL", detail, ex);
         }
         var emitted = emitOutput.Sources;
+        // #5243: --tdd generated a member into ANOTHER source bundle (this compile's, or an earlier
+        // one's) and that bundle is not recompiled yet, so this compile bound against its old
+        // symbols. A dependency that lost objects to the missing member is not a verdict, and
+        // nothing of it may reach the compiled-deps cache below: its key (ComputeSourceDependencyCacheKeyCore)
+        // does not name the bundle the member went into, so a re-run could be served the stale assembly.
+        if ((emitted.Count == 0 || emitOutput.ExcludedObjects.Count > 0)
+            && BcCompiler.IsTddMode() && TddCrossBundle.HasPendingRecompile())
+            throw new DependencyLoadException(m.Publisher, m.Name, m.Version.ToString(),
+                DependencyLoadException.TddRecompileStage,
+                "compiled against a bundle that --tdd generated a member into and has not recompiled yet");
+        // #5243: under --tdd a source dependency whose every object was dropped for an AL diagnostic
+        // (a missing member --tdd refused to generate: a Text argument, a bare statement) reports
+        // like the partial drop below and loads no assembly, so the tests still run and fail where
+        // they reach it. It is not cached: the empty result is a --tdd answer, and a later run
+        // without --tdd must reach the EMIT-ZERO below.
+        if (emitted.Count == 0 && emitOutput.ExcludedObjects.Count > 0 && BcCompiler.IsTddMode())
+        {
+            AlRunner.Infrastructure.ProvisionGapLog.Report(
+                $"{m.Publisher}_{m.Name} v{m.Version}: EMIT-EXCLUDED — " +
+                BuildDependencyEmitExcludedDetail(
+                    emitOutput.ExcludedObjects, 0, emitOutput.ExcludedObjectDiagnostics ?? Array.Empty<string>())
+                + " --tdd keeps the run going without it: a test that reaches the dependency reports FAILED.");
+            return (null, null, EmptyAssemblies);
+        }
         if (emitted.Count == 0)
         {
             // EMIT-ZERO: Emit returned success but produced no sources — BC's silent
@@ -989,6 +1017,24 @@ public sealed class DependencyLoader
             Console.Error.WriteLine($"[dep-load-fail] {m.Publisher}_{m.Name} v{m.Version}: LOAD-FAIL — {detail}");
             throw new DependencyLoadException(m.Publisher, m.Name, m.Version.ToString(), "LOAD-FAIL", detail, ex);
         }
+    }
+
+    /// <summary>
+    /// Whether the cached emit-exclusion report of a source dependency names a missing member (AL0132,
+    /// or AL0126 for a missing overload), the two diagnostics --tdd generates from. A report that
+    /// cannot be read (an IOException, or on Linux the UnauthorizedAccessException of a file with no
+    /// read permission) counts as one, so --tdd recompiles rather than trust an entry it cannot
+    /// classify. No report means a complete compile: false.
+    /// </summary>
+    internal static bool CachedDropWasAMissingMember(string emitExcludedSidecar)
+    {
+        if (!File.Exists(emitExcludedSidecar)) return false;
+        try
+        {
+            var report = File.ReadAllText(emitExcludedSidecar);
+            return report.Contains("AL0132", StringComparison.Ordinal) || report.Contains("AL0126", StringComparison.Ordinal);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return true; }
     }
 
     /// <summary>

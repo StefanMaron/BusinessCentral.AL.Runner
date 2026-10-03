@@ -1,0 +1,23 @@
+{
+  "id": "e4f6d8a0-5172-4d94-9ec6-3fa08b2c4d57",
+  "name": "Runner Tests Fixture - Tdd Lib Refused App",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "The implementing app of the #5243 reproducer: a codeunit that does not declare the member the library calls (a member --tdd refuses to generate).",
+  "description": "The implementing app of the #5243 reproducer: a codeunit that does not declare the member the library calls (a member --tdd refuses to generate).",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65470,
+      "to": 65479
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

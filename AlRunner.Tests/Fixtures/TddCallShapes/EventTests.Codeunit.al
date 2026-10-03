@@ -31,4 +31,20 @@ codeunit 65205 "Tdd Shape Event Tests"
     begin
         Publisher.RaiseCounted();
     end;
+
+    [Test]
+    procedure RaisingTheTablePublisher_ReachesOnlyTheTableSubscribersStub()
+    var
+        Publisher: Record "Tdd Shape Publisher";
+    begin
+        Publisher.RaiseCounted();
+    end;
+
+    [Test]
+    procedure RaisingAnEventSubscribedByBareObjectId_IsNotAnnotated()
+    var
+        Publisher: Codeunit "Tdd Shape Publisher";
+    begin
+        Publisher.RaiseById();
+    end;
 }

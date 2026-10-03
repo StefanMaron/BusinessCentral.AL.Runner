@@ -1,0 +1,30 @@
+{
+  "id": "c2d4b6e8-3f50-4b72-9ca4-1d8e6f0a2b35",
+  "name": "Runner Tests Fixture - Tdd Lib Bundle Lib",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "A test library between the app and its tests: calls a member the app does not declare yet, through a helper procedure.",
+  "description": "A test library between the app and its tests: calls a member the app does not declare yet, through a helper procedure.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "b1c3a5d7-2e4f-4a61-8b93-0c7d5e9f1a24",
+      "name": "Runner Tests Fixture - Tdd Lib Bundle App",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65450,
+      "to": 65459
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

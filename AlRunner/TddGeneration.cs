@@ -97,17 +97,18 @@ public static class TddGeneration
 
         // key = (target tree index, kind, member name) — the SAME missing member can be named
         // by more than one AL0132 diagnostic (two sibling [Test] procedures referencing the
-        // same not-yet-declared field). Generated once; a null value means this key was
-        // ATTEMPTED and REFUSED (do not retry it on the next diagnostic naming it, and do not
-        // attribute any dependent test to it — nothing was actually generated).
-        var generatedByKey = new Dictionary<string, TddGeneratedMember?>(StringComparer.Ordinal);
-        // key -> every "ObjectDisplayName.MethodName" this run's compile identified as
-        // depending on it — EVERY diagnostic naming the same missing member, not just whichever
-        // one happened to trigger the actual generation. Resolved statically from each
-        // diagnostic's own Location, never from what actually executed — see
-        // TddGeneratedMember.DependentTests' doc comment for why that matters.
-        var dependentsByKey = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-        TddCallGraph? callGraph = null;
+        // same not-yet-declared field). Generated once, from the first call site that anchors it
+        // (#5244): a site that cannot (a bare statement) refuses only itself, so a later site of the
+        // same key is tried, and a key is refused only when no site of it could be generated.
+        var generatedByKey = new Dictionary<string, TddGeneratedMember>(StringComparer.Ordinal);
+        // key -> every diagnostic naming it, generated or not: after the member exists, a test that
+        // reaches ANY of those sites compiles against it, the refused one included.
+        var diagsByKey = new Dictionary<string, List<NavDiag.Diagnostic>>(StringComparer.Ordinal);
+        // The cross-bundle state (TddCrossBundle.TryBeginAttempt) is asked once per key and records the
+        // attempt, which is what stops a refused key being retried in this cycle; a key an earlier
+        // compile of the cycle already attempted is blocked here.
+        var crossSeen = new HashSet<string>(StringComparer.Ordinal);
+        var blockedKeys = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var diag in emitResult.Diagnostics)
         {
@@ -123,22 +124,21 @@ public static class TddGeneration
                 var key = target.Value.CrossFile != null
                     ? CrossKey(target.Value.CrossFile, target.Value.Kind, target.Value.MemberKey)
                     : $"{target.Value.TargetTreeIdx}|{target.Value.Kind}|{target.Value.MemberKey}";
-                if (!generatedByKey.TryGetValue(key, out var member))
-                {
-                    member = target.Value.CrossFile != null
-                        ? TryGenerateCrossBundle(compilation, target.Value, key)
-                        : TryGenerate(compilation, trees, parseOptions, target.Value);
-                    generatedByKey[key] = member;
-                }
-                if (member == null) continue; // this key was attempted (now or earlier) and refused
+                if (!diagsByKey.TryGetValue(key, out var siteList))
+                    diagsByKey[key] = siteList = new List<NavDiag.Diagnostic>();
+                siteList.Add(diag);
+                if (generatedByKey.ContainsKey(key) || blockedKeys.Contains(key)) continue;
 
-                // #5147: every [Test] that reaches the referencing method, directly or through
-                // procedures it calls in this compile (helpers, library codeunits).
-                callGraph ??= TddCallGraph.Build(compilation, originalTrees);
-                if (!dependentsByKey.TryGetValue(key, out var list))
-                    dependentsByKey[key] = list = new List<string>();
-                foreach (var label in callGraph.TestsReaching(diag))
-                    if (!list.Contains(label)) list.Add(label);
+                // Begun once per key, here, so a refusal at one site does not close the key to the next.
+                if (target.Value.CrossFile != null && crossSeen.Add(key) && !TddCrossBundle.TryBeginAttempt(key))
+                {
+                    blockedKeys.Add(key);
+                    continue;
+                }
+                var member = target.Value.CrossFile != null
+                    ? TryGenerateCrossBundle(compilation, target.Value)
+                    : TryGenerate(compilation, trees, parseOptions, target.Value);
+                if (member != null) generatedByKey[key] = member;
             }
             catch
             {
@@ -147,13 +147,34 @@ public static class TddGeneration
             }
         }
 
+        // key -> every "ObjectDisplayName.MethodName" this run's compile identified as
+        // depending on it — EVERY diagnostic naming the same missing member, not just whichever
+        // one happened to trigger the actual generation. Resolved statically from each
+        // diagnostic's own Location, never from what actually executed — see
+        // TddGeneratedMember.DependentTests' doc comment for why that matters.
         var generated = new List<TddGeneratedMember>();
+        TddCallGraph? callGraph = null;
         foreach (var (key, member) in generatedByKey)
         {
-            if (member == null) continue;
-            var deps = dependentsByKey.TryGetValue(key, out var l)
-                ? (IReadOnlyList<string>)l
-                : Array.Empty<string>();
+            var deps = new List<string>();
+            try
+            {
+                // #5147: every [Test] that reaches a referencing method, directly or through
+                // procedures it calls in this compile (helpers, library codeunits).
+                callGraph ??= TddCallGraph.Build(compilation, originalTrees);
+                foreach (var diag in diagsByKey[key])
+                    foreach (var label in callGraph.TestsReaching(diag))
+                        if (!deps.Contains(label)) deps.Add(label);
+                // #5161: generated into another bundle, so a bundle compiled after this one reaches
+                // the member through whichever procedures of this compile lead to a call site.
+                if (member.GeneratedIntoFile != null)
+                    TddCrossBundle.RecordReaching(diagsByKey[key].SelectMany(callGraph.ProcedureKeysReaching), member);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"--tdd: could not find the tests that reach {TddReport.Describe(member)} " +
+                    $"({ex.GetType().Name}: {ex.Message.Split('\n', 2)[0]}); they carry no generatedStubs for it.");
+            }
             var withDeps = member with { DependentTests = deps };
             if (withDeps.GeneratedIntoFile != null)
                 TddCrossBundle.RecordGenerated(moduleName ?? "", withDeps);
@@ -294,10 +315,8 @@ public static class TddGeneration
     /// </summary>
     private static TddGeneratedMember? TryGenerateCrossBundle(
         NavCA.Compilation compilation,
-        Target target,
-        string key)
+        Target target)
     {
-        if (!TddCrossBundle.TryBeginAttempt(key)) return null;
         var found = TddCrossBundle.FindObject(SyntaxTypeFor(target.Kind), target.TargetObjectName);
         if (found == null || !string.Equals(found.Value.FilePath, target.CrossFile, StringComparison.Ordinal))
             return null;
@@ -327,11 +346,7 @@ public static class TddGeneration
             "enum-value" => TryGenerateEnumValue(parseOptions, targetObj, target.MemberName),
             _ => null,
         };
-        if (result == null)
-        {
-            TddCrossBundle.Refuse(key);
-            return null;
-        }
+        if (result == null) return null;
 
         var newRoot = root.WithObjects(objects.Replace(targetObj, result.Value.NewObj));
         TddSourceOverlay.Set(found.Value.FilePath, newRoot.ToFullString());

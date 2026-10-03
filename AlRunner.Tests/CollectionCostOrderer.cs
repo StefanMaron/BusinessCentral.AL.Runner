@@ -478,6 +478,10 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (161.3s) scaled by the
             // local after/before ratio (37.8s/83.2s). An estimate until a CI leg measures it.
             ["ServerTddTests"] = 73,
+            // #5243/#5263: added by its PR, four tests that each run the runner twice on one cache root;
+            // about 34s locally (38s for the dotnet test call). An estimate until a CI leg measures it:
+            // replace with the observed maximum.
+            ["TddLibBundleWarmCacheTests"] = 70,
             // #5079: added by its PR, three server starts and six requests; 27s locally. An
             // estimate until a CI leg measures it: replace with the observed maximum.
             // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (63.2s) scaled by the

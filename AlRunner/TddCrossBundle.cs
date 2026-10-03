@@ -3,6 +3,7 @@
 // generated into the app's source IN MEMORY (TddSourceOverlay), and the cycle is re-run so the app
 // is recompiled — its symbols, its workspace package and its own module — before the test bundle
 // compiles again. Nothing is written to the watched tree; see TddGeneration.cs's header.
+using NavCA = Microsoft.Dynamics.Nav.CodeAnalysis;
 using NavSyntax = Microsoft.Dynamics.Nav.CodeAnalysis.Syntax;
 
 namespace AlRunner;
@@ -73,10 +74,15 @@ public static class TddCrossBundle
     // Members generated into another bundle, with the module whose compile asked for them. Kept
     // across the re-run: on the re-run the dependent compiles clean and reports nothing itself.
     private static readonly List<(string DependentModule, TddGeneratedMember Member)> Generated = new();
-    // (file, kind, member) keys whose generation was refused or rolled back — never retried in
-    // this cycle, so a refused guess cannot re-run the cycle forever.
+    // (file, kind, member) keys never tried again in this cycle, so a refused guess cannot re-run the
+    // cycle forever: every key tried (Attempted), and the ones rolled back after a failed recompile (Refused).
     private static readonly HashSet<string> Refused = new(StringComparer.Ordinal);
     private static readonly HashSet<string> Attempted = new(StringComparer.Ordinal);
+    // #5161: procedures of a bundle that reach a member generated into ANOTHER bundle, by
+    // TddCallGraph.ProcKey. A bundle compiled later (a test bundle calling a test library, which
+    // calls the generated member) is not the compile that held the missing call, so it reads this to
+    // name the stub on the tests that reach it. Kept across the re-run, like Generated.
+    private static readonly Dictionary<string, List<TddGeneratedMember>> Reaching = new(StringComparer.Ordinal);
     private static bool _pending;
 
     public static void RegisterSourceImpl(string dir, string? appJsonPath)
@@ -105,9 +111,48 @@ public static class TddCrossBundle
             Generated.Clear();
             Refused.Clear();
             Attempted.Clear();
+            Reaching.Clear();
             _pending = false;
         }
         TddSourceOverlay.Clear();
+    }
+
+    internal static void RecordReaching(IEnumerable<string> procKeys, TddGeneratedMember member)
+    {
+        lock (Sync)
+            foreach (var key in procKeys)
+            {
+                if (!Reaching.TryGetValue(key, out var list)) Reaching[key] = list = new();
+                if (!list.Contains(member)) list.Add(member);
+            }
+    }
+
+    internal static bool HasReaching
+    {
+        get { lock (Sync) return Reaching.Count > 0; }
+    }
+
+    private static IReadOnlyList<TddGeneratedMember> ReachingMembers(string procKey)
+    {
+        lock (Sync) return Reaching.TryGetValue(procKey, out var list) ? list.ToList() : Array.Empty<TddGeneratedMember>();
+    }
+
+    /// <summary>
+    /// A clean compile of <paramref name="moduleName"/> after --tdd generated into another bundle
+    /// (#5161): the [Test]s of it that reach a generated member through another bundle's procedures,
+    /// as one member per generated member with those tests as its dependents. Its procedures that do
+    /// are recorded too, so a bundle compiled after this one is followed through it.
+    /// </summary>
+    internal static IReadOnlyList<TddGeneratedMember> ReachThroughDependencies(
+        NavCA.Compilation compilation, IReadOnlyList<NavSyntax.SyntaxTree> trees)
+    {
+        var graph = TddCallGraph.Build(compilation, trees);
+        var (procedures, tests) = graph.ReachThroughDependencies(ReachingMembers);
+        foreach (var group in procedures.GroupBy(p => p.Member))
+            RecordReaching(group.Select(p => p.Key), group.Key);
+        return tests.GroupBy(t => t.Member)
+            .Select(g => g.Key with { DependentTests = g.Select(t => t.TestLabel).Distinct().ToList() })
+            .ToList();
     }
 
     internal static bool TryBeginAttempt(string key)
@@ -118,11 +163,6 @@ public static class TddCrossBundle
             Attempted.Add(key);
             return true;
         }
-    }
-
-    internal static void Refuse(string key)
-    {
-        lock (Sync) Refused.Add(key);
     }
 
     internal static void RecordGenerated(string dependentModule, TddGeneratedMember member)
@@ -140,6 +180,21 @@ public static class TddCrossBundle
     {
         lock (Sync)
             return Generated.Where(g => g.DependentModule == dependentModule).Select(g => g.Member).ToList();
+    }
+
+    /// <summary>Every member generated into another bundle this cycle, whichever module's compile asked
+    /// for it. A bundle run only as a dependency of another one (its module reused, not compiled again)
+    /// never reports its members through <see cref="GeneratedFor"/>.</summary>
+    internal static IReadOnlyList<TddGeneratedMember> AllGenerated()
+    {
+        lock (Sync) return Generated.Select(g => g.Member).ToList();
+    }
+
+    /// <summary>True while members generated into another bundle wait for that bundle's recompile.
+    /// Reads without taking: <see cref="TakePendingRecompile"/> stays the caller's one decision.</summary>
+    public static bool HasPendingRecompile()
+    {
+        lock (Sync) return _pending;
     }
 
     /// <summary>True once per batch of new members: the caller re-runs the cycle so the bundle
@@ -163,6 +218,7 @@ public static class TddCrossBundle
         {
             foreach (var k in keys) Refused.Add(k);
             Generated.Clear();
+            Reaching.Clear();
         }
         TddSourceOverlay.Clear();
     }

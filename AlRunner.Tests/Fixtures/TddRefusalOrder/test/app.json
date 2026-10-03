@@ -1,0 +1,30 @@
+{
+  "id": "d8b0f2c4-7395-4a16-8be8-6c1d4e3f5a72",
+  "name": "Runner Tests Fixture - Tdd Refusal Order Test",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Two tests name one missing member of the app; the first call cannot anchor a type.",
+  "description": "Two tests name one missing member of the app; the first call cannot anchor a type.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "c7a9e1b3-6284-4f05-9ad7-5b0c3d2e4f61",
+      "name": "Runner Tests Fixture - Tdd Refusal Order App",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65510,
+      "to": 65519
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

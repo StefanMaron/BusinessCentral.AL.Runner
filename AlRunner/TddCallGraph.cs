@@ -13,13 +13,17 @@ namespace AlRunner;
 /// [Test] to each handler its [HandlerFunctions] names, and from an event publisher declared in the
 /// compile to each [EventSubscriber] naming it (#5161). A publisher the compile does not declare as
 /// a procedure (a table trigger event, an event of a precompiled object) adds no edge. Calls that
-/// do not bind (the missing member itself, a precompiled dependency, a codeunit run by id) add
-/// no edge. Over-approximates execution — a branch that never runs still counts — which keeps
+/// do not bind (the missing member itself, a codeunit run by id) add no edge, and a call to a
+/// procedure another compile declares adds none inside this graph: it is kept as an external call,
+/// which <see cref="ReachThroughDependencies"/> follows into the bundles compiled before this one. Over-approximates execution — a branch that never runs still counts — which keeps
 /// the annotation a statement about what the test's code references.
 /// </summary>
 internal sealed class TddCallGraph
 {
     private readonly Dictionary<NavSyntax.MethodDeclarationSyntax, List<NavSyntax.MethodDeclarationSyntax>> _callers = new();
+    // Invocations that bind to a procedure this compile does not declare (a dependency's), by the
+    // dependency procedure's ProcKey: the way a graph reaches into another bundle (#5161).
+    private readonly List<(NavSyntax.MethodDeclarationSyntax Caller, string Key)> _externalCalls = new();
 
     private TddCallGraph() { }
 
@@ -42,7 +46,11 @@ internal sealed class TddCallGraph
                 {
                     var caller = EnclosingMethod(inv);
                     if (caller == null) continue;
-                    if (g.AddEdge(caller, Declaration(BoundMethod(model, inv)))) edges++;
+                    var bound = BoundMethod(model, inv);
+                    var declared = Declaration(bound);
+                    if (g.AddEdge(caller, declared)) edges++;
+                    if (declared == null && bound?.ContainingType is { } owner && bound.Name.Length > 0)
+                        g._externalCalls.Add((caller, ProcKey(owner.Name, bound.Name)));
                 }
                 catch
                 {
@@ -95,9 +103,10 @@ internal sealed class TddCallGraph
                 yield return m;
     }
 
-    /// <summary>The procedure an [EventSubscriber(ObjectType::X, X::"Name" or X::Id, 'Event', ...)]
-    /// names, when this compile declares it. A table's built-in events and an object this compile
-    /// does not hold have no procedure to be a caller, so they yield nothing.</summary>
+    /// <summary>The procedure an [EventSubscriber(ObjectType::X, X::"Name", 'Event', ...)] names, when
+    /// this compile declares it. A table's built-in events and an object this compile does not hold
+    /// have no procedure to be a caller, so they yield nothing. A publisher named by a bare object id
+    /// yields nothing either: there is no `X::` to read, and `X::Id` is a syntax error in AL (#5245).</summary>
     private static IEnumerable<NavSyntax.MethodDeclarationSyntax> PublisherMethods(
         NavSyntax.MethodDeclarationSyntax subscriber, IReadOnlyList<NavSyntax.ObjectSyntax> objects)
     {
@@ -119,17 +128,12 @@ internal sealed class TddCallGraph
         foreach (var obj in objects)
         {
             if (!ObjectKind(obj).Equals(kind, StringComparison.OrdinalIgnoreCase)) continue;
-            if (!(Name(obj.Name).Equals(objectName, StringComparison.OrdinalIgnoreCase)
-                  || ObjectIdText(obj) == objectName)) continue;
+            if (!Name(obj.Name).Equals(objectName, StringComparison.OrdinalIgnoreCase)) continue;
             foreach (var m in obj.DescendantNodes().OfType<NavSyntax.MethodDeclarationSyntax>())
                 if (Name(m.Name).Equals(eventName, StringComparison.OrdinalIgnoreCase))
                     yield return m;
         }
     }
-
-    // The base type declares no id member; each object type's own ObjectId is the token.
-    private static string ObjectIdText(NavSyntax.ObjectSyntax obj)
-        => obj.GetType().GetProperty("ObjectId")?.GetValue(obj) is NavSyntax.ObjectIdSyntax id ? id.Value.Text : "";
 
     private static string ObjectKind(NavSyntax.ObjectSyntax obj)
     {
@@ -167,6 +171,83 @@ internal sealed class TddCallGraph
         return parts;
     }
 
+    /// <summary>Names a procedure across compiles: object name and procedure name, case-insensitive. The
+    /// kind and the parameter list are not part of it, so two overloads (or a table and a codeunit
+    /// with one name) share a key, which can only over-approximate the reach (#5161).</summary>
+    internal static string ProcKey(string objectName, string procedureName)
+        => $"{objectName}|{procedureName}".ToLowerInvariant();
+
+    private static string? KeyOf(NavSyntax.MethodDeclarationSyntax method)
+    {
+        for (NavCA.SyntaxNode? n = method; n != null; n = n.Parent)
+            if (n is NavSyntax.ObjectSyntax o)
+            {
+                var objName = Name(o.Name);
+                var methodName = Name(method.Name);
+                return objName.Length == 0 || methodName.Length == 0 ? null : ProcKey(objName, methodName);
+            }
+        return null;
+    }
+
+    /// <summary>The key of every procedure of this compile that is, or transitively calls, the one
+    /// containing <paramref name="diag"/>: where another bundle's code enters a generated member.</summary>
+    public IReadOnlyList<string> ProcedureKeysReaching(NavDiag.Diagnostic diag)
+    {
+        var tree = diag.Location.SourceTree;
+        if (tree == null) return Array.Empty<string>();
+        var start = EnclosingMethod(tree.GetRoot().FindToken(diag.Location.SourceSpan.Start).Parent);
+        if (start == null) return Array.Empty<string>();
+        var keys = new List<string>();
+        foreach (var m in Closure(new[] { start }))
+            if (KeyOf(m) is { } k && !keys.Contains(k)) keys.Add(k);
+        return keys;
+    }
+
+    /// <summary>
+    /// The procedures and [Test]s of this compile that reach a generated member through a
+    /// dependency's procedure, given the dependency procedures that reach one
+    /// (<paramref name="membersOf"/>, by ProcKey). Each procedure carries the keys it can be
+    /// entered by, so a later bundle that calls it is followed the same way (#5161).
+    /// </summary>
+    public (List<(string Key, TddGeneratedMember Member)> Procedures, List<(string TestLabel, TddGeneratedMember Member)> Tests)
+        ReachThroughDependencies(Func<string, IReadOnlyList<TddGeneratedMember>> membersOf)
+    {
+        var procedures = new List<(string, TddGeneratedMember)>();
+        var tests = new List<(string, TddGeneratedMember)>();
+        var byMember = new Dictionary<TddGeneratedMember, List<NavSyntax.MethodDeclarationSyntax>>();
+        foreach (var (caller, key) in _externalCalls)
+            foreach (var member in membersOf(key))
+            {
+                if (!byMember.TryGetValue(member, out var seeds)) byMember[member] = seeds = new();
+                if (!seeds.Contains(caller)) seeds.Add(caller);
+            }
+        foreach (var (member, seeds) in byMember)
+            foreach (var m in Closure(seeds))
+            {
+                if (KeyOf(m) is { } k) procedures.Add((k, member));
+                if (TestLabel(m) is { } label) tests.Add((label, member));
+            }
+        return (procedures, tests);
+    }
+
+    /// <summary>Every procedure that is, or transitively calls, one of <paramref name="seeds"/>.</summary>
+    private List<NavSyntax.MethodDeclarationSyntax> Closure(IEnumerable<NavSyntax.MethodDeclarationSyntax> seeds)
+    {
+        var seen = new HashSet<NavSyntax.MethodDeclarationSyntax>();
+        var order = new List<NavSyntax.MethodDeclarationSyntax>();
+        var queue = new Queue<NavSyntax.MethodDeclarationSyntax>();
+        foreach (var s in seeds)
+            if (seen.Add(s)) { order.Add(s); queue.Enqueue(s); }
+        while (queue.Count > 0)
+        {
+            var m = queue.Dequeue();
+            if (!_callers.TryGetValue(m, out var callers)) continue;
+            foreach (var c in callers)
+                if (seen.Add(c)) { order.Add(c); queue.Enqueue(c); }
+        }
+        return order;
+    }
+
     /// <summary>"ObjectName.MethodName" of every [Test] procedure that is, or transitively calls,
     /// the procedure containing <paramref name="diag"/>.</summary>
     public IReadOnlyList<string> TestsReaching(NavDiag.Diagnostic diag)
@@ -177,17 +258,8 @@ internal sealed class TddCallGraph
         if (start == null) return Array.Empty<string>();
 
         var labels = new List<string>();
-        var seen = new HashSet<NavSyntax.MethodDeclarationSyntax> { start };
-        var queue = new Queue<NavSyntax.MethodDeclarationSyntax>();
-        queue.Enqueue(start);
-        while (queue.Count > 0)
-        {
-            var m = queue.Dequeue();
+        foreach (var m in Closure(new[] { start }))
             if (TestLabel(m) is { } label && !labels.Contains(label)) labels.Add(label);
-            if (!_callers.TryGetValue(m, out var callers)) continue;
-            foreach (var c in callers)
-                if (seen.Add(c)) queue.Enqueue(c);
-        }
         return labels;
     }
 

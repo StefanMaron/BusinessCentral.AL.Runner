@@ -1,0 +1,23 @@
+{
+  "id": "f1a3b5c7-8406-4b27-9ca9-7d2e5f4a6b83",
+  "name": "Runner Tests Fixture - Tdd Lib Partial App",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "The implementing app: a codeunit that does not declare the member the library calls.",
+  "description": "The implementing app: a codeunit that does not declare the member the library calls.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65520,
+      "to": 65529
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

@@ -1,0 +1,30 @@
+{
+  "id": "a2b4c6d8-9517-4c38-8dba-8e3f6a5b7c94",
+  "name": "Runner Tests Fixture - Tdd Lib Partial Lib",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "A test library of TWO objects: one calls the missing member, the other does not, so a compile against the app's old symbols drops one and keeps one.",
+  "description": "A test library of TWO objects: one calls the missing member, the other does not, so a compile against the app's old symbols drops one and keeps one.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "f1a3b5c7-8406-4b27-9ca9-7d2e5f4a6b83",
+      "name": "Runner Tests Fixture - Tdd Lib Partial App",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65530,
+      "to": 65539
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

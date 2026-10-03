@@ -1,0 +1,23 @@
+{
+  "id": "c7a9e1b3-6284-4f05-9ad7-5b0c3d2e4f61",
+  "name": "Runner Tests Fixture - Tdd Refusal Order App",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "The implementing app of the #5244 cross-bundle reproducer: a codeunit with no procedures.",
+  "description": "The implementing app of the #5244 cross-bundle reproducer: a codeunit with no procedures.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65500,
+      "to": 65509
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

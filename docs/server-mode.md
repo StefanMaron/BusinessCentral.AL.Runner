@@ -1255,16 +1255,23 @@ It runs the same generation as the CLI and `--watch --tdd` (`--guide`, "TDD MODE
   `[EventSubscriber]` of a publisher procedure declared in the same app that a procedure the test
   reaches calls (#5161); a subscriber that names its publisher by a bare object id, not
   `Codeunit::"Name"`, adds no edge. A branch that never ran still counts. An event a table raises itself
-  (`OnAfterInsertEvent` and the like) is not followed, and neither are procedures in another
-  `sourcePaths` bundle (a test library app compiled separately): a test reaching a stub only that
-  way carries no `generatedStubs`.
+  (`OnAfterInsertEvent` and the like) is not followed. A procedure of another `sourcePaths` bundle
+  is (a test library app compiled separately, #5161): when the member's call sits in a library, a
+  test that calls a procedure of it that reaches the call, directly or through further libraries,
+  names the member. Such a procedure is told apart from another by its object's name and its own
+  name only, so overloads of one name count as one.
   The CLI's `--output-json` carries the same field.
 - With the app and its tests as two `sourcePaths`, the member is generated into the app bundle
-  and the app is recompiled within the same request before the test bundle compiles again.
+  and the app is recompiled within the same request before the test bundle compiles again. The
+  call that names the member can sit in a bundle between the two, a test library the tests
+  depend on: the member goes into the app all the same (#5243).
 - A member that cannot be generated (no anchor, a `Text` argument, a precompiled dependency's
   object) excludes the object that calls it; each of its `[Test]` procedures is a `test` line
   with `"status": "fail"`, `"errorKind": "compile"` and a message naming the missing symbol
-  and its AL diagnostic. Every other object still runs.
+  and its AL diagnostic. Every other object still runs. When that object is a library bundle's
+  only object, there is no test line of its own: the library is reported as dropped
+  (`EMIT-EXCLUDED`, with the AL diagnostic) and a test that reaches it fails where it does
+  (#5243).
 - The summary's `exitCode` follows the tests' own results, as without tdd: `1` when a test
   failed, `0` when every test passed, never `3` for a member that could be generated. On
   stderr the request lists the members it generated, then, when there are any, every test that

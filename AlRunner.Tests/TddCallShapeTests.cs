@@ -32,6 +32,13 @@ public class TddRunResult : IDisposable
         _run = new Lazy<(string, int, JsonDocument)>(Execute);
     }
 
+    /// <summary>Set before the first read to run against a cache root another run shares: a second run on
+    /// one cache is a warm run, which a fresh cache per instance never is.</summary>
+    public string? CacheRoot { get; init; }
+
+    /// <summary>Set before the first read to run without --tdd.</summary>
+    public bool Plain { get; init; }
+
     public string StdErr => _run.Value.StdErr;
     public int Exit => _run.Value.Exit;
     public List<JsonElement> Tests => _run.Value.Doc.RootElement.GetProperty("tests").EnumerateArray().ToList();
@@ -41,7 +48,7 @@ public class TddRunResult : IDisposable
         Directory.CreateDirectory(_scratch);
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
-        args.Append($" --tdd --cache \"{Path.Combine(_scratch, "cache")}\" --output-json");
+        args.Append($"{(Plain ? "" : " --tdd")} --cache \"{CacheRoot ?? Path.Combine(_scratch, "cache")}\" --output-json");
         foreach (var f in _folders) args.Append($" \"{f}\"");
         var psi = new ProcessStartInfo
         {
@@ -59,7 +66,12 @@ public class TddRunResult : IDisposable
         if (!p.WaitForExit(240_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
         p.WaitForExit();
         lock (outSb) lock (errSb)
-            return (errSb.ToString(), p.ExitCode, JsonDocument.Parse(outSb.ToString().Trim()));
+        {
+            // A run that stopped before its summary prints no JSON: the test's own exit-code
+            // assertion then names what happened, instead of a parse error naming nothing.
+            var json = outSb.ToString().Trim();
+            return (errSb.ToString(), p.ExitCode, JsonDocument.Parse(json.Length == 0 ? "{\"tests\":[]}" : json));
+        }
     }
 
     public JsonElement Find(string name) =>
@@ -231,6 +243,82 @@ public sealed class TddCallShapeTests : IClassFixture<TddCallShapeRun>
         Assert.Equal("pass", _run.Find("RaisingTheOtherPublisher_ReachesOnlyItsOwnSubscribersStub").GetProperty("status").GetString());
         Assert.Equal(new[] { $"{Target}: procedure \"CountOtherEvent\"(Arg1: Integer): Integer" },
             _run.StubsOf("RaisingTheOtherPublisher_ReachesOnlyItsOwnSubscribersStub"));
+    }
+
+    /// <summary>
+    /// #5245: a table and a codeunit both named "Tdd Shape Publisher" declare OnCounted. The test
+    /// raising the table's event reaches its subscriber's stub, and the codeunit's tests do not
+    /// (and the reverse): a subscriber belongs to the object KIND it names, not to every object of
+    /// that name.
+    /// </summary>
+    [SkippableFact]
+    public void TableAndCodeunitPublishersOfOneName_KeepTheirOwnSubscribers()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        Assert.Equal("pass", _run.Find("RaisingTheTablePublisher_ReachesOnlyTheTableSubscribersStub").GetProperty("status").GetString());
+        Assert.Equal(new[] { $"{Target}: procedure \"CountTableEvent\"(Arg1: Integer): Integer" },
+            _run.StubsOf("RaisingTheTablePublisher_ReachesOnlyTheTableSubscribersStub"));
+        Assert.Equal(new[] { $"{Target}: procedure \"CountEvent\"(Arg1: Integer): Integer" },
+            _run.StubsOf("RaisingASubscribedEvent_ReachesTheSubscribersStub"));
+    }
+
+    /// <summary>
+    /// #5161, #5245: a subscriber naming its publisher by a bare object id adds no edge, as the guide
+    /// says. Its stub is generated all the same, so the test raising the event runs against it
+    /// unannotated: the absence is the graph's, not a refusal. (`Codeunit::65206` is a syntax error.)
+    /// </summary>
+    [SkippableFact]
+    public void SubscriberNamingItsPublisherByBareId_AddsNoEdge()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        Assert.Equal("pass", _run.Find("RaisingAnEventSubscribedByBareObjectId_IsNotAnnotated").GetProperty("status").GetString());
+        Assert.Empty(_run.StubsOf("RaisingAnEventSubscribedByBareObjectId_IsNotAnnotated"));
+        Assert.Contains($"{Target}: procedure \"CountById\"(Arg1: Integer): Integer", _run.StdErr);
+    }
+
+    /// <summary>
+    /// #5244: the first call site of a missing member is a bare statement, which anchors no type; the
+    /// second is typed. The member is generated from the second, and the first test — refused when it
+    /// alone decided the key — compiles against it, runs, and names it.
+    /// </summary>
+    [SkippableFact]
+    public void BareStatementBeforeATypedCall_DoesNotRefuseTheMember()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var stub = new[] { $"{Target}: procedure \"Ordered\"(Arg1: Integer): Integer" };
+        Assert.Equal("pass", _run.Find("A_BareStatementFirst_StillReachesTheStubTheTypedCallGenerates").GetProperty("status").GetString());
+        Assert.Equal(stub, _run.StubsOf("A_BareStatementFirst_StillReachesTheStubTheTypedCallGenerates"));
+        Assert.Equal("pass", _run.Find("B_TypedCallSecond_GeneratesTheMember").GetProperty("status").GetString());
+        Assert.Equal(stub, _run.StubsOf("B_TypedCallSecond_GeneratesTheMember"));
+
+        // Generated once, however many call sites name it.
+        var generated = _run.StdErr[_run.StdErr.IndexOf("--tdd: generated", StringComparison.Ordinal)..];
+        generated = generated[..generated.IndexOf("test(s) reach generated stubs", StringComparison.Ordinal)];
+        Assert.Equal(1, System.Text.RegularExpressions.Regex.Matches(generated, "\"Ordered\"\\(").Count);
+    }
+
+    /// <summary>
+    /// #5244 across source folders: the same shape with the member in the app bundle, so the key goes
+    /// through the cross-bundle attempt state instead of the in-compile one.
+    /// </summary>
+    [SkippableFact]
+    public void BareStatementBeforeATypedCall_DoesNotRefuseTheMemberInAnotherSourceFolder()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "AlRunner.Tests", "Fixtures", "TddRefusalOrder"));
+        using var run = new TddRunResult(Path.Combine(root, "app"), Path.Combine(root, "test"));
+
+        Assert.True(run.Exit == 0, $"exit {run.Exit}\n{run.StdErr}");
+        var stub = new[] { "Order App Target: procedure \"CrossOrdered\"(Arg1: Integer): Integer" };
+        Assert.Equal(2, run.Tests.Count);
+        Assert.Equal("pass", run.Find("A_BareStatementFirst_StillReachesTheStubTheTypedCallGenerates").GetProperty("status").GetString());
+        Assert.Equal(stub, run.StubsOf("A_BareStatementFirst_StillReachesTheStubTheTypedCallGenerates"));
+        Assert.Equal("pass", run.Find("B_TypedCallSecond_GeneratesTheMemberIntoTheApp").GetProperty("status").GetString());
+        Assert.Equal(stub, run.StubsOf("B_TypedCallSecond_GeneratesTheMemberIntoTheApp"));
     }
 
     /// <summary>

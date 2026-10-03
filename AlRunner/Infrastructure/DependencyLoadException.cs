@@ -20,7 +20,12 @@ public sealed class DependencyLoadException : Exception
     public string Publisher { get; }
     public string AppName { get; }
     public string Version { get; }
-    public string Stage { get; }   // "EMIT-FAIL" | "EMIT-ZERO" | "COMPILE-FAIL" | "LOAD-FAIL"
+    public string Stage { get; }   // "EMIT-FAIL" | "EMIT-ZERO" | "COMPILE-FAIL" | "LOAD-FAIL" | TddRecompileStage
+
+    /// <summary>--tdd (#5243): a dependency's compile lost objects while members generated into
+    /// another bundle still await that bundle's recompile. Not a failure of the dependency: the
+    /// pass is stale and Program.cs re-runs it.</summary>
+    public const string TddRecompileStage = "TDD-RECOMPILE";
 
     public DependencyLoadException(
         string publisher, string appName, string version,

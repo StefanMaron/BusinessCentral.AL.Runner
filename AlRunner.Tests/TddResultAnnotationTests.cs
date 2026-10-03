@@ -170,6 +170,9 @@ public sealed class TddResultAnnotationTests
         Assert.Contains("takes its return type from the other Variant argument", guideText); // #5146
         Assert.Contains("names its publisher by a bare object id adds no edge", guideText); // #5161
         Assert.Contains("generates an overload beside it", guideText); // #5228
+        Assert.Contains("or through another source folder of the run (a test library between the app and its tests", guideText); // #5161
+        Assert.Contains("The call that names the member can sit in a folder between the two, such as a test library", guideText); // #5243
+        Assert.Contains("the library is reported as dropped (EMIT-EXCLUDED, with the AL diagnostic) and the run goes on", guideText); // #5243
         Assert.DoesNotContain("ran against generated", tddSection); // "reaches": read from the code, not observed
         Assert.DoesNotContain("raises a distinctive error", tddSection);
 
@@ -189,6 +192,10 @@ public sealed class TddResultAnnotationTests
         Assert.Contains("is named by an AL0132 (missing member) or AL0126 (missing overload)", serverText); // #5228
         Assert.Contains("names its publisher by a bare object id, not `Codeunit::\"Name\"`, adds no edge", serverText); // #5161
         Assert.Contains("generates an overload beside it", serverText); // #5228
+        Assert.Contains("A procedure of another `sourcePaths` bundle is (a test library app compiled separately, #5161)", serverText);
+        Assert.DoesNotContain("neither are procedures in another `sourcePaths` bundle", serverText);
+        Assert.Contains("can sit in a bundle between the two, a test library the tests depend on: the member goes into the app all the same (#5243)", serverText);
+        Assert.Contains("the library is reported as dropped (`EMIT-EXCLUDED`, with the AL diagnostic) and a test that reaches it fails where it does", serverText); // #5243
 
         using var schema = JsonDocument.Parse(File.ReadAllText(Path.Combine(RepoRoot, "protocol-v2.schema.json")));
         Assert.True(schema.RootElement.GetProperty("definitions").GetProperty("TestEvent")

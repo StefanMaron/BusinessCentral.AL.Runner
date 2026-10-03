@@ -360,8 +360,9 @@ internal static partial class ProgramSupport
         w.WriteLine("  those members — reached in its own body or through procedures it calls in the");
         w.WriteLine("  same app (helpers, library codeunits, [HandlerFunctions] handlers, event");
         w.WriteLine("  subscribers of a publisher procedure declared in the same app; a subscriber that");
-        w.WriteLine("  names its publisher by a bare object id adds no edge), read from the code, not");
-        w.WriteLine("  from what ran:");
+        w.WriteLine("  names its publisher by a bare object id adds no edge) or through another source");
+        w.WriteLine("  folder of the run (a test library between the app and its tests; procedures that");
+        w.WriteLine("  share a name count as one), read from the code, not from what ran:");
         w.WriteLine("    reaches generated stub(s): Calc: procedure \"DoubleIt\"(Arg1: Integer): Integer");
         w.WriteLine("  (--output-json and --server test lines: a generatedStubs array), and the end of");
         w.WriteLine("  the run lists those tests with their results. Its status is still the test's own.");
@@ -393,9 +394,14 @@ internal static partial class ProgramSupport
         w.WriteLine("  Scope: source-compiled implementing apps only — in the test's own folder, or in");
         w.WriteLine("  another folder passed on the same command line (al-runner --tdd MyApp MyApp.Test):");
         w.WriteLine("  the member is added to that app's source in memory, never on disk, and the app is");
-        w.WriteLine("  recompiled before the tests that need it. A precompiled .app dependency's missing");
-        w.WriteLine("  member is not generated — precompiled-dll-respect.md forbids rewriting compiled");
-        w.WriteLine("  bodies, and that diagnostic falls through to the same refuse path.");
+        w.WriteLine("  recompiled before the tests that need it. The call that names the member can sit");
+        w.WriteLine("  in a folder between the two, such as a test library (al-runner --tdd MyApp");
+        w.WriteLine("  MyApp.TestLib MyApp.Test): the member still goes into MyApp. A precompiled .app");
+        w.WriteLine("  dependency's missing member is not generated — precompiled-dll-respect.md");
+        w.WriteLine("  forbids rewriting compiled bodies, and that diagnostic falls through to the same");
+        w.WriteLine("  refuse path. When the refused call sits in a library whose only objects it was,");
+        w.WriteLine("  the library is reported as dropped (EMIT-EXCLUDED, with the AL diagnostic) and");
+        w.WriteLine("  the run goes on: a test that reaches it fails where it does.");
         w.WriteLine();
 
         w.WriteLine("WATCH: RERUN ONLY WHAT AN EDIT AFFECTS (--watch --affected)");
