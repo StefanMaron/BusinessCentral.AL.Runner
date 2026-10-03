@@ -21,6 +21,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **tdd:** generate a missing member referenced from a dependency source bundle; a one-object library no longer aborts the run
 - **jobs:** count an emit-excluded codeunit's skipped tests once per shared bundle
 - **jobs:** workers sharing a bundle compile it once on a cold cache
 - **coverage:** Code Coverage line rows take an object's text from the compiled folder, not a same-app-id sibling
