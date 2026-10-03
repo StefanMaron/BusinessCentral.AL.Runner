@@ -190,6 +190,24 @@ public sealed class ServerTddTests : IClassFixture<SharedCliServer>
             summary, raw);
     }
 
+    /// <summary>
+    /// #5118: without tdd a missing member drops the test codeunit that calls it: its tests are reported
+    /// skipped (emit-excluded), as on the CLI, none of them ran against a stub, and the codeunits that
+    /// survive run and pass. The request still ends in exit 3.
+    /// </summary>
+    private static void AssertDropped(Response r, params string[] dropped)
+    {
+        Assert.True(r.ExitCode == 3, r.Raw);
+        foreach (var method in dropped)
+        {
+            Assert.True(r.Status(method) == "skipped", r.Raw);
+            Assert.Contains("emit-excluded", r.Message(method), StringComparison.Ordinal);
+            Assert.Empty(r.Stubs(method));
+        }
+        Assert.NotEmpty(dropped);
+        Assert.All(r.Tests.Keys.Except(dropped), k => Assert.True(r.Status(k) == "pass", r.Raw));
+    }
+
     private static void AssertCompileFailure(Response r, string method, string names)
     {
         Assert.True(r.Status(method) == "fail", r.Raw);
@@ -199,7 +217,7 @@ public sealed class ServerTddTests : IClassFixture<SharedCliServer>
 
     /// <summary>
     /// The issue's acceptance, on one server: without tdd a missing symbol is a compile failure
-    /// with no test lines; with tdd each test runs against the empty generated stub and reports
+    /// whose tests are skipped lines and never run; with tdd each test runs against the empty generated stub and reports
     /// its own result, naming the stub (#5147), the refused call reports its test FAILED naming
     /// the symbol, and the unrelated test passes; the next request without tdd sees none of it;
     /// once the procedures are written the next request passes, unrestarted.
@@ -217,8 +235,8 @@ public sealed class ServerTddTests : IClassFixture<SharedCliServer>
             await using var server = await CliServer.StartAsync(new[] { "--cache", cache });
 
             var plain = await Send(server, new[] { bundle }, tdd: null);
-            Assert.True(plain.ExitCode == 3, plain.Raw);
-            Assert.Empty(plain.Tests);
+            AssertDropped(plain, "DoubleIt_ReturnsTwice", "TripleIt_OfZero_IsZero", "NameLength_CountsCharacters");
+            Assert.Equal("pass", plain.Status("Unrelated_Passes"));
 
             var redMark = server.StdErrMark;
             var red = await Send(server, new[] { bundle }, tdd: true);
@@ -240,8 +258,7 @@ public sealed class ServerTddTests : IClassFixture<SharedCliServer>
             await server.StdErrSinceAsync(redMark, $"SrvTdd Calc Tests.DoubleIt_ReturnsTwice (fail): {DoubleItStub}");
 
             var plainAgain = await Send(server, new[] { bundle }, tdd: false);
-            Assert.True(plainAgain.ExitCode == 3, plainAgain.Raw);
-            Assert.Empty(plainAgain.Tests);
+            AssertDropped(plainAgain, "DoubleIt_ReturnsTwice", "TripleIt_OfZero_IsZero", "NameLength_CountsCharacters");
 
             // Unchanged source, tdd again: generated and reported afresh, not served from a cache
             // entry that holds neither the refused object's test nor the dependents' annotation.
@@ -282,8 +299,7 @@ public sealed class ServerTddTests : IClassFixture<SharedCliServer>
             AssertDefaultPassFlagged(byDefault);
 
             var off = await Send(server, new[] { bundle }, tdd: false);
-            Assert.True(off.ExitCode == 3, off.Raw);
-            Assert.Empty(off.Tests);
+            AssertDropped(off, "DoubleIt_ReturnsTwice", "TripleIt_OfZero_IsZero");
         }
         finally
         {
@@ -310,8 +326,7 @@ public sealed class ServerTddTests : IClassFixture<SharedCliServer>
             AssertFailedOnOwnAssertion(red);
 
             var plain = await Send(server, new[] { bundle }, tdd: false, affectedOnly: true);
-            Assert.True(plain.ExitCode == 3, plain.Raw);
-            Assert.Empty(plain.Tests);
+            AssertDropped(plain, "DoubleIt_ReturnsTwice", "TripleIt_OfZero_IsZero");
         }
         finally
         {
@@ -356,7 +371,7 @@ public sealed class ServerTddTests : IClassFixture<SharedCliServer>
     /// <summary>
     /// #5079 through tdd: a module a tdd request compiled holds generated members, so a later
     /// plain request for another directory with the same app id must compile its own source —
-    /// exit 3 with no test lines, as a fresh server answers — not run the stubbed module.
+    /// exit 3 with the dropped tests skipped, as a fresh server answers — not run the stubbed module.
     /// </summary>
     [SkippableFact]
     public async Task TddRequestThenPlainRequest_OtherDirectorySameId_CompilesItsOwnSource()
@@ -371,8 +386,7 @@ public sealed class ServerTddTests : IClassFixture<SharedCliServer>
             Assert.True(red.ExitCode == 1, red.Raw);
 
             var plain = await Send(server, new[] { y }, tdd: false);
-            Assert.True(plain.ExitCode == 3, plain.Raw);
-            Assert.Empty(plain.Tests);
+            AssertDropped(plain, "DoubleIt_ReturnsTwice", "TripleIt_OfZero_IsZero");
         }
         finally
         {
@@ -505,8 +519,8 @@ public sealed class ServerTddTests : IClassFixture<SharedCliServer>
         Assert.Equal(before, HashDir(app));
 
         var plain = await Send(server, new[] { app, test }, tdd: false);
-        Assert.True(plain.ExitCode == 3, plain.Raw);
-        Assert.Empty(plain.Tests);
+        AssertDropped(plain, "VariableArg_GeneratesDecimalParameter", "LiteralArg_GeneratesIntegerParameter",
+            "EnumValueArg_GeneratesEnumParameter");
     }
 
     /// <summary>

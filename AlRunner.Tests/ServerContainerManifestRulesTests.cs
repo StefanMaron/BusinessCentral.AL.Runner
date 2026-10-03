@@ -139,11 +139,11 @@ public class ServerContainerManifestRulesTests
         Assert.True(cli.Contains(InternalRefusal), cli);
         Assert.True(cli.Contains("PASS  Codeunit60086.OwnPreprocessorSymbol"), cli);
 
-        var (exit, _, text) = await Serve(scratch, root);
-        // The server runs none of a module's tests once an object is dropped, where the CLI runs
-        // the surviving codeunit (#5118), so only the refusal is compared here.
+        var (exit, passed, text) = await Serve(scratch, root);
+        // The server drops the refused codeunit and runs the surviving one, as the CLI does (#5118).
         Assert.True(exit != 0, text);
         Assert.True(text.Contains(InternalRefusal), text);
+        Assert.True(passed == 1, text);
     }
 
     [SkippableFact]

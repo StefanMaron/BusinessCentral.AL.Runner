@@ -67,9 +67,10 @@ The interactive dashboard shows the same lines above the test tree.
 per request), `--include-failing` and `--strict-environment` without `--affected`, and together with `--tdd`, `--per-suite` or `--test`/`--filter`: the selecting
 run applies none of them, so accepting them would drop them silently.
 
-Under `--affected` an EMIT-EXCLUDED object fails the whole bundle's compile, as it does for a
-`--server` request: the cycle reports `COMPILE FAIL` and runs no test of that bundle. Plain `--watch`
-is more lenient: it reports the bundle as partial and still runs its healthy tests.
+Under `--affected` an EMIT-EXCLUDED object is handled as a `--server` request handles it, and as plain
+`--watch` does: when every dropped object is a test codeunit nothing surviving reaches, the cycle reports
+its tests as SKIPPED, runs the bundle's other codeunits and reports the bundle as partial with the suite
+error (#5118). Otherwise it reports `COMPILE FAIL` and runs no test of that bundle.
 
 Under `--affected` a cycle runs through the server's run path, which resets the bundle caches
 and re-runs the dependency pre-passes itself, so the watch loop's own reset and pre-pass are

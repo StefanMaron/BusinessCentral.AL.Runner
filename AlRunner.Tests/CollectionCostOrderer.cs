@@ -166,6 +166,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             ["DefineSymbolsDependencyCacheTests"] = 43,
             // #5039: nine runner spawns on one cache root; 36-43s locally, not yet on CI.
             ["DependencyMetadataCacheKeyTests"] = 43,
+            // #5118: four runner spawns (the CLI oracle) and one shared --server; 45-54s locally,
+            // not yet on CI.
+            ["ServerEmitExcludedSurvivorsTests"] = 50,
             // #5233: one runner spawn that compiles Test Runner against the closure. LOCAL figure: 46s
             // (load average about 6); a reviewer saw 67-69s under heavier load. Re-record from the
             // first CI leg that reports it.

@@ -3992,21 +3992,8 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                             // rests on; docs/emit-exclusion-triage.md has the long form.
                             var exclDetails = emitOutput.ExcludedObjectDetails
                                 ?? Array.Empty<TddExcludedObjectDetail>();
-                            var moduleAlFiles = allPaths
-                                .Where(pth => File.Exists(pth)
-                                    && pth.EndsWith(".al", StringComparison.OrdinalIgnoreCase))
-                                .Concat(allPaths.Where(Directory.Exists)
-                                    .SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Files(d, "*.al")))
-                                .Distinct(StringComparer.Ordinal)
-                                .ToList();
-                            // A detail per excluded object is the precondition, not a nicety: a
-                            // shorter list means some object was dropped without its file being
-                            // recorded, and an object we cannot look at cannot be cleared.
-                            var verdicts = exclDetails.Count == emitOutput.ExcludedObjects.Count
-                                ? ProgramSupport.ExcludedObjectTriage.Triage(exclDetails, moduleAlFiles)
-                                : Array.Empty<ProgramSupport.ExcludedObjectVerdict>();
-                            var everyDropSafe = verdicts.Count == emitOutput.ExcludedObjects.Count
-                                && verdicts.Count > 0 && verdicts.All(v => v.Droppable);
+                            var (verdicts, everyDropSafe) = ProgramSupport.ExcludedObjectTriage.TriageDrops(
+                                emitOutput.ExcludedObjects, exclDetails, allPaths);
 
                             // #2207: the message below promises the AL diagnostics — actually
                             // print them, gated on Log.Verbose directly (not
@@ -5654,13 +5641,17 @@ return strictExitCode ? computedExitCode : 0;
         // source its change-model baseline describes (docs/server-mode.md#affectedonly-and-the-al-output-cache).
         bool pinLoadToChangeModel = false,
         // #5034: runTests' `tdd`. Null runs exactly as before.
-        TddServerRequest? tdd = null)
+        TddServerRequest? tdd = null,
+        // #5118: where runTests streams the [Test] procedures of a dropped object it reports as SKIPPED.
+        // Null (execute, --dap) keeps the refusal of a module with any dropped object: those callers
+        // have no row to show a test that did not run in.
+        Action<TestResult>? reportDropped = null)
     {
         // #5079: a module an earlier request compiled is reused only for its own source.
         DependencyLoader.BeginReuseEpoch();
         if (tdd == null)
             return RunAllBundlesForServerPass(sourcePaths, requestPackagePaths, runStep, cancellationToken,
-                useIncrementalChangeModel, beforeRun, pinLoadToChangeModel, null, false, false, out _);
+                useIncrementalChangeModel, beforeRun, pinLoadToChangeModel, null, false, false, reportDropped, out _);
 
         // A request is one --tdd cycle: generation starts from the files on disk, and nothing
         // generated outlives it (the overlay would otherwise reach the next, non-tdd request).
@@ -5674,7 +5665,7 @@ return strictExitCode ? computedExitCode : 0;
             {
                 var results = RunAllBundlesForServerPass(sourcePaths, requestPackagePaths, runStep, cancellationToken,
                     useIncrementalChangeModel, beforeRun, pinLoadToChangeModel, tdd,
-                    tddAllowRerun: pass < TddRecompileRerunLimit, tddRerunPass: pass > 0, out var rerun);
+                    tddAllowRerun: pass < TddRecompileRerunLimit, tddRerunPass: pass > 0, reportDropped, out var rerun);
                 if (!rerun)
                 {
                     // #5265: a pass that was not allowed a re-run leaves its generated members uncompiled.
@@ -5728,7 +5719,8 @@ return strictExitCode ? computedExitCode : 0;
         bool useIncrementalChangeModel,
         Action<string, string, string, IReadOnlyList<AffectedObjectId>?, string?, IReadOnlyList<AffectedScopeId>?>? beforeRun,
         bool pinLoadToChangeModel,
-        TddServerRequest? tdd, bool tddAllowRerun, bool tddRerunPass, out bool tddRerun)
+        TddServerRequest? tdd, bool tddAllowRerun, bool tddRerunPass, Action<TestResult>? reportDropped,
+        out bool tddRerun)
     {
         tddRerun = false;
         // Server requests share a process, so give each request the same fresh
@@ -6052,7 +6044,7 @@ return strictExitCode ? computedExitCode : 0;
                     && !forcedFullBundles.Contains(Path.GetFullPath(bundleDir)),
                 pinLoadToChangeModel,
                 EffectiveBeforeRun(sawFallbackReason),
-                deferRuns, tdd, out var deferred,
+                deferRuns, tdd, reportDropped, out var deferred,
                 out var emitElapsed, out var compileElapsed, out var runElapsed);
             // A deferred bundle keeps one row: set aside here, resumed for its run below.
             var phaseRow = deferred != null ? AlRunner.Infrastructure.PhaseLog.SuspendBundle() : null;
@@ -6247,6 +6239,7 @@ return strictExitCode ? computedExitCode : 0;
         Action<string, string, string, IReadOnlyList<AffectedObjectId>?, string?>? beforeRun,
         bool deferRun,
         TddServerRequest? tdd,
+        Action<TestResult>? reportDropped,
         out (string ModuleName, string? ChangeModelFallbackReason, Func<(ServerRunResult Result, TimeSpan RunElapsed)> Run)? deferred,
         out TimeSpan emitElapsed, out TimeSpan compileElapsed, out TimeSpan runElapsed)
     {
@@ -6570,6 +6563,11 @@ return strictExitCode ? computedExitCode : 0;
             // the tests whose compile needed a generated member.
             IReadOnlyList<TestResult> tddSynthetic = Array.Empty<TestResult>();
             TddDependents? tddDependents = null;
+            // #5118: a dropped object this request reports and runs the surviving objects around: the
+            // SKIPPED rows for its [Test] procedures and the suite error that ends the request in exit 3.
+            IReadOnlyList<TestResult> droppedSkipped = Array.Empty<TestResult>();
+            CompilationErrorGroup? dropError = null;
+            var droppedNonProfile = false;
             if (reusedAsm == null && assemblyBytes == null)
             {
                 // cacheKey == null here means #2954's do-not-cache path (see the gate above):
@@ -6585,6 +6583,7 @@ return strictExitCode ? computedExitCode : 0;
                 IReadOnlyList<string> alDiagnostics;
                 IReadOnlyList<string> excludedObjects;
                 IReadOnlyList<string> excludedObjectDiagnostics;
+                IReadOnlyList<TddExcludedObjectDetail> excludedDetails = Array.Empty<TddExcludedObjectDetail>();
                 var et = System.Diagnostics.Stopwatch.StartNew();
                 var generationBeforeEmit = emitter.RadBaselineGeneration(moduleName);
                 try
@@ -6628,6 +6627,7 @@ return strictExitCode ? computedExitCode : 0;
                     alDiagnostics = emitOutput.Diagnostics;
                     excludedObjects = emitOutput.ExcludedObjects;
                     excludedObjectDiagnostics = emitOutput.ExcludedObjectDiagnostics ?? Array.Empty<string>();
+                    excludedDetails = emitOutput.ExcludedObjectDetails ?? Array.Empty<TddExcludedObjectDetail>();
                     if (tdd != null)
                     {
                         var generated = TddSupport.MembersFor(emitOutput, moduleName);
@@ -6660,11 +6660,10 @@ return strictExitCode ? computedExitCode : 0;
                     AlRunner.Infrastructure.PhaseLog.AddAppEmit(et.Elapsed);
                 }
                 // An emit-retry exclusion means one or more AL objects are NOT in the
-                // compiled module, so any tests they declare silently vanish and the
-                // request looks green. Fail loudly with the same classification the CLI's
-                // bundled-mode EMIT-EXCLUDED guard uses (.claude/rules/loud-failures.md);
-                // without this the server path ran the surviving objects and reported
-                // exitCode 0 while e.g. a whole test codeunit was missing from the run.
+                // compiled module, so any tests they declare would silently vanish and the
+                // request look green: report it the way the CLI's bundled-mode EMIT-EXCLUDED
+                // guard does (.claude/rules/loud-failures.md), with the survivors' results and
+                // exit code 3 where #3476's triage clears the drop (#5118), a refusal otherwise.
                 // #5034: under tdd the recovered module runs and the excluded objects' tests are
                 // reported FAILED (compile) instead, as the CLI's TDD-EXCLUDED branch does. Only
                 // when nothing survives and there is no test to report does it fall through.
@@ -6692,20 +6691,67 @@ return strictExitCode ? computedExitCode : 0;
                 else if (excludedObjects.Count > 0)
                 {
                     var names = string.Join(", ", excludedObjects);
-                    // #2207: read the dedicated ExcludedObjectDiagnostics field, not
-                    // `alDiagnostics` — the latter reflects only the final (recovered)
-                    // compile round, which by construction has none of its own left once
-                    // BcCompiler's retry against the surviving objects has succeeded.
-                    // #2949: the empty case used to say "re-run with --verbose", which over
-                    // JSON-RPC is doubly wrong — the server has no such re-run, and there were
-                    // no diagnostics to find either way. Shared with the CLI's wording.
-                    compileErrors.Add(
-                        $"EMIT-EXCLUDED: {excludedObjects.Count} object(s) dropped from the module — " +
-                        $"tests they declare are missing: [{names}]." +
-                        ExclusionDiagnosticAdvice(excludedObjectDiagnostics, printedAlongside: true));
-                    foreach (var d in excludedObjectDiagnostics) compileErrors.Add(d);
-                    return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
-                        new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
+                    // #5118: the CLI's question (#3476, #2238), asked once and answered the same here: a
+                    // profile declares nothing to run, and a test codeunit nothing surviving reaches is
+                    // dropped while the rest runs. Refused with nothing to run, under tdd (reported
+                    // above), and for a caller that cannot show the dropped tests as rows.
+                    var allProfiles = excludedObjects.All(o => o.StartsWith("Profile ", StringComparison.Ordinal));
+                    var (verdicts, everyDropSafe) = ProgramSupport.ExcludedObjectTriage.TriageDrops(
+                        excludedObjects, excludedDetails, allPaths);
+                    var runsSurvivors = tdd == null && sources.Count > 0 && (allProfiles || everyDropSafe)
+                        && (allProfiles || reportDropped != null);
+                    if (runsSurvivors)
+                    {
+                        // The module is missing objects, so no later request may take it from the AL-output cache
+                        // (a HIT skips this whole branch). The change model records no baseline for a compile
+                        // that dropped an object (BcCompiler.Emit), so nothing there can replay it either.
+                        cachePath = null;
+                        if (allProfiles)
+                        {
+                            Console.Error.WriteLine(
+                                $"  [server] {moduleName}: EMIT-EXCLUDED — {excludedObjects.Count} profile object(s) could not be " +
+                                $"compiled and were dropped from the module: [{names}]. A profile declares no executable AL and " +
+                                "no [Test] procedures, so the module compiles and runs without it.");
+                        }
+                        else
+                        {
+                            droppedNonProfile = true;
+                            droppedSkipped = TddSupport.BuildSkippedTests(excludedDetails);
+                            // One entry, diagnostics inside it: this suite error is counted once, as the CLI's is
+                            // (a --watch --affected cycle reads each entry as one lost suite).
+                            compileErrors.Add(
+                                $"EMIT-EXCLUDED: {excludedObjects.Count} object(s) dropped from the module — " +
+                                $"tests they declare are missing: [{names}]. Every dropped object is a test codeunit no " +
+                                $"surviving object in this module references, by name or by object id, so the remaining " +
+                                $"{sources.Count} object(s) still run — the {droppedSkipped.Count} [Test] procedure(s) the " +
+                                "dropped object(s) declare are reported as skipped." +
+                                ExclusionDiagnosticAdvice(excludedObjectDiagnostics, printedAlongside: true) +
+                                string.Concat(excludedObjectDiagnostics.Select(d => "\n" + d)));
+                            dropError = new CompilationErrorGroup(moduleName, compileErrors);
+                        }
+                    }
+                    else
+                    {
+                        // #2207: read the dedicated ExcludedObjectDiagnostics field, not
+                        // `alDiagnostics` — the latter reflects only the final (recovered)
+                        // compile round, which by construction has none of its own left once
+                        // BcCompiler's retry against the surviving objects has succeeded.
+                        // #2949: the empty case used to say "re-run with --verbose", which over
+                        // JSON-RPC is doubly wrong — the server has no such re-run, and there were
+                        // no diagnostics to find either way. Shared with the CLI's wording.
+                        var notRun = tdd != null || sources.Count == 0
+                            ? ""
+                            : reportDropped == null && everyDropSafe
+                                ? " The module was NOT run: this request cannot report the dropped object(s)' tests as skipped."
+                                : $" The module was NOT run: {DescribeRefusals(verdicts, excludedObjects)}";
+                        compileErrors.Add(
+                            $"EMIT-EXCLUDED: {excludedObjects.Count} object(s) dropped from the module — " +
+                            $"tests they declare are missing: [{names}]." + notRun +
+                            ExclusionDiagnosticAdvice(excludedObjectDiagnostics, printedAlongside: true));
+                        foreach (var d in excludedObjectDiagnostics) compileErrors.Add(d);
+                        return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
+                            new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
+                    }
                 }
                 if (sources.Count == 0)
                 {
@@ -6803,7 +6849,8 @@ return strictExitCode ? computedExitCode : 0;
                     {
                         DependencyLoader.RegisterLoaded(
                             bundleId.AppId, asm, bundleId.Name, bundleId.Publisher,
-                            bundleId.Version.ToString(), bundleAbs, sourceFingerprint);
+                            bundleId.Version.ToString(), bundleAbs, sourceFingerprint,
+                            droppedObjects: droppedNonProfile);
                     }
                     catch (AlRunner.Infrastructure.AppIdCollisionException ex)
                     {
@@ -6854,12 +6901,25 @@ return strictExitCode ? computedExitCode : 0;
                         foreach (var t in tddSynthetic) tdd.Report(t);
                         tdd.Active = tddDependents;
                     }
+                    // #5118: the dropped object's tests stream first, as --tdd's synthetic ones do.
+                    if (reportDropped != null)
+                        foreach (var t in droppedSkipped) reportDropped(t);
                     tests = runStep(asm);
                     if (tddSynthetic.Count > 0) tests = tddSynthetic.Concat(tests).ToList();
+                    if (droppedSkipped.Count > 0) tests = droppedSkipped.Concat(tests).ToList();
                 }
                 catch (Exception ex)
                 {
-                    return (ServerRunResult.Failure(2, moduleName, $"EXEC-FAIL: {ex.Message.Split('\n')[0]}", fileHashes), rt.Elapsed);
+                    // The dropped object is still part of what this request found, so a failed execution does
+                    // not hide it behind the failure (exit 3 ranks above 2).
+                    var execFail = ServerRunResult.Failure(2, moduleName, $"EXEC-FAIL: {ex.Message.Split('\n')[0]}", fileHashes);
+                    if (dropError != null)
+                        execFail = execFail with
+                        {
+                            Tests = droppedSkipped, ExitCode = 3,
+                            CompileErrors = execFail.CompileErrors!.Append(dropError).ToList(),
+                        };
+                    return (execFail, rt.Elapsed);
                 }
                 finally
                 {
@@ -6871,7 +6931,11 @@ return strictExitCode ? computedExitCode : 0;
 
                 int exit = 0;
                 if (tests.Any(t => t.Outcome == TestOutcome.Fail || t.Outcome == TestOutcome.Error)) exit = 1;
-                return (new ServerRunResult(tests, exit, cached, null, fileHashes), rt.Elapsed);
+                // #5118: as the CLI's ladder ranks it, the suite error outranks a failing test: the run
+                // covers less than it discovered however its survivors fared.
+                if (dropError != null) exit = 3;
+                return (new ServerRunResult(tests, exit, cached,
+                    dropError != null ? new List<CompilationErrorGroup> { dropError } : null, fileHashes), rt.Elapsed);
             }
 
             if (deferRun)
@@ -8218,7 +8282,8 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 }
             },
             pinLoadToChangeModel: collectPerTestForSelection,
-            tdd: tddRequest);
+            tdd: tddRequest,
+            reportDropped: onTestComplete);
 
         var allTests = runs.SelectMany(r => r.Tests).ToList();
         var allCompileErrors = runs.SelectMany(r => r.CompileErrors ?? Array.Empty<CompilationErrorGroup>()).ToList();

@@ -200,6 +200,18 @@ answer an event in a request that omits it. A single-bundle request is unchanged
 - A bundle that fails to compile short-circuits straight to the `summary` line
   with `exitCode: 3` and `compilationErrors` set — no `test` lines for that
   bundle (there was nothing to run).
+- A bundle that compiles with a test codeunit dropped from it (BC could not bind it) runs the
+  codeunits that survive, as the CLI does (#5118). That holds only when every dropped object is a
+  test codeunit that nothing surviving reaches by name or by object id (`docs/emit-exclusion-triage.md`).
+  The dropped codeunit's `[Test]` procedures stream first as `skipped` lines (and count in `total`,
+  not in `passed`), the summary carries a `compilationErrors` group whose first line begins
+  `EMIT-EXCLUDED` and is followed by the AL diagnostic, and `exitCode` is `3`: the run covers less
+  than it discovered, however its survivors fared. Where the drop is not safe, or nothing survives, no
+  test runs and the request is refused with `exitCode: 3` and a reason naming the object. A dropped
+  `profile` alone (no executable AL) is not an error. `execute` and `--dap` have no row to show a
+  skipped test in, so a dropped object still refuses their request. A module compiled with a
+  dropped test codeunit is never served from the AL-output cache or reused by another directory
+  (below), so each request that compiles it reports the drop again.
 - `cancelled: true` is present on the summary only when a concurrent `cancel`
   command actually stopped the run before every test ran (see `cancel` below);
   omitted otherwise (never emitted as `false`).
@@ -1428,8 +1440,8 @@ Two directories declaring the same app `id` (two checkouts of one app, or a copy
 sent to one server. A module an earlier request compiled for one of them is reused for the
 other only when that directory holds the same source: every `.al` file by relative path and
 content, `app.json`, and the resolved dependencies. Otherwise the request compiles its own
-source, as a fresh server would. A module compiled by a `tdd` request is never reused by a
-later request. A dependency package another request loaded from a different path is reused
+source, as a fresh server would. A module compiled by a `tdd` request, or with a test codeunit
+dropped from it (#5118), is never reused by a later request. A dependency package another request loaded from a different path is reused
 only when its bytes are the same (#5079). Within one request, bundles that share an app id
 still share one module (#1683, #1892).
 

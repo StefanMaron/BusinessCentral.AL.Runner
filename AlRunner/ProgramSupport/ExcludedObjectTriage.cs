@@ -53,6 +53,34 @@ internal static partial class ProgramSupport
         private sealed record DeclaredObject(string Kind, int Id, string Name);
 
         /// <summary>
+        /// The question the CLI's bundled loop and --server's request path both ask of a recovered
+        /// module (#5118): the verdicts for <paramref name="excludedObjects"/> against every .al file the
+        /// module was compiled from, and whether every one is droppable. A detail per excluded object is
+        /// the precondition, not a nicety: a shorter list means an object was dropped without its file
+        /// being recorded, and an object that cannot be looked at cannot be cleared.
+        /// </summary>
+        internal static (IReadOnlyList<ExcludedObjectVerdict> Verdicts, bool EveryDropSafe) TriageDrops(
+            IReadOnlyList<string> excludedObjects,
+            IReadOnlyList<TddExcludedObjectDetail>? details,
+            IReadOnlyList<string> allPaths)
+        {
+            details ??= Array.Empty<TddExcludedObjectDetail>();
+            var moduleAlFiles = allPaths
+                .Where(pth => File.Exists(pth)
+                    && pth.EndsWith(".al", StringComparison.OrdinalIgnoreCase))
+                .Concat(allPaths.Where(Directory.Exists)
+                    .SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Files(d, "*.al")))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            var verdicts = details.Count == excludedObjects.Count
+                ? Triage(details, moduleAlFiles)
+                : Array.Empty<ExcludedObjectVerdict>();
+            var everyDropSafe = verdicts.Count == excludedObjects.Count
+                && verdicts.Count > 0 && verdicts.All(v => v.Droppable);
+            return (verdicts, everyDropSafe);
+        }
+
+        /// <summary>
         /// Verdict per excluded object, in the order given. An object the file system or the
         /// declaration regex cannot account for is NOT droppable — an unreadable excluded object
         /// is exactly the case where guessing is forbidden (.claude/rules/loud-failures.md).

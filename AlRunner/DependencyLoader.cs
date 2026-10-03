@@ -68,7 +68,9 @@ public sealed class DependencyLoader
         // whether it was compiled under --tdd, whose generated members are not on disk (#5034).
         long Epoch = 0,
         string? SourceFingerprint = null,
-        bool TddCompiled = false)
+        bool TddCompiled = false,
+        // #5118: compiled with a test codeunit dropped, which only the compile that dropped it reports.
+        bool DroppedObjects = false)
     {
         /// <summary>Every assembly of this app, primary first; never empty.</summary>
         internal IReadOnlyList<Assembly> AllAssemblies => Assemblies ?? new[] { Asm };
@@ -1629,7 +1631,7 @@ public sealed class DependencyLoader
             return null;
         // #5079: an earlier request's module answers only for the source it was compiled from.
         if (FromEarlierEpoch(entry)
-            && (entry.TddCompiled || sourceFingerprint == null
+            && (entry.TddCompiled || entry.DroppedObjects || sourceFingerprint == null
                 || !string.Equals(entry.SourceFingerprint, sourceFingerprint, StringComparison.Ordinal)))
             return null;
         return entry.Asm;
@@ -1677,11 +1679,12 @@ public sealed class DependencyLoader
     /// bundle in a subsequent request resolves to, not whatever compiled first.
     /// </summary>
     public static void RegisterLoaded(Guid appId, Assembly asm, string name, string publisher, string version, string sourcePath,
-        string? sourceFingerprint = null)
+        string? sourceFingerprint = null, bool droppedObjects = false)
     {
         var newEntry = new LoadedAppEntry(asm, name, publisher, version, sourcePath,
             VisibilitySignature: BcCompiler.DeclaredVisibilitySignature(appId),
-            Epoch: CurrentEpoch, SourceFingerprint: sourceFingerprint, TddCompiled: BcCompiler.IsTddMode());
+            Epoch: CurrentEpoch, SourceFingerprint: sourceFingerprint, TddCompiled: BcCompiler.IsTddMode(),
+            DroppedObjects: droppedObjects);
         if (_cache.TryAdd(appId, newEntry)) return;
         var existing = _cache[appId];
         // #2556: SourcePath first, for the same reason as TryGetByAppId above — this is the

@@ -361,13 +361,19 @@ public class WatchAffectedSelectionTests
         Assert.True(trigger.CountsLine?.Contains("failed 1 (+1 still failing, not re-run)   errors 0") == true,
             $"added table trigger: counts line:\n{trigger.Raw}");
 
-        // A file that cannot compile: the cycle reports the compile failure, never an empty green run.
+        // A codeunit that cannot compile is dropped (#5118, as under plain --watch): its test is SKIPPED, the
+        // module's other codeunits run, and the cycle reports the lost suite once as a partial bundle. It is
+        // never an empty green run.
         WatchEdit.Replace(Path.Combine(bundle, "Broken.Codeunit.al"), BrokenTests);
         var broken = await watch.NextCycle(WarmCycle);
-        Assert.Empty(broken.Status);
-        Assert.Contains("COMPILE FAIL", broken.Raw, StringComparison.Ordinal);
+        Assert.Equal("pass", broken.Status["Independent"]);
+        Assert.DoesNotContain("UsesMissing", broken.Status.Keys);
+        Assert.Contains("SKIP  WAff Broken Tests SX.UsesMissing", broken.Raw, StringComparison.Ordinal);
+        Assert.Contains("EMIT-EXCLUDED", broken.Raw, StringComparison.Ordinal);
         Assert.Contains("AL0185", broken.Raw, StringComparison.Ordinal);
-        Assert.Contains("compile-fail:1", broken.Raw, StringComparison.Ordinal);
+        Assert.Contains("SUITE ERRORS (1)", broken.Raw, StringComparison.Ordinal);
+        Assert.Contains("compile-fail:0", broken.Raw, StringComparison.Ordinal);
+        Assert.DoesNotContain("COMPILE FAIL", broken.Raw, StringComparison.Ordinal);
     }
 
     /// <summary>
