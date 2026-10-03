@@ -21,6 +21,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **tdd:** follow event subscribers across source bundles, report the re-run limit, name a dropped library
 - **pageext:** a namespace-qualified extends clause applies the source pageextension
 - **win32-stubs:** test overrides of the shim path no longer leak to runner children (Watch_PicksUpEdit exit 134)
 - **jobs:** a watchdog resume counts an emit-excluded codeunit and its bundle once
