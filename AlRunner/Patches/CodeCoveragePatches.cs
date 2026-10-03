@@ -159,6 +159,10 @@ public static class CodeCoveragePatches
     /// every row, hit count and status after it is BC's own code. Settled by corpus codeunit 60341
     /// "Test Code Coverage Table" (#4572). IsNavAppApplicationObject is true, as BC answers for
     /// every object it finds in 2000000207.</para>
+    /// <para>The text is the compiled folder's, never a same-app-id sibling source folder's: the
+    /// statement lines are numbered in the compiled text (#5250, docs/coverage-attribution.md
+    /// #a-sibling-source-folder-beside-an-execution-root-5222). A service tier has one deployed
+    /// app, so the sibling folder is a runner layout BC has no counterpart for.</para>
     /// <para>An object the run did not compile from source (a precompiled dependency) refuses by
     /// name: BC would read its text from the database, and the runner does not serve a
     /// dependency's embedded source yet.</para>
@@ -205,12 +209,18 @@ public static class CodeCoveragePatches
     private static AlSourceLocationMap CompiledSourceMap()
     {
         var dirs = RecordPatches.RegisteredSourceDirs();
-        var key = string.Join("\n", dirs);
+        var execution = RecordPatches.RegisteredExecutionSourceDirs();
+        // Both lists are in the key: the same dirs with another one marked as compiled map
+        // differently (#5250), and a key without that term would replay the old map.
+        var key = string.Join("\n", dirs) + "\n#execution\n" + string.Join("\n", execution);
         lock (_mapLock)
         {
             if (_map == null || _mapKey != key)
             {
-                _map = AlCoverageSourceMap.Build(dirs);
+                // Not a plain list: a sibling source folder registered beside the compiled one
+                // would otherwise replace its text, and the recorder's statement lines (numbered
+                // in the compiled text) would index past the sibling's (#5250).
+                _map = AlCoverageSourceMap.Build(AlCoverageSourceMap.RootsForRegisteredDirs(dirs, execution));
                 _mapKey = key;
             }
             return _map;

@@ -3297,7 +3297,9 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
         // (`if (_sourceDirs.Contains(dir)) continue;`), so an earlier plain-overload call
         // over the same dirs wins and this manifest-carrying one becomes a silent no-op —
         // every #if branch then resolves against a guessed app.json with nothing failing.
-        AlRunner.Patches.RecordPatches.AddSourceDirs(
+        // #5250: AddExecutionSourceDirs, not AddSourceDirs: these are the dirs the run compiles,
+        // which the Code Coverage line rows must prefer over a same-app-id sibling folder.
+        AlRunner.Patches.RecordPatches.AddExecutionSourceDirs(
             SourceDirsWithCompileManifest(suites, bucketRoot, bundleAbs, bundledMode));
     }
 
@@ -6222,7 +6224,7 @@ return strictExitCode ? computedExitCode : 0;
         // #4071: this path compiles every suite as ONE module rooted at bucketRoot, so every
         // registered folder parses under that compile's manifest.
         var serverCompileManifest = BcCompiler.ResolveManifestAppJson(bucketRoot, allPaths);
-        AlRunner.Patches.RecordPatches.AddSourceDirs(dirsToRegister.Select(d => (d, serverCompileManifest)));
+        AlRunner.Patches.RecordPatches.AddExecutionSourceDirs(dirsToRegister.Select(d => (d, serverCompileManifest)));   // #5250
         var fileHashes = ComputeServerFileHashes(allPaths);
 
         if (allPaths.Count == 0)

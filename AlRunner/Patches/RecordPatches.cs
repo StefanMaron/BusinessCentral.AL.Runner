@@ -540,6 +540,7 @@ public static partial class RecordPatches
         // for the page-side failure this prevents.
         ResetXmlPortMetadataForReload();
         _sourceDirs.Clear();
+        _executionSourceDirs.Clear();
         AlRunner.Infrastructure.PackagedDependencySources.ResetForReload();
         CodeCoveragePatches.ResetSourceMapForReload();   // same dirs, edited files (#4572 review)
         _compileManifestByDir.Clear();
@@ -625,6 +626,49 @@ public static partial class RecordPatches
     /// <c>AlCoverageSourceMap.Build</c> reports for a root it cannot read.</para>
     /// </summary>
     public static IReadOnlyList<string> RegisteredSourceDirs() => _sourceDirs.ToList();
+
+    // The registered dirs the run compiled and executes (a subset of _sourceDirs, in the
+    // registered spelling), as opposed to sibling source folders registered beside them. #5250.
+    private static readonly List<string> _executionSourceDirs = new();
+
+    /// <summary>
+    /// <see cref="AddSourceDirs(IEnumerable{ValueTuple{string, string}})"/> for the dirs the run
+    /// itself compiles (the suite-registration loops in Program.cs), which are then reported by
+    /// <see cref="RegisteredExecutionSourceDirs"/>. A dir an earlier caller already registered
+    /// (a source impl registers its own dir first) is marked all the same: AddSourceDirs
+    /// de-dups on the dir, so the registration alone cannot say who compiled it.
+    /// </summary>
+    internal static void AddExecutionSourceDirs(IEnumerable<(string Dir, string? ManifestAppJsonPath)> dirs)
+    {
+        var batch = dirs.ToList();
+        AddSourceDirs(batch);
+        foreach (var (dir, _) in batch)
+        {
+            var registered = _sourceDirs.FirstOrDefault(r => SameDirectory(r, dir));
+            if (registered != null && !_executionSourceDirs.Contains(registered, StringComparer.Ordinal))
+                _executionSourceDirs.Add(registered);
+        }
+    }
+
+    /// <summary>
+    /// The subset of <see cref="RegisteredSourceDirs"/> the run compiled and executes, in
+    /// registered order and spelling. <c>AlCoverageSourceMap.RootsForRegisteredDirs</c> hands it
+    /// to <c>Build</c> as the execution roots, so a sibling source folder with the same app id
+    /// never replaces an object these declare (#5222, #5250).
+    /// </summary>
+    internal static IReadOnlyList<string> RegisteredExecutionSourceDirs() => _executionSourceDirs.ToList();
+
+    private static bool SameDirectory(string a, string b)
+    {
+        static string Canonical(string p)
+        {
+            try { return Path.GetFullPath(p).Replace('\\', '/').TrimEnd('/'); }
+            catch (ArgumentException) { return p; }
+            catch (NotSupportedException) { return p; }
+            catch (PathTooLongException) { return p; }
+        }
+        return string.Equals(Canonical(a), Canonical(b), StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>
     /// Runs all eight source extractors (table, tableextension, page, report, query,
