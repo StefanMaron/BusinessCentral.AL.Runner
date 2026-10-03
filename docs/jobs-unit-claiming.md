@@ -253,6 +253,40 @@ written by each worker on a cold cache (#5252, cost not measured). A holder that
 `NoteCompiling` in `LoadOne` is not caught by any test either: it would hand the phase on after a
 hit on a key an unrelated process compiled, costing time and never correctness.
 
+## Source dependencies
+
+A bundle can depend on another source folder listed in the same invocation. Without `--jobs` one
+process builds the dependency into a package before the dependent loads. A worker given only its own
+shard has no such package for a folder the plan put on another worker, and used to stop with "a
+required dependency package is missing" (#5267) before any of its tests ran.
+
+- **The plan is unchanged.** Folders are still dealt out by weight alone. Grouping a folder with its
+  dependencies on one worker would put every test folder that shares a library on one worker and
+  leave `--jobs` nothing to spread.
+- **Each worker is handed the folders its bundles need.** The parent works out, per worker, the listed
+  folders that worker's bundles depend on directly or through other listed folders and does not hold
+  itself (`JobsSourceDependencies.OutsideShard`; matched by declared app id, else name and publisher,
+  as the pre-pass matches). It passes them as extra folders and names them in
+  `AL_RUNNER_JOBS_DEPENDENCY_ONLY` (`|`-separated). The plan line for such a worker ends with
+  `plus N source dependency folder(s) it compiles and does not run: ...`. A dependency that is not a
+  listed folder (a package in a package cache, an unlisted sibling directory) is handled exactly as
+  without `--jobs`.
+- **The worker builds them and does not run them.** Everything before the bundle loop sees the whole
+  set, as in a plain run: provisioning and both source pre-passes. The bundle loop, the `[n/m]`
+  progress line and the expectations audit read the folders the worker runs
+  (`JobsSourceDependencies.RunBundles`). So a dependency that has tests of its own reports them
+  once, from the worker that owns it as a bundle, and an expectations entry scoped to it is audited
+  there only.
+- **Two workers may need the same dependency.** Its package and symbols sidecar are written into one
+  directory of the shared `--cache` (`workspace-deps/<key>`), in place, so a second writer read a
+  half-written package or failed with a sharing violation (measured with the lock removed, on
+  listed and on unlisted dependencies alike). Each source dependency is now built under a lock on
+  its directory (`workspace.compile.lock`, the lock of `CacheCompileLock`, so the same wait bound and the
+  same fallback): one worker builds it, the others find it as a cache HIT.
+- **Not weighed.** A dependency-only folder adds nothing to its worker's weight, and `JobsMemory` does
+  not model it (its base was measured on workers with one bundle). Each worker loads what it needs;
+  only the first build of it is shared.
+
 ## Speed and correctness on a large bucket
 
 Tests-ERM (293 AL files, 9,497 tests), same box and configuration, `--test-data`. The box was

@@ -186,6 +186,42 @@ public sealed class JobsSourceDependencySameParentTests
         return (exit, output, junit);
     });
 
+    // other and top2 are listed, and both depend on mid and, through it, on base: two folders next to
+    // them that nothing on the command line names. The workers find them by a sibling scan, each builds them,
+    // and the plan hands them nothing, so this is the other place two workers write one workspace directory.
+    private static readonly Lazy<(int Exit, string Output, string Junit)> RunUnlisted = new(() =>
+    {
+        var scratch = TestScratch.Dir("al-runner-jobs-source-deps-unlisted");
+        var junit = Path.Combine(scratch, "jobs.xml");
+        var bundles = JobsSourceDependencyEndToEndTests.Quoted(new[] { "other", "top2" }.Select(
+            f => Path.Combine(JobsSourceDependencyEndToEndTests.FixtureRoot, f)));
+        var (exit, output) = JobsUnitClaimEndToEndTests.RunRunner(
+            $"--cache \"{Path.Combine(scratch, "cache")}\" --jobs 2 --output-junit \"{junit}\" {bundles}",
+            lowSplitFloor: false);
+        return (exit, output, junit);
+    });
+
+    /// <summary>Folders no one listed, needed by both workers: on an empty cache each source dependency
+    /// is built once and the other worker reads it, as for a listed one. Without the lock the workers
+    /// wrote the same package and sidecar at once.</summary>
+    [SkippableFact]
+    public void AnUnlistedSiblingDependencyNeededByBothWorkers_IsBuiltOnce_AndEveryTestRunsOnce()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (exit, output, junit) = RunUnlisted.Value;
+
+        Assert.True(exit == 0, output);
+        Assert.DoesNotContain("being used by another process", output);
+        Assert.Equal("Tests: 4   passed 4   failed 0   errors 0   skipped 0",
+            JobsSourceDependencyEndToEndTests.AggregateLine(output));
+        Assert.Equal(4, JobsSourceDependencyEndToEndTests.CaseNames(junit).Count);
+        foreach (var dep in new[] { "Base", "Mid" })
+        {
+            Assert.Single(Regex.Matches(output, $@"^\[source-dep\] WROTE Runner Tests Fixture - Jobs Deps {dep} ", RegexOptions.Multiline));
+            Assert.Single(Regex.Matches(output, $@"^\[source-dep\] cache HIT Runner Tests Fixture - Jobs Deps {dep} ", RegexOptions.Multiline));
+        }
+    }
+
     [SkippableFact]
     public void JobsRun_OverFoldersThatShareAParent_PassesEveryTestOnce()
     {

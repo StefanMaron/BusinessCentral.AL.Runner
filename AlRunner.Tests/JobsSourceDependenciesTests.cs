@@ -107,16 +107,42 @@ public sealed class JobsSourceDependenciesTests
         Assert.Empty(Outside(new[] { "solo" }, run));
     }
 
-    /// <summary>A dependency cycle is not this code's to adjudicate: it terminates and names the other
-    /// folder once. Bounded, so a regression fails here instead of hanging the test host.</summary>
+    /// <summary>The dependency list of a folder that fails once it has been read more often than any
+    /// walk of a graph this small needs: a walk that revisits folders reads it without end, and would
+    /// otherwise hang the test host and grow its queue until the box ran out of memory.</summary>
+    private sealed class BoundedDependencies : IReadOnlyList<DependencyRef>
+    {
+        private readonly IReadOnlyList<DependencyRef> _inner;
+        private int _reads;
+
+        public BoundedDependencies(IReadOnlyList<DependencyRef> inner) => _inner = inner;
+
+        public IEnumerator<DependencyRef> GetEnumerator()
+        {
+            if (++_reads > 1_000)
+                throw new InvalidOperationException("the walk revisited a folder it had already visited");
+            return _inner.GetEnumerator();
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+        public int Count => _inner.Count;
+        public DependencyRef this[int index] => _inner[index];
+    }
+
+    /// <summary>A dependency cycle is not this code's to adjudicate: the walk visits each folder once,
+    /// terminates, and names the other folder.</summary>
     [Fact]
-    public void ACycle_Terminates()
+    public void ACycle_VisitsEachFolderOnce_AndTerminates()
     {
         var run = Run(("a", new[] { "b" }), ("b", new[] { "a" }));
+        var bounded = run.All.ToDictionary(p => ParallelFanOut.Normalize(p),
+            p => { var id = run.IdentityOf(p)!; return id with { Dependencies = new BoundedDependencies(id.Dependencies) }; },
+            StringComparer.OrdinalIgnoreCase);
 
-        var task = Task.Run(() => Outside(new[] { "a" }, run));
-        Assert.True(task.Wait(TimeSpan.FromSeconds(10)), "OutsideShard did not terminate on a cycle");
-        Assert.Equal(new[] { "b" }, task.Result);
+        var outside = JobsSourceDependencies.OutsideShard(new[] { P("a") }, run.All,
+            p => bounded[ParallelFanOut.Normalize(p)]);
+
+        Assert.Equal(new[] { P("b") }, outside);
     }
 
     [Fact]

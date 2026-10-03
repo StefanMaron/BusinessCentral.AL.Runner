@@ -8,8 +8,9 @@
 //   * every flag the user passed survives (a worker that loses --test-data reports a much lower
 //     pass count, and nothing says why),
 //   * `--jobs` does NOT survive, or each worker fans out again — a process bomb, not a run,
-//   * only this shard's bundles are passed, or every worker runs everything and the aggregate
-//     double-counts.
+//   * only this shard's bundles are RUN, or every worker runs everything and the aggregate
+//     double-counts. A worker is also handed the listed folders its bundles depend on, marked
+//     dependency-only so it compiles and does not run them (JobsSourceDependencies, #5267).
 //
 // Telling a positional bundle path from a flag's VALUE needs to know which flags take one:
 // `--cache /b/two` must keep its value even when /b/two is also a bundle root elsewhere in the
