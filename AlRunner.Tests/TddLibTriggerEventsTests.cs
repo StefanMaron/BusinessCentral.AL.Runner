@@ -47,7 +47,7 @@ public sealed class TddLibTriggerEventsTests : IClassFixture<TddLibTriggerEvents
     internal static void AssertAnnotated(TddRunResult run, string which)
     {
         Assert.True(run.Exit == 0, $"{which}: exit {run.Exit}\n{run.StdErr}");
-        Assert.Equal(13, run.Tests.Count);
+        Assert.Equal(16, run.Tests.Count);
         Assert.All(run.Tests, t => Assert.Equal("pass", t.GetProperty("status").GetString()));
 
         // The trigger is in the library's table and its stub in the library's own compile, which the test
@@ -78,6 +78,10 @@ public sealed class TddLibTriggerEventsTests : IClassFixture<TddLibTriggerEvents
                 Assert.DoesNotContain(Stub(member), stubs);
             Assert.DoesNotContain(TestStub("MissingTestDelete"), stubs);
         }
+        // A table extension of the library names its triggers OnAfterInsert and, in a modify() block, OnAfterValidate.
+        AssertStubs(run, "InsertTrue_RunsTheLibrarysExtensionOnAfterInsert", "MissingExtAfterInsert");
+        AssertStubs(run, "Validate_RunsTheLibrarysModifyBlockOnAfterValidate", "MissingExtAfterValidate");
+        AssertStubs(run, "AppProcedureInsertingTrue_RunsTheLibrarysExtensionOnAfterInsert", "MissingExtAfterInsert");
         // Subscribers in the test bundle, the second started by a procedure of the first (a second round).
         AssertStubs(run, "InsertIntoTheChainTable_NeedsASecondRound", "MissingChain");
         // The controls.
@@ -95,7 +99,7 @@ public sealed class TddLibTriggerEventsTests : IClassFixture<TddLibTriggerEvents
     {
         TestArtifacts.SkipIfMissing();
         AssertAnnotated(_run, "app lib test");
-        Assert.Contains("--tdd: generated 6 member(s) this run:", _run.StdErr);
+        Assert.Contains("--tdd: generated 8 member(s) this run:", _run.StdErr);
     }
 
     /// <summary>

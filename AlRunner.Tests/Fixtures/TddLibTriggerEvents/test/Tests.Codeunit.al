@@ -96,6 +96,32 @@ codeunit 72421 "TLib Tests"
     end;
 
     [Test]
+    procedure InsertTrue_RunsTheLibrarysExtensionOnAfterInsert()
+    var
+        Rec: Record "TLib Ext Rec";
+    begin
+        Rec.PK := 'T14';
+        Rec.Insert(true);
+    end;
+
+    [Test]
+    procedure Validate_RunsTheLibrarysModifyBlockOnAfterValidate()
+    var
+        Rec: Record "TLib Ext Rec";
+    begin
+        Rec.PK := 'T15';
+        Rec.Validate(Qty, 3);
+    end;
+
+    [Test]
+    procedure AppProcedureInsertingTrue_RunsTheLibrarysExtensionOnAfterInsert()
+    var
+        Writer: Codeunit "TLib Writer";
+    begin
+        Writer.WriteExt('T16');
+    end;
+
+    [Test]
     procedure InsertIntoTheChainTable_NeedsASecondRound()
     var
         Rec: Record "TLib Chain Rec";

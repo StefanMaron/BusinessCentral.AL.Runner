@@ -25,3 +25,14 @@ table 72405 "TLib Chain Rec"
     fields { field(1; PK; Code[20]) { } }
     keys { key(PK; PK) { Clustered = true; } }
 }
+
+/// <summary>#5286: extended in the library with OnAfterInsert and, in a modify() block, OnAfterValidate triggers.</summary>
+table 72406 "TLib Ext Rec"
+{
+    fields
+    {
+        field(1; PK; Code[20]) { }
+        field(2; Qty; Integer) { }
+    }
+    keys { key(PK; PK) { Clustered = true; } }
+}

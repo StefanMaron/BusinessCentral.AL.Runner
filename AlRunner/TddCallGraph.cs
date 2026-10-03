@@ -213,7 +213,7 @@ internal sealed partial class TddCallGraph
             if (n is NavSyntax.ObjectSyntax o)
             {
                 var objName = KeyObjectName(o, method);
-                var methodName = Name(method.Name);
+                var methodName = KeyMethodName(o, method);
                 return objName.Length == 0 || methodName.Length == 0 ? null : ProcKey(objName, methodName);
             }
         return null;

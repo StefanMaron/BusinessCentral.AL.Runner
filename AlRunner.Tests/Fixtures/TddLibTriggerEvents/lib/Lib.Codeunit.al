@@ -61,3 +61,29 @@ table 72413 "TLib Lib Rec"
         Result := Target.MissingLibTrigger(1);
     end;
 }
+
+/// <summary>#5286: OnAfterInsert on the app's table, and OnAfterValidate of its field in a modify() block.</summary>
+tableextension 72415 "TLib Ext Rec Ext" extends "TLib Ext Rec"
+{
+    fields
+    {
+        modify(Qty)
+        {
+            trigger OnAfterValidate()
+            var
+                Target: Codeunit "TLib Lib Target";
+                Result: Integer;
+            begin
+                Result := Target.MissingExtAfterValidate(1);
+            end;
+        }
+    }
+
+    trigger OnAfterInsert()
+    var
+        Target: Codeunit "TLib Lib Target";
+        Result: Integer;
+    begin
+        Result := Target.MissingExtAfterInsert(1);
+    end;
+}

@@ -45,6 +45,28 @@ internal sealed partial class TddCallGraph
 
     private const string AnyObject = "*";
 
+    // The trigger a record operation starts, by the operation's own name; a table extension names its triggers
+    // OnBefore<Op>/OnAfter<Op> (and a modify() block OnBeforeValidate/OnAfterValidate), which the same
+    // operation starts under the same RunTrigger rule.
+    private static readonly string[] OperationTriggers = { "OnInsert", "OnModify", "OnDelete", "OnRename", "OnValidate" };
+
+    /// <summary>The operation triggers (<c>OnInsert</c> ...) that start a trigger a table or table extension
+    /// declares under <paramref name="name"/>. A name that is none of them and is not one a record operation
+    /// can never start (a lookup, a drill-down, an assist-edit: a page runs those) is read as started by every
+    /// operation: an unrecognised name over-annotates and never misses (#5286).</summary>
+    internal static IReadOnlyList<string> StartedBy(string name)
+    {
+        var op = name;
+        foreach (var prefix in new[] { "OnBefore", "OnAfter" })
+            if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                op = "On" + name[prefix.Length..];
+        foreach (var known in OperationTriggers)
+            if (known.Equals(op, StringComparison.OrdinalIgnoreCase)) return new[] { known };
+        foreach (var pageOnly in new[] { "Lookup", "DrillDown", "AssistEdit" })
+            if (name.Contains(pageOnly, StringComparison.OrdinalIgnoreCase)) return Array.Empty<string>();
+        return OperationTriggers;
+    }
+
     /// <summary>The key a raise is recorded under when its receiver names no table or codeunit the graph
     /// can read (a RecordRef, a FieldRef, a codeunit id that is not a literal object reference): every
     /// entry point of that name answers it.</summary>
@@ -72,6 +94,17 @@ internal sealed partial class TddCallGraph
             ? baseTable
             : Name(o.Name);
 
+    /// <summary>The name a node is keyed by: a method's own; a table trigger's operation trigger when exactly
+    /// one starts it (OnAfterInsert -> OnInsert), so a later bundle's raise finds it.</summary>
+    private static string KeyMethodName(NavSyntax.ObjectSyntax o, Node method)
+    {
+        var name = Name(method.Name);
+        if (method is NavSyntax.MethodDeclarationSyntax || o is not (NavSyntax.TableSyntax or NavSyntax.TableExtensionSyntax))
+            return name;
+        var started = StartedBy(name);
+        return started.Count == 1 ? started[0] : name;
+    }
+
     private void CollectTriggers(NavCA.SemanticModel model, NavCA.SyntaxNode root)
     {
         foreach (var obj in root.DescendantNodesAndSelf().OfType<NavSyntax.ObjectSyntax>())
@@ -83,21 +116,27 @@ internal sealed partial class TddCallGraph
             {
                 if (node is NavSyntax.MethodDeclarationSyntax) continue;
                 var name = Name(node.Name);
-                var codeunit = obj is NavSyntax.CodeunitSyntax;
-                if (!EntryPointNames.Contains(name) || codeunit != name.Equals("OnRun", StringComparison.OrdinalIgnoreCase)) continue;
-                if (KeyOf(node) is { } key) _triggers.Add((node, key));
+                if (obj is NavSyntax.CodeunitSyntax)
+                {
+                    if (name.Equals("OnRun", StringComparison.OrdinalIgnoreCase) && KeyOf(node) is { } runKey) _triggers.Add((node, runKey));
+                    continue;
+                }
+                var objectName = KeyObjectName(obj, node);
+                foreach (var trigger in StartedBy(name))
+                    _triggers.Add((node, ProcKey(objectName, trigger)));
             }
         }
     }
 
     private static string ExtensionBase(NavCA.SemanticModel model, NavSyntax.TableExtensionSyntax ext)
     {
+        // The symbol knows the table whether the extension names it, qualifies it with a namespace or gives its id.
+        if (model.GetDeclaredSymbol(ext) is NavCA.IApplicationObjectExtensionTypeSymbol { Target: { } target }
+            && target.Name.Length > 0)
+            return target.Name;
         var text = ext.BaseObject?.ToString().Trim() ?? "";
-        if (text.Length > 0 && !text.All(char.IsDigit)) return Unquote(text);
-        // Named by id: the symbol knows the table.
-        return model.GetDeclaredSymbol(ext) is NavCA.IApplicationObjectExtensionTypeSymbol { Target: { } target }
-            ? target.Name
-            : text;
+        var dot = text.LastIndexOf('.');
+        return Unquote(dot >= 0 ? text[(dot + 1)..] : text);
     }
 
     /// <summary>Records what the invocation <paramref name="inv"/> starts: a record method's trigger and

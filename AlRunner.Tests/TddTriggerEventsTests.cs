@@ -60,6 +60,27 @@ public sealed class TddTriggerEventsTests : IClassFixture<TddTriggerEventsRun>
     }
 
     /// <summary>
+    /// A table extension names its triggers OnBefore/OnAfter plus the operation, and a modify() block
+    /// OnBeforeValidate/OnAfterValidate: the operation that starts the base table's trigger starts them, under the
+    /// same RunTrigger rule. The extension's OnLookup is a page's and no operation starts it, and an extension that
+    /// names its table with a namespace is keyed by the table.
+    /// </summary>
+    [SkippableFact]
+    public void TableExtensionTriggers_AreStartedByTheOperationTheyAreNamedAfter()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        AssertStubs("InsertTrue_RunsTheExtensionsBeforeAndAfterInsert", "MissingExtBeforeInsert", "MissingExtAfterInsert");
+        AssertStubs("ModifyTrue_RunsTheExtensionsBeforeAndAfterModify", "MissingExtBeforeModify", "MissingExtAfterModify");
+        AssertStubs("DeleteTrue_RunsTheExtensionsBeforeAndAfterDelete", "MissingExtBeforeDelete", "MissingExtAfterDelete");
+        AssertStubs("Rename_RunsTheExtensionsBeforeAndAfterRename", "MissingExtBeforeRename", "MissingExtAfterRename");
+        AssertStubs("Validate_RunsTheModifyBlocksBeforeAndAfterValidate", "MissingExtBeforeValidate", "MissingExtAfterValidate");
+        AssertStubs("InsertTrue_RunsTheOnAfterInsertOfAnExtensionNamingItsTableWithItsNamespace", "MissingNsAfterInsert");
+        AssertStubs("InsertOmittingRunTrigger_ExtensionTriggersDoNotRun_IsNotAnnotated");
+        AssertStubs("AssignmentOnly_StartsNoTriggerAndNotTheLookup_IsNotAnnotated");
+    }
+
+    /// <summary>
     /// A database event has no publisher procedure in any bundle: its subscribers are reached by the
     /// operation that raises it, whatever its RunTrigger says. A test that sets its record up with a plain
     /// Insert() raises OnBeforeInsertEvent there, so it names that subscriber's stub too.
@@ -123,7 +144,11 @@ public sealed class TddTriggerEventsTests : IClassFixture<TddTriggerEventsRun>
         foreach (var member in new[] { "MissingModify", "MissingDelete", "MissingRename", "MissingRun", "MissingValidate" })
             Assert.DoesNotContain(Stub(member), insert);
 
-        AssertStubs("FieldRefValidate_StartsTheFieldTriggerOfAnyTable", "MissingValidate", "MissingAfterValidate");
+        var validate = _run.StubsOf("FieldRefValidate_StartsTheFieldTriggerOfAnyTable");
+        foreach (var member in new[] { "MissingValidate", "MissingAfterValidate", "MissingExtBeforeValidate", "MissingExtAfterValidate" })
+            Assert.Contains(Stub(member), validate);
+        foreach (var member in new[] { "MissingInsert", "MissingModify", "MissingExtAfterInsert" })
+            Assert.DoesNotContain(Stub(member), validate);
 
         // A record the receiver expression does not name by a variable (a procedure's return value) is no
         // better known: the table is not read, so the operation counts for every table.
@@ -146,8 +171,8 @@ public sealed class TddTriggerEventsTests : IClassFixture<TddTriggerEventsRun>
         AssertStubs("ListInsert_IsNotARecordOperation_IsNotAnnotated");
         AssertStubs("Quiet_IsNotAnnotated");
         // Every member is generated, and the tests naming one are counted: the controls are not among them.
-        Assert.Contains("--tdd: generated 17 member(s) this run:", _run.StdErr);
-        Assert.Equal(32, _run.Tests.Count);
-        Assert.Equal(23, _run.Tests.Count(t => t.TryGetProperty("generatedStubs", out _)));
+        Assert.Contains("--tdd: generated 29 member(s) this run:", _run.StdErr);
+        Assert.Equal(40, _run.Tests.Count);
+        Assert.Equal(29, _run.Tests.Count(t => t.TryGetProperty("generatedStubs", out _)));
     }
 }

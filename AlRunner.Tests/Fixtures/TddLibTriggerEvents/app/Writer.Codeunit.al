@@ -51,4 +51,12 @@ codeunit 72404 "TLib Writer"
         RecRef.Field(1).Value := Id;
         RecRef.Insert(true);
     end;
+
+    procedure WriteExt(Id: Code[20])
+    var
+        Rec: Record "TLib Ext Rec";
+    begin
+        Rec.PK := Id;
+        Rec.Insert(true);
+    end;
 }
