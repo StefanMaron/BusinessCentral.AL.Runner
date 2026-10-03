@@ -992,7 +992,10 @@ public static partial class RecordPatches
             if (obj is not NavSyntax.TableExtensionSyntax ext) continue;
             if (ext.ObjectId?.Value.Value is not int extId) continue;
             var extName = IdentText(ext.Name);
-            var baseName = Unquote(ext.BaseObject?.ToString()?.Trim() ?? "");
+            // The name only: a namespace written in front of it is not part of the table's name
+            // (#5085). Registered by name alone, so a same-named table in another namespace is not
+            // told apart (#5223).
+            var baseName = LastNameSegment(ext.BaseObject?.ToString()?.Trim());
 
             // Extension fields are parsed exactly like base-table fields — see
             // ParseFieldSyntax for what they used to lose (#1711).

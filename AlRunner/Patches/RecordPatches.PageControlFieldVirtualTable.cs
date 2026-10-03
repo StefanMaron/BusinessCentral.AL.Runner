@@ -228,7 +228,7 @@ public static partial class RecordPatches
                     .Concat(DependencyPageExtensionFieldControls(symbol.Name))
                     .ToList();
                 var sourceExtensionControls = _parsedPageExtensions.Values
-                    .Where(ext => NamesEqual(ext.BaseName, symbol.Name))
+                    .Where(ext => ExtensionTargetsDependencyPage(ext, symbol.Name))
                     .SelectMany(ext => ext.Controls)
                     .ToList();
                 if (controls.Count == 0 && sourceExtensionControls.Count == 0) continue;
