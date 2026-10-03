@@ -3609,6 +3609,7 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                         {
                             compileGate.Dispose();
                             compileGate = null;
+                            compilePhase?.ReleaseUnproductive();
                         }
                     }
                 }

@@ -820,11 +820,13 @@ public sealed class DependencyLoader
                     {
                         compileGate.Dispose();
                         compileGate = null;
+                        phase?.ReleaseUnproductive();
                     }
                 }
             }
         }
         phase?.NoteCompiling();
+        Console.Error.WriteLine($"[deps] compiling {m.Name} v{m.Version} (source-cache MISS key={cacheKey[..12]})");
         // Held to the end of the method. A compile that ends without publishing (it throws, the
         // write fails) gives the locks up and leaves the marker.
         using var compileGateScope = compileGate;

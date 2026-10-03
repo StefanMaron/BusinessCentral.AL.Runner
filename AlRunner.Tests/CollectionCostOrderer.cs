@@ -214,13 +214,13 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // --per-suite, two memory-limited plans and an unusable override). 68s locally for the
             // class, rounded down; a LOCAL value, to be re-recorded from the first CI leg's weight step.
             ["JobsSharedBundleEndToEndTests"] = 68,
-            // #5238: recorded from Test Matrix run 37068657463: 87.4s (BC 27.5) and 107.2s (BC 28.5)
-            // for these seven tests, each spawning real runners, at the lower leg rounded down.
-            ["CacheCompileLockEndToEndTests"] = 87,
-            // #5238: the four-row waiter theory, in its own class. No CI figure yet: 57s locally for
-            // the class (the first class took 55s locally when CI timed it at 87s), a LOCAL value to be
-            // re-recorded from the first CI leg that reports it.
-            ["CacheCompileLockWaitersEndToEndTests"] = 57,
+            // #5238: recorded from Test Matrix run 37080059144 (head 465ed74f), at the lower leg rounded
+            // down. CacheCompileLockEndToEndTests: 110.1s on 27.5, 123.1s on 28.5.
+            // CacheCompileLockWaitersEndToEndTests: 107.4s on 27.5, 123.8s on 28.5, for FOUR rows; it
+            // has six since, so this is the value from BEFORE those two were added: re-record it from
+            // the next first CI leg.
+            ["CacheCompileLockEndToEndTests"] = 110,
+            ["CacheCompileLockWaitersEndToEndTests"] = 107,
             // #4813: 8 tests, each spawning a runner subprocess on a bundle that source-compiles
             // Microsoft's Test Runner app or stand-ins for it. Absent from this table on its
             // first CI run (36294813041): 180.2s on both the BC 27.5 and 28.5 legs, rounded down.

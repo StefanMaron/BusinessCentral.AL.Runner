@@ -224,8 +224,9 @@ leaves `<key>.uncacheable` beside where the entry would be; a process that sees 
 without waiting, and a later compile that does publish the key removes it. It is a hint about cost
 only: it skips the locks and nothing else, and a stale one costs the locks and nothing else. The
 FIRST run is still serial for the compile that finds out, because the workers are already waiting
-when it does; the ones waiting on a lock (the key lock, or the phase) see the marker the moment they
-get it and compile side by side from there, rather than one after another. A
+when it does; the ones waiting on a lock (the key lock, the phase, or the key lock while sharing a phase) see
+the marker the moment they get it, hand on whatever they held and compile side by side from there,
+rather than one after another. A
 45-file synthetic bundle with one uncompilable test codeunit, `--jobs 2`, three runs each at a load
 of 4 to 5 (base / the first push of #5248 / with the marker): cold 18.1 to 21.0 s / 22.8 to 24.2 s /
 23.9 to 25.2 s; warm 11.2 to 12.0 s / 16.2 to 17.7 s / 10.0 to 11.4 s. Cold, CPU and peak memory stay

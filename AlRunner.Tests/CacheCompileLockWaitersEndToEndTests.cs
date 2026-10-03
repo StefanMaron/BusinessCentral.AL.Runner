@@ -1,30 +1,40 @@
 // CacheCompileLockWaitersEndToEndTests — #5238: processes already WAITING for a lock when the
 // holder finds out that its key can never be cached. Its own class (and so its own xUnit
-// collection) so the four spawning rows run beside CacheCompileLockEndToEndTests, not behind it.
+// collection) so the spawning rows run beside CacheCompileLockEndToEndTests, not behind it.
 // Fixture and process helpers are that class's.
 
 using Xunit;
+using Xunit.Abstractions;
 using static AlRunner.Tests.CacheCompileLockEndToEndTests;
 
 namespace AlRunner.Tests;
 
 public sealed class CacheCompileLockWaitersEndToEndTests
 {
+    private readonly ITestOutputHelper _output;
+
+    public CacheCompileLockWaitersEndToEndTests(ITestOutputHelper output) => _output = output;
+
     /// <summary>
     /// Two processes already WAITING for a lock when the holder finds out that its key can never be
     /// cached: each must see the marker and compile at once, not queue behind one another's compile.
-    /// The test is the lock holder, writes the marker, then lets go. Four ways to wait: on the key
-    /// lock (processes sharing a cache but not a bundle) or on the compile phase (workers of one
-    /// shared bundle), for the bundle or for a dependency. What is compared is when the two workers
-    /// START their compile: side by side they start within a second of each other, one behind the
-    /// other the second starts after the first has finished (several seconds later).
+    /// The test is the lock holder, writes the marker, then lets go. Ways to wait: on the key lock
+    /// (processes sharing a cache but not a bundle) or on the compile phase (workers of one shared
+    /// bundle), or on the key lock while ALSO sharing a phase; for the bundle or for a dependency.
+    /// What is compared is when the two workers START their compile, against how long a compile
+    /// takes on this box: side by side the second starts almost with the first, one behind the other
+    /// it starts about one compile later. The bound is half the shorter compile, so a loaded box
+    /// that slows both compiles does not trip it and a serial run still does.
     /// </summary>
     [SkippableTheory]
-    [InlineData(false, false)]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    [InlineData(true, true)]
-    public void ProcessesWaitingOnALock_SeeTheMarkerTheHolderLeaves_AndCompileSideBySide(bool viaPhase, bool atDependency)
+    [InlineData(false, false, false)]
+    [InlineData(true, false, true)]
+    [InlineData(false, true, false)]
+    [InlineData(true, true, true)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, true)]
+    public void ProcessesWaitingOnALock_SeeTheMarkerTheHolderLeaves_AndCompileSideBySide(
+        bool viaPhase, bool atDependency, bool workersShareAPhase)
     {
         TestArtifacts.SkipIfMissing();
 
@@ -58,7 +68,7 @@ public sealed class CacheCompileLockWaitersEndToEndTests
                 keyLockPath = markerPath[..^AlRunner.Infrastructure.UncacheableCompile.Suffix.Length] + ".compile.lock";
                 Assert.True(File.Exists(keyLockPath), $"no lock file beside the marker:\n{setup}");
                 File.Delete(markerPath);               // the waiters must not know yet
-                compileLine = "[dep-load-fail]";
+                compileLine = "[deps] compiling ";
             }
             else
             {
@@ -77,7 +87,7 @@ public sealed class CacheCompileLockWaitersEndToEndTests
             using var held = AlRunner.Infrastructure.CacheCompileLock.Acquire(lockPath, "the lock", TimeSpan.FromSeconds(5), _ => { });
             Assert.True(held.HoldsLock);
 
-            var env = viaPhase ? claimEnv : null;
+            var env = workersShareAPhase ? claimEnv : null;
             var w1 = Start(bundle, cacheDir, "", env);
             var w2 = Start(bundle, cacheDir, "", env);
             bool Waiting(Spawned w) { lock (w.Output) return w.Output.ToString().Contains("another process is compiling", StringComparison.Ordinal); }
@@ -105,18 +115,23 @@ public sealed class CacheCompileLockWaitersEndToEndTests
             {
                 lock (w.Output)
                     return string.Join("\n", w.Lines
-                        .Where(l => l.Line.Contains("[cache]") || l.Line.Contains("EMIT-") || l.Line.Contains("Result:") || l.Line.Contains("dep-load-fail"))
+                        .Where(l => l.Line.Contains("[cache]") || l.Line.Contains("[deps] compiling") || l.Line.Contains("EMIT-") || l.Line.Contains("Result:") || l.Line.Contains("dep-load-fail"))
                         .Select(l => $"  +{(l.At - w.Lines[0].At).TotalSeconds:F1}s {l.Line[..Math.Min(100, l.Line.Length)]}"));
             }
-            var gap = (StartOfCompile(w1, out1) - StartOfCompile(w2, out2)).Duration();
-            Assert.True(gap < TimeSpan.FromSeconds(GapLimitSeconds),
-                $"the second worker started its compile {gap.TotalSeconds:F1} s after the first: it waited for the first's compile\n--- 1 ---\n{Timeline(w1)}\n--- 2 ---\n{Timeline(w2)}");
+            DateTime LastLine(Spawned w) { lock (w.Output) return w.Lines[^1].At; }
+            var s1 = StartOfCompile(w1, out1);
+            var s2 = StartOfCompile(w2, out2);
+            var gap = (s1 - s2).Duration();
+            var compileTime = TimeSpan.FromTicks(Math.Min((LastLine(w1) - s1).Ticks, (LastLine(w2) - s2).Ticks));
+            var bound = compileTime / 2;
+            _output.WriteLine($"viaPhase={viaPhase} atDependency={atDependency} share={workersShareAPhase}: "
+                + $"gap {gap.TotalSeconds:F2} s, shorter compile {compileTime.TotalSeconds:F2} s, bound {bound.TotalSeconds:F2} s");
+            Assert.True(gap < bound,
+                $"the second worker started its compile {gap.TotalSeconds:F1} s after the first (bound {bound.TotalSeconds:F1} s, half of the shorter compile): it waited for the first's compile\n--- 1 ---\n{Timeline(w1)}\n--- 2 ---\n{Timeline(w2)}");
         }
         finally
         {
             try { Directory.Delete(root, recursive: true); } catch { }
         }
     }
-
-    private const double GapLimitSeconds = 1.4;
 }
