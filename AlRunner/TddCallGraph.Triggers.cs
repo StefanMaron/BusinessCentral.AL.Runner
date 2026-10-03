@@ -134,9 +134,7 @@ internal sealed partial class TddCallGraph
         if (model.GetDeclaredSymbol(ext) is NavCA.IApplicationObjectExtensionTypeSymbol { Target: { } target }
             && target.Name.Length > 0)
             return target.Name;
-        var text = ext.BaseObject?.ToString().Trim() ?? "";
-        var dot = text.LastIndexOf('.');
-        return Unquote(dot >= 0 ? text[(dot + 1)..] : text);
+        return Unquote(ext.BaseObject?.ToString().Trim() ?? "");
     }
 
     /// <summary>Records what the invocation <paramref name="inv"/> starts: a record method's trigger and
