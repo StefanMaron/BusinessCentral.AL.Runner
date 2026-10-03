@@ -89,3 +89,10 @@ table 72612 "TP Evt"
     }
     keys { key(K; K) { Clustered = true; } }
 }
+
+// A parent with nothing of its own, showing the quiet table's rows in a part.
+table 72616 "TP Parent"
+{
+    fields { field(1; K; Code[20]) { } }
+    keys { key(K; K) { Clustered = true; } }
+}

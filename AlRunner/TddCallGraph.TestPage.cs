@@ -1,9 +1,9 @@
 // #5301: a TestPage writes records from the page runtime, so no AL call in the test names the table operation:
-// typing a value into a field (SetValue) runs the table field's OnValidate and inserts, modifies or renames
-// the record; OpenNew and New start a new record. The graph records those calls as raises of the same keys a
-// record operation raises (TddCallGraph.Triggers.cs), under the table the page or the field is bound to.
-// Close, GoToRecord and the other moves write only what a SetValue already made dirty, so they record nothing.
-// docs/server-mode.md#tdd.
+// typing a value into a field (SetValue) runs the table field's OnValidate and inserts, modifies or renames the
+// record; OpenNew and New (a TestPart's too) start a new record. The graph records those calls as raises of the
+// same keys a record operation raises (TddCallGraph.Triggers.cs), under the table the page or the field is bound
+// to. Close, GoToRecord and the other moves save only what a SetValue or an OpenNew already made dirty, so they
+// record nothing. docs/server-mode.md#tdd.
 using NavCA = Microsoft.Dynamics.Nav.CodeAnalysis;
 using NavSyntax = Microsoft.Dynamics.Nav.CodeAnalysis.Syntax;
 using Node = Microsoft.Dynamics.Nav.CodeAnalysis.Syntax.MethodOrTriggerDeclarationSyntax;
@@ -32,12 +32,12 @@ internal sealed partial class TddCallGraph
             operations = SetValueOperations;
             table = TableOfControl(control);
         }
-        else if (TypeOf(symbol) is { NavTypeKind: NavCA.NavTypeKind.TestPage } pageType)
+        else if (TypeOf(symbol) is { NavTypeKind: NavCA.NavTypeKind.TestPage or NavCA.NavTypeKind.TestPart } pageType)
         {
             if (!name.Equals("OpenNew", StringComparison.OrdinalIgnoreCase)
                 && !name.Equals("New", StringComparison.OrdinalIgnoreCase)) return true;
             operations = NewRecordOperations;
-            table = TableOfPage(TestPageTarget(pageType));
+            table = TableOfPage(pageType.NavTypeKind == NavCA.NavTypeKind.TestPart ? PageOfTestPart(pageType) : TestPageTarget(pageType));
         }
         else return false;
 
@@ -73,6 +73,10 @@ internal sealed partial class TddCallGraph
     /// count for every table, which only ever annotates more.</summary>
     private static NavCA.ITypeSymbol? TestPageTarget(NavCA.ITypeSymbol testPage)
         => testPage.GetType().GetProperty("Target")?.GetValue(testPage) as NavCA.ITypeSymbol;
+
+    /// <summary>The page a TestPart (a part control of a TestPage) shows, read the same way.</summary>
+    private static NavCA.ITypeSymbol? PageOfTestPart(NavCA.ITypeSymbol testPart)
+        => (testPart.GetType().GetProperty("ControlSymbol")?.GetValue(testPart) as NavCA.IControlSymbol)?.RelatedPartSymbol;
 
     private static string? TableOfPage(NavCA.ITypeSymbol? page)
         => (page as NavCA.IPageTypeSymbol)?.RelatedTable is { Name.Length: > 0 } table ? table.Name : null;

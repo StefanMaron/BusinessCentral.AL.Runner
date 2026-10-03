@@ -115,6 +115,30 @@ codeunit 72620 "TP Tests"
         P.Close();
     end;
 
+    // --- A part shows another page: its table is the part page's, not the parent's.
+
+    [Test]
+    procedure New_OnAPart_StartsTheInsertOfThePartsTable()
+    var R: Record "TP Parent"; P: TestPage "TP Parent Card";
+    begin
+        R.K := 'PARENT1';
+        R.Insert(false);
+        P.OpenEdit();
+        P.GoToKey('PARENT1');
+        P.Lines.New();
+    end;
+
+    [Test]
+    procedure SetValue_OnAPartsControl_StartsThePartsTablesTriggers()
+    var R: Record "TP Parent"; P: TestPage "TP Parent Card";
+    begin
+        R.K := 'PARENT2';
+        R.Insert(false);
+        P.OpenEdit();
+        P.GoToKey('PARENT2');
+        P.Lines.K.SetValue('LINE');
+    end;
+
     // --- The controls: nothing here writes a record.
 
     [Test]
@@ -151,6 +175,18 @@ codeunit 72620 "TP Tests"
     begin
         P.OpenNew();
         P.Close();
+    end;
+
+    [Test]
+    procedure OpenEditAndMovesInAPart_StartNothing_IsNotAnnotated()
+    var R: Record "TP Parent"; P: TestPage "TP Parent Card";
+    begin
+        R.K := 'PARENT3';
+        R.Insert(false);
+        P.OpenEdit();
+        P.GoToKey('PARENT3');
+        P.Lines.First();
+        P.Lines.Next();
     end;
 
     [Test]

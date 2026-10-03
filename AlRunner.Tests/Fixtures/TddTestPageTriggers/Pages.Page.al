@@ -52,3 +52,17 @@ page 72615 "TP Dialog"
     var
         Answer: Text[30];
 }
+
+page 72618 "TP Lines Part"
+{
+    PageType = ListPart;
+    SourceTable = "TP Quiet";
+    layout { area(Content) { repeater(Rows) { field(K; Rec.K) { } } } }
+}
+
+page 72617 "TP Parent Card"
+{
+    PageType = Card;
+    SourceTable = "TP Parent";
+    layout { area(Content) { field(K; Rec.K) { } part(Lines; "TP Lines Part") { } } }
+}

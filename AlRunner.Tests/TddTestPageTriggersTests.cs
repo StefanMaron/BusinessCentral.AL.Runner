@@ -82,6 +82,20 @@ public sealed class TddTestPageTriggersTests : IClassFixture<TddTestPageTriggers
     }
 
     /// <summary>
+    /// A part shows another page: its New and its controls' SetValue run the part page's table, not the parent's,
+    /// and moving across its rows runs nothing.
+    /// </summary>
+    [SkippableFact]
+    public void TestPart_StartsTheTriggersOfThePartsTable()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        AssertStubs("New_OnAPart_StartsTheInsertOfThePartsTable", "MQuietInsert");
+        AssertStubs("SetValue_OnAPartsControl_StartsThePartsTablesTriggers", "MQuietValidate", "MQuietInsert");
+        AssertStubs("OpenEditAndMovesInAPart_StartNothing_IsNotAnnotated");
+    }
+
+    /// <summary>
     /// A page with no source table and a control bound to a variable writes to no table the graph can read, so
     /// the value counts for every table: the trigger and the subscribers of each, never a delete.
     /// </summary>
@@ -110,7 +124,7 @@ public sealed class TddTestPageTriggersTests : IClassFixture<TddTestPageTriggers
         AssertStubs("OpenViewAndMoves_StartNothing_IsNotAnnotated");
         AssertStubs("Quiet_IsNotAnnotated");
         // Every stub is generated, and the tests naming one are counted: the controls are not among them.
-        Assert.Equal(14, _run.Tests.Count);
-        Assert.Equal(11, _run.Tests.Count(t => t.TryGetProperty("generatedStubs", out _)));
+        Assert.Equal(17, _run.Tests.Count);
+        Assert.Equal(13, _run.Tests.Count(t => t.TryGetProperty("generatedStubs", out _)));
     }
 }
