@@ -462,9 +462,7 @@ internal static class ParallelFanOut
                          Environment.GetEnvironmentVariable("AL_RUNNER_TEST_TIMEOUT_SEC")))
                 psi.Environment[kv.Key] = kv.Value;
             psi.Environment[TestSelectionAudit.WorkerEnvVar] = "1";
-            // Always set, so a value in the parent's own environment never reaches a worker that has none.
-            psi.Environment[JobsSourceDependencies.DependencyOnlyEnvVar] =
-                JobsSourceDependencies.Format(dependencyOnly[i]);
+            JobsSourceDependencies.ApplyTo(psi.Environment, dependencyOnly[i]);
             if (claimDir != null)
             {
                 psi.Environment[UnitClaimQueue.DirEnvVar] = claimDir;

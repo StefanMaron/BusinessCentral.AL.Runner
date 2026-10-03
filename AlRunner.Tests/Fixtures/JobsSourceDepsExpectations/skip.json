@@ -1,0 +1,10 @@
+[
+  {
+    "codeunitId": 65703,
+    "CodeunitName": "Jobs Dep Base Tests 3",
+    "Method": "BaseValue_IsPositive",
+    "Mode": "skip",
+    "Suites": ["JobsSourceDeps/base"],
+    "Note": "Fixture entry: a skipped test of the folder another worker only compiles."
+  }
+]

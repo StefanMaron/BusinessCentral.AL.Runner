@@ -169,6 +169,21 @@ public sealed class JobsSourceDependenciesTests
         Assert.Empty(JobsSourceDependencies.Parse(""));
     }
 
+    /// <summary>A value already in the parent's environment must not reach a worker that has no
+    /// dependency-only folder: it would stop that worker running folders it was handed to run.</summary>
+    [Fact]
+    public void TheWorkerEnvironment_IsAlwaysSet_SoAnInheritedValueIsOverwritten()
+    {
+        var env = new Dictionary<string, string?> { [JobsSourceDependencies.DependencyOnlyEnvVar] = P("inherited") };
+
+        JobsSourceDependencies.ApplyTo(env, Array.Empty<string>());
+        Assert.Empty(JobsSourceDependencies.Parse(env[JobsSourceDependencies.DependencyOnlyEnvVar]));
+
+        JobsSourceDependencies.ApplyTo(env, new[] { P("lib") });
+        Assert.Equal(new[] { ParallelFanOut.Normalize(P("lib")) },
+            JobsSourceDependencies.Parse(env[JobsSourceDependencies.DependencyOnlyEnvVar]));
+    }
+
     [Fact]
     public void RunBundles_DropsOnlyTheMarkedFolders_AndIsTheSameListWhenNothingIsMarked()
     {

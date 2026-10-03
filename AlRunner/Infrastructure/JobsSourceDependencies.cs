@@ -70,6 +70,12 @@ internal static class JobsSourceDependencies
     public static string Format(IEnumerable<string> dependencyOnly)
         => string.Join("|", dependencyOnly.Select(ParallelFanOut.Normalize));
 
+    /// <summary>Hand <paramref name="dependencyOnly"/> to a worker through its environment. Always
+    /// written, empty when there is none, so a value in the parent's own environment never reaches
+    /// a worker that has no dependency-only folder.</summary>
+    public static void ApplyTo(IDictionary<string, string?> workerEnvironment, IEnumerable<string> dependencyOnly)
+        => workerEnvironment[DependencyOnlyEnvVar] = Format(dependencyOnly);
+
     /// <summary>The set <paramref name="value"/> names, as normalised full paths; empty when unset.</summary>
     public static HashSet<string> Parse(string? value)
         => new((value ?? "").Split('|', StringSplitOptions.RemoveEmptyEntries).Select(ParallelFanOut.Normalize),

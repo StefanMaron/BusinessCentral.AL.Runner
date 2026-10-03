@@ -164,7 +164,7 @@ public sealed class JobsSourceDependencyEndToEndTests
         Assert.True(exit == 0, output);
         Assert.Equal(AggregateLine(Run.Value.Cold.Output), AggregateLine(output));
         Assert.Equal(CaseNames(coldJunit), CaseNames(junit));
-        Assert.DoesNotMatch(@"^\[layered\] WROTE ", output);
+        Assert.DoesNotMatch(@"(?m)^\[layered\] WROTE ", output);
     }
 }
 
@@ -199,5 +199,54 @@ public sealed class JobsSourceDependencySameParentTests
         var names = JobsSourceDependencyEndToEndTests.CaseNames(junit);
         Assert.Equal(JobsSourceDependencyEndToEndTests.Tests, names.Count);
         Assert.Equal(names.Count, names.Distinct().Count());
+    }
+}
+
+/// <summary>The issue's smallest shape: a library and the folder depending on it, two workers. The
+/// dependent's worker runs one folder and only compiles the other, so it reports and audits as a worker
+/// with one folder: no `[n/m]` progress line, and no expectations entry of the folder it did not run.</summary>
+public sealed class JobsSourceDependencyTwoFoldersTests
+{
+    private static readonly Lazy<(int Exit, string Output)> Run = new(() =>
+    {
+        var scratch = TestScratch.Dir("al-runner-jobs-source-deps-two");
+        var fixtures = Path.GetDirectoryName(JobsSourceDependencyEndToEndTests.FixtureRoot)!;
+        // The entry is scoped to the base folder and skips one of its tests. --expectations-require-match
+        // fails a run whose audit finds an in-scope entry that matched no discovered test.
+        return JobsUnitClaimEndToEndTests.RunRunner(
+            // --failures-only: the test host's own environment can turn PASS lines and the progress line on
+            $"--cache \"{Path.Combine(scratch, "cache")}\" --jobs 2 --failures-only "
+            + $"--expectations \"{Path.Combine(fixtures, "JobsSourceDepsExpectations")}\" --expectations-require-match "
+            + JobsSourceDependencyEndToEndTests.Quoted(new[] { "base", "mid" }.Select(
+                f => Path.Combine(JobsSourceDependencyEndToEndTests.FixtureRoot, f))),
+            lowSplitFloor: false);
+    });
+
+    [SkippableFact]
+    public void TheDependentsWorker_CompilesTheLibraryAndRunsOnlyItsOwnFolder()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (exit, output) = Run.Value;
+
+        Assert.True(exit == 0, output);
+        // base: 3 tests, one skipped by the entry; mid: 1. The library's tests are counted once.
+        Assert.Equal("Tests: 4   passed 3   failed 0   errors 0   skipped 1",
+            JobsSourceDependencyEndToEndTests.AggregateLine(output));
+        Assert.Contains(": 1 bundle(s), weight 1, plus 1 source dependency folder(s) it compiles and does not run: base", output);
+        Assert.False(Regex.IsMatch(output, @"^\[\d+/\d+\]", RegexOptions.Multiline), output);
+    }
+
+    /// <summary>The library's expectations entry is audited by the worker that runs the library and
+    /// reported as another suite's by the one that only compiles it. Counting the compiled folder as
+    /// run would make that worker call the entry unmatched, and fail the whole run.</summary>
+    [SkippableFact]
+    public void AnExpectationsEntryOfTheCompiledFolder_IsNotAuditedByTheWorkerThatDoesNotRunIt()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (_, output) = Run.Value;
+
+        Assert.Contains("all 1 entry in scope for this run matched a discovered test.", output);
+        Assert.Contains("1 scoped to another suite, not audited here (Jobs Dep Base Tests 3.BaseValue_IsPositive)", output);
+        Assert.DoesNotContain("UNMATCHED", output);
     }
 }
