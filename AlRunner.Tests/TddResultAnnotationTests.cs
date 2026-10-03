@@ -182,7 +182,7 @@ public sealed class TddResultAnnotationTests
         Assert.Contains("only when their RunTrigger argument is not omitted or false", guideText);
         Assert.Contains("a RecordRef, a FieldRef or a record that is not a variable (a procedure's return value) names none, so its operation counts for every table", guideText);
         Assert.Contains("Codeunit.Run reaches the OnRun of the codeunit named by Codeunit::Name", guideText);
-        Assert.Contains("the triggers and events of a page, report, query or xmlport, a TestPage's actions (so a record that page code writes), and a table operation or Codeunit.Run inside a precompiled .app that the test only calls", guideText);
+        Assert.Contains("the triggers and events of a page, report, query or xmlport and a TestPage's actions (#5309; so a record that page code writes), and a table operation or Codeunit.Run inside a precompiled .app that the test only calls", guideText);
         Assert.Contains("A TestPage writes records from the page runtime, so its calls count as table operations too (#5301): OpenNew and New as an Insert", guideText); // #5301
         Assert.Contains("a field's SetValue as a Validate, Insert, Modify and Rename, always running the triggers and raising the events", guideText);
         Assert.Contains("a page or control with no table the compiler can read counts for every table", guideText);
@@ -215,7 +215,7 @@ public sealed class TddResultAnnotationTests
         Assert.Contains("A table operation starts what the table declares (#5286)", serverText); // #5286
         Assert.Contains("only when their `RunTrigger` argument is not omitted or `false`", serverText);
         Assert.Contains("a `RecordRef`, a `FieldRef` or a record that is not a variable (a procedure's return value) names none, so its operation counts for every table", serverText);
-        Assert.Contains("the triggers and events of a page, report, query or xmlport, a `TestPage`'s actions (so a record that page code writes), and a table operation or `Codeunit.Run` inside a precompiled `.app` that the test only calls", serverText);
+        Assert.Contains("the triggers and events of a page, report, query or xmlport and a `TestPage`'s actions (#5309; so a record that page code writes), and a table operation or `Codeunit.Run` inside a precompiled `.app` that the test only calls", serverText);
         Assert.Contains("A `TestPage` writes records from the page runtime, so its calls count as table operations too (#5301): `OpenNew` and `New` as an `Insert`", serverText); // #5301
         Assert.Contains("a field's `SetValue` as a `Validate`, `Insert`, `Modify` and `Rename`, which always run the triggers and raise the events", serverText);
         Assert.Contains("a page or control with no table the compiler can read counts for every table", serverText);

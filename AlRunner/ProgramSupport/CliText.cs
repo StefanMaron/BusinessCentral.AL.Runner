@@ -399,9 +399,9 @@ internal static partial class ProgramSupport
         w.WriteLine("  they save was made dirty by a SetValue or an OpenNew, already counted. Procedures,");
         w.WriteLine("  tables and codeunits of one name count as one. Not followed, so a test that");
         w.WriteLine("  reaches a stub only that way carries no line: the triggers and events of a page,");
-        w.WriteLine("  report, query or xmlport, a TestPage's actions (so a record that page code writes),");
-        w.WriteLine("  and a table operation or Codeunit.Run inside a precompiled .app that the test only");
-        w.WriteLine("  calls.");
+        w.WriteLine("  report, query or xmlport and a TestPage's actions (#5309; so a record that page");
+        w.WriteLine("  code writes), and a table operation or Codeunit.Run inside a precompiled .app that");
+        w.WriteLine("  the test only calls.");
         w.WriteLine();
         w.WriteLine("  Where nothing anchors a confident guess (a bare-statement call — no way to");
         w.WriteLine("  tell a void procedure from a discarded return value — or both sides of an");

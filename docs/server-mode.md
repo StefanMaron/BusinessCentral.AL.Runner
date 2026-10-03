@@ -1290,8 +1290,8 @@ It runs the same generation as the CLI and `--watch --tdd` (`--guide`, "TDD MODE
   no table the compiler can read counts for every table. `Close` and the moves (`GoToKey`, `GoToRecord`,
   `Next`, `First` and the like) start nothing of their own: the record they save was made dirty by a `SetValue`
   or an `OpenNew`, which is already counted. Not followed, so a test that reaches a stub only that way carries no
-  `generatedStubs`: the triggers and events of a page, report, query or xmlport, a `TestPage`'s actions (so a
-  record that page code writes), and a table operation or `Codeunit.Run` inside a precompiled `.app` that the
+  `generatedStubs`: the triggers and events of a page, report, query or xmlport and a `TestPage`'s actions (#5309;
+  so a record that page code writes), and a table operation or `Codeunit.Run` inside a precompiled `.app` that the
   test only calls.
   A procedure of another `sourcePaths` bundle
   is (a test library app compiled separately, #5161): when the member's call sits in a library, a
