@@ -416,7 +416,7 @@ public class Win32StubsLoudFailureTests
     public void SoOverride_IsNotVisibleToAChildProcessSpawnedWhileItIsActive()
     {
         Skip.If(OperatingSystem.IsWindows(), "printenv probe is Linux/macOS only");
-        var marker = Path.Combine(Path.GetTempPath(), "win32stubs-leak-probe-" + Guid.NewGuid().ToString("N") + ".so");
+        var marker = Path.Combine(TestScratch.FlatDir("win32stubs-leak-probe-"), "absent.so"); // an owned dir that is never created
         using (OverrideSo(marker))
         {
             try
@@ -449,7 +449,7 @@ public class Win32StubsLoudFailureTests
     [Fact]
     public void SoOverride_DoesNotReachAnotherThread()
     {
-        var marker = Path.Combine(Path.GetTempPath(), "win32stubs-thread-probe-" + Guid.NewGuid().ToString("N") + ".so");
+        var marker = Path.Combine(TestScratch.FlatDir("win32stubs-thread-probe-"), "absent.so"); // an owned dir that is never created
         using var armed = new System.Threading.ManualResetEventSlim();
         using var ran = new System.Threading.ManualResetEventSlim();
         Exception? onOtherThread = null;
