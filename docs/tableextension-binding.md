@@ -1,7 +1,7 @@
 # Which table a tableextension extends
 
 A source tableextension extends the one table its `extends` clause resolves to (#5289, the table
-twin of the pageextension rule in [pageextension-binding.md](pageextension-binding.md#which-page-an-extends-clause-names)).
+twin of the pageextension rule in [pageextension-binding.md](pageextension-binding.md#which-page-an-extensions-extends-clause-names)).
 Until then the runner registered it against every table of that NAME, so where two tables share a
 name in different namespaces, one source table and Base Application's, the extension of either ran
 its `OnInsert` for both and added its fields and keys to both, and one extension's `modify(...)`

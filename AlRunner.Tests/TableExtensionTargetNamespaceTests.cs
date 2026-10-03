@@ -16,8 +16,9 @@ using static AlRunner.Tests.TableExtensionTargetNamespaceTests;
 
 namespace AlRunner.Tests;
 
-// RecordPatchesSerialCollection: writes the parse registries and calls ResetForReload.
-[Collection(RecordPatchesSerialCollection.Name)]
+// BcEngineCollection is serial for both statics this class writes, the parse registries
+// (ResetForReload) and AlObjectMetadataRegistry, and a class carries one [Collection].
+[Collection(BcEngineCollection.Name)]
 public sealed class TableExtensionTargetNamespaceTests : IDisposable
 {
     private static readonly Type RP = typeof(RecordPatches);
