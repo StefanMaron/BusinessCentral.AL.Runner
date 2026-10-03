@@ -241,13 +241,13 @@ public sealed class ResumeAttemptCountingTests : IDisposable
         Assert.False(AbortResume.WasResumed(""));
     }
 
-    /// <summary>Only a whole summary line is an attempt boundary: the prefix at column 0 with something else
-    /// after it, and the full line quoted mid-line, are message text. Two same-label bundles around either
+    /// <summary>Only a whole summary line is an attempt boundary: a line at column 0 with its first four fields
+    /// but no `Time: … (wall …)` tail, and the full line quoted mid-line, are message text. Two same-label bundles around either
     /// are two bundles, in one attempt.</summary>
     [Fact]
     public void Attempts_AreCutOnlyAtAWholeSummaryLineAtTheStartOfALine()
     {
-        var prefixOnly = Suite("t") + "\nTests: 3 forged by a message\n" + Suite("t") + "\n" + SummaryLine + "\n";
+        var prefixOnly = Suite("t") + "\nTests: 3   passed 1   failed 0   errors 1\n" + Suite("t") + "\n" + SummaryLine + "\n";
         var midLine = Suite("t") + "\nmessage " + SummaryLine + "\n" + Suite("t") + "\n" + SummaryLine + "\n";
 
         Assert.Equal(2, ParallelFanOut.CountBundleHeaders(prefixOnly, Errors, resumed: true));

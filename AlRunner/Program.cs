@@ -3344,7 +3344,8 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
     var bundleErrors = new List<string>();
     var bundleStage = BucketStage.Ran;
     // #5256: set when a worker of a shared bundle left a dropped object's SKIPPED tests to the
-    // worker that claimed it, so a worker with none of its own is not a failed compile.
+    // worker that claimed it, so a worker with none of its own is not a failed compile; likewise when the carry of a
+    // resumed run holds them (#5268).
     var droppedReportedByPeer = false;
     int sP = 0, sF = 0, sE = 0;
     // --tdd: the tests whose compile referenced a generated member, populated wherever this
@@ -4032,6 +4033,9 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                             var skippedNotYetReported = skippedForDrops.Count == 0 || carriedResults.Count == 0
                                 ? skippedForDrops
                                 : AlRunner.Infrastructure.ResumeCarry.NotYetReported(carriedResults, bundleAbs, skippedForDrops);
+                            // Withheld rows are still reported, by the carry: a resumed bundle whose own codeunits all
+                            // ran earlier has no other row, and must stay a partial bundle, not a failed compile.
+                            if (skippedNotYetReported.Count < skippedForDrops.Count) droppedReportedByPeer = true;
                             // The two sentences below say what this worker reports; a worker of a
                             // shared bundle reports only the objects it claimed.
                             var skippedNote = dropClaim == null
