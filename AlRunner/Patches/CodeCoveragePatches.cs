@@ -82,16 +82,16 @@ public static class CodeCoveragePatches
     }
 
     /// <summary>
-    /// Drops what BC's ALCodeEnvironment cached about the PREVIOUS run's objects: per-object source
-    /// info (the statement lines read off the compiled type), the object's text and the scope
-    /// contexts, all keyed by object id. The environment is seeded once per process and a
-    /// --server request or --watch cycle compiles its objects anew, so without this a request that
-    /// takes an id from another folder reads the earlier request's statement lines over its own
-    /// text: an exception when they run past it, hits on the wrong lines when they do not (#5260).
-    /// Called from <see cref="RecordPatches.ResetForReload"/>.
-    /// <para>OBSERVABLY EQUIVALENT: ClearCaches is BC's own method, public, and drops only memoized
-    /// reads; the next read recomputes them from the current compile, as on a first request. No
-    /// environment seeded (the engine never booted) means nothing cached, so nothing to clear.</para>
+    /// Drops what BC's ALCodeEnvironment memoized about the PREVIOUS run's objects (source info, text
+    /// and scope contexts, keyed by object id): the environment is seeded once per process, so a later
+    /// --server request or --watch cycle read the earlier compile's statement lines over its own text
+    /// (#5260). Called from <see cref="RecordPatches.ResetForReload"/>.
+    /// <para>OBSERVABLY EQUIVALENT: BC's own public ClearCaches, whose body clears exactly those three
+    /// caches and nothing else (same body on the 27.5 and 28.4 Ncl builds); the next read recomputes
+    /// from the current compile, as on a first request. Settled by
+    /// CodeCoverageLogServerRequestTests; the rows themselves by corpus 60341. TRAP: a cache BC adds
+    /// later that ClearCaches does not cover would bring the stale read back. No environment seeded
+    /// means nothing cached.</para>
     /// </summary>
     internal static void ResetCodeEnvironmentForReload()
     {
@@ -188,8 +188,10 @@ public static class CodeCoveragePatches
     /// every object it finds in 2000000207.</para>
     /// <para>The text is the compiled folder's, never a same-app-id sibling source folder's: the
     /// statement lines are numbered in the compiled text (#5250, docs/coverage-attribution.md
-    /// #a-sibling-source-folder-beside-an-execution-root-5222). A service tier has one deployed
-    /// app, so the sibling folder is a runner layout BC has no counterpart for.</para>
+    /// #a-sibling-source-folder-beside-an-execution-root-5222), and where no folder is marked as
+    /// compiled (the source-dependency pre-pass), the Tier-3 package the loader ran decides (#5259). A
+    /// service tier has one deployed app, so a sibling folder is a runner layout BC has no
+    /// counterpart for.</para>
     /// <para>An object the run did not compile from source (a precompiled dependency) refuses by
     /// name: BC would read its text from the database, and the runner does not serve a
     /// dependency's embedded source yet.</para>

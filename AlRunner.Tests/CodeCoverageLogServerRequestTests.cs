@@ -33,7 +33,7 @@ public sealed class CodeCoverageLogServerRequestTests : IDisposable
             testsAppId: CodeCoverageSiblingLayout.SecondTestAppId, fromBundle: false, fromSource: true);
     }
 
-    private async Task<string> RunAsync(CliServer server, string compiled, string tests, string label)
+    private async Task<string> RunAsync(CliServer server, string compiled, string tests, string label, bool coverage = false)
     {
         var request = JsonSerializer.Serialize(new
         {
@@ -41,6 +41,7 @@ public sealed class CodeCoverageLogServerRequestTests : IDisposable
             sourcePaths = new[] { Path.Combine(_root, compiled), Path.Combine(_root, tests) },
             packagePaths = Array.Empty<string>(),
             testIsolation = "test",
+            coverage,
         });
         var lines = await server.SendRequestStreamingAsync(request, RequestTimeout);
         var diagnostic = $"--- response ---\n{string.Join("\n", lines)}\n--- stderr ---\n{server.StdErr}";
@@ -50,6 +51,16 @@ public sealed class CodeCoverageLogServerRequestTests : IDisposable
         Assert.True(summary.GetProperty("total").GetInt32() == 1 && summary.GetProperty("failed").GetInt32() == 0
             && summary.GetProperty("errors").GetInt32() == 0, $"{label}: {diagnostic}");
         Assert.DoesNotContain("Index was outside the bounds of the array", diagnostic);
+        if (coverage)
+        {
+            // The report attributes Multi B to the folder this request compiled, as it does for the rows.
+            var files = summary.GetProperty("coverage").EnumerateArray()
+                .Select(f => f.GetProperty("file").GetString()!.Replace('\\', '/')).ToList();
+            var expected = Path.GetFullPath(Path.Combine(_root, compiled, "MultiPair.Codeunit.al")).Replace('\\', '/');
+            Assert.True(files.Contains(expected), $"{label}: the report names {string.Join(", ", files)}, not {expected}");
+            var sibling = Path.GetFullPath(Path.Combine(_root, compiled == "bundle" ? "src" : "bundle", "MultiPair.Codeunit.al")).Replace('\\', '/');
+            Assert.DoesNotContain(sibling, files);
+        }
         return diagnostic;
     }
 
@@ -65,5 +76,19 @@ public sealed class CodeCoverageLogServerRequestTests : IDisposable
         await RunAsync(server, "bundle", "tests-bundle", "1 bundle (first request, alone)");
         await RunAsync(server, "src", "tests-src", "2 src, after bundle");
         await RunAsync(server, "bundle", "tests-bundle", "3 bundle, after src");
+    }
+
+    // The same sequence with the report requested too: both readers of the compiled text (the
+    // report's map and the Code Coverage rows' map) follow the request, in one process.
+    [SkippableFact]
+    public async Task WithCoverageRequested_TheReportAndTheRows_BothFollowTheRequest()
+    {
+        TestArtifacts.SkipIfMissing();
+        Layout();
+        await using var server = await CliServer.StartAsync(new[] { "--cache", Path.Combine(_root, "cache") });
+
+        await RunAsync(server, "bundle", "tests-bundle", "1 bundle, coverage", coverage: true);
+        await RunAsync(server, "src", "tests-src", "2 src after bundle, coverage", coverage: true);
+        await RunAsync(server, "bundle", "tests-bundle", "3 bundle after src, coverage", coverage: true);
     }
 }
