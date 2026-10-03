@@ -21,6 +21,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **jobs:** hand each worker the source folders its bundles depend on, and lock a shared dependency's workspace write
 - **server:** run the surviving codeunits when one object is dropped
 - **resume:** a watchdog resume reports --tdd's TDD-EXCLUDED rows, suite errors and app groups once
 - **tdd:** follow event subscribers across source bundles, report the re-run limit, name a dropped library
