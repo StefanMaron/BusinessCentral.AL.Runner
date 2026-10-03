@@ -243,6 +243,14 @@ public sealed class ServerEmitExcludedSurvivorsTests : IClassFixture<SharedCliSe
             Assert.Equal(3, selB.Exit);
             Assert.Contains("EMIT-EXCLUDED", selB.ErrorText);
             Assert.Equal(2, selB.Rows.Count(r => r.Status == "skipped"));
+
+            // And an edit to a surviving codeunit, which the change model would otherwise compile alone
+            // and merge into the last module, whose record of what was dropped it does not carry.
+            File.AppendAllText(Path.Combine(root, "Healthy.Codeunit.al"), "\n// edited\n");
+            var selC = await Ask(root, affectedOnly: true);
+            Assert.Equal(3, selC.Exit);
+            Assert.Contains("EMIT-EXCLUDED", selC.ErrorText);
+            Assert.Equal(2, selC.Rows.Count(r => r.Status == "skipped"));
         }
         finally
         {
@@ -280,6 +288,43 @@ public sealed class ServerEmitExcludedSurvivorsTests : IClassFixture<SharedCliSe
         {
             try { Directory.Delete(rootA, recursive: true); } catch { }
             try { Directory.Delete(rootB, recursive: true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// A dropped profile declares no [Test] procedure and nothing to run, so the CLI runs the module around it
+    /// and reports no suite error (#2238). The server refused the whole module for it as well.
+    /// </summary>
+    [SkippableFact]
+    public async Task DroppedProfile_ServerRunsTheModuleWithoutASuiteError()
+    {
+        TestArtifacts.SkipIfMissing();
+        var root = TestScratch.Dir("al-runner-server-excl-survivors-profile");
+        WriteApp(root, "5118a006-0000-4000-8000-000000000006", 62350);
+        File.WriteAllText(Path.Combine(root, "Healthy.Codeunit.al"), Healthy(62351));
+        // BC's own emitter crashes on a profile whose RoleCenter page is declared nowhere, and the retry
+        // loop drops it (BcCompilerProfileEmitCrashTests).
+        File.WriteAllText(Path.Combine(root, "BadProfile.al"), """
+        profile "Srv Excl Bad Profile"
+        {
+            Caption = 'Srv Excl Bad Profile';
+            RoleCenter = "Srv Excl Nonexistent Page";
+        }
+        """);
+        try
+        {
+            var (cliExit, cliRows, cliOutput) = RunCli(root);
+            Assert.Equal(0, cliExit);
+            Assert.Equal(2, cliRows.Count(r => r.Status == "pass"));
+
+            var a = await Ask(root);
+            Assert.True(a.Rows.SequenceEqual(cliRows), $"server rows [{Describe(a.Rows)}] differ from the CLI's [{Describe(cliRows)}]\n{a.Raw}");
+            Assert.Equal(0, a.Exit);
+            Assert.Equal("", a.ErrorText);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
         }
     }
 

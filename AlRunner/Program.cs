@@ -6703,10 +6703,10 @@ return strictExitCode ? computedExitCode : 0;
                         && (allProfiles || reportDropped != null);
                     if (runsSurvivors)
                     {
-                        // The module is missing objects, so no later request may take it from either cache.
+                        // The module is missing objects, so no later request may take it from the AL-output cache
+                        // (a HIT skips this whole branch). The change model records no baseline for a compile
+                        // that dropped an object (BcCompiler.Emit), so nothing there can replay it either.
                         cachePath = null;
-                        emitter.ClearIncrementalBaseline(moduleName);
-                        baselineDescribesEmit = false;
                         if (allProfiles)
                         {
                             Console.Error.WriteLine(
