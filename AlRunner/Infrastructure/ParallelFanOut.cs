@@ -477,6 +477,7 @@ internal static class ParallelFanOut
         var selectionUnreported = false;
         long notRun = 0, partial = 0;
         var shardOutput = new string[procs.Count];
+        var shardResumed = new bool[procs.Count];
         for (var i = 0; i < procs.Count; i++)
         {
             var (p, junit, so, se) = procs[i];
@@ -509,17 +510,17 @@ internal static class ParallelFanOut
             // reports "— EXEC FAIL ===" instead. It contributes zero tests for exactly the same
             // reason, so counting only the compile header would have re-introduced #2715's
             // silent loss for every execution failure.
-            foreach (var header in NotRunHeaders)
-                notRun += CountBundleHeaders(stdout, header) + CountBundleHeaders(stderr, header);
             shardOutput[i] = stdout + "\n" + stderr;
+            shardResumed[i] = AbortResume.WasResumed(stderr);
+            var lost = CountLostBundles(stdout, stderr);
+            notRun += lost.NotRun;
 
             // #2762: the sibling shape. A bundle that lost SOME suites and still produced tests
             // is not "not run" — its survivors ARE in the totals above, so counting it as
             // missing would overstate the loss. But it covers less than it declares, and the
             // aggregate is the only summary a --jobs caller reads; without this the parent
             // reprints a clean total for a run in which whole suites never compiled.
-            partial += CountBundleHeaders(stdout, PartialLossHeader)
-                     + CountBundleHeaders(stderr, PartialLossHeader);
+            partial += lost.Partial;
         }
 
         // A bundle several workers share prints its COMPILE FAIL / EXEC FAIL / SUITE ERRORS header
@@ -530,8 +531,8 @@ internal static class ParallelFanOut
                 .Where(sh => shards[sh].Any(x => x.Name == name)).ToList();
             var label = Reporter.BundleLabel(name);
             foreach (var header in NotRunHeaders)
-                notRun -= ExtraSightings(shardOutput, sharing, $"=== {label}{header}");
-            partial -= ExtraSightings(shardOutput, sharing, $"=== {label}{PartialLossHeader}");
+                notRun -= ExtraSightings(shardOutput, sharing, $"=== {label}{header}", shardResumed);
+            partial -= ExtraSightings(shardOutput, sharing, $"=== {label}{PartialLossHeader}", shardResumed);
         }
 
         Console.WriteLine();
@@ -668,24 +669,29 @@ internal static class ParallelFanOut
     /// <summary>The sightings of <paramref name="needle"/> beyond the first, when EVERY worker in
     /// <paramref name="sharing"/> printed it: that is one bundle failing identically on each of
     /// them. A worker that did not print it did not fail on it, and nothing is taken back.</summary>
-    internal static int ExtraSightings(IReadOnlyList<string> shardOutput, IReadOnlyList<int> sharing, string needle)
+    internal static int ExtraSightings(IReadOnlyList<string> shardOutput, IReadOnlyList<int> sharing, string needle,
+        IReadOnlyList<bool>? shardResumed = null)
     {
         if (sharing.Count < 2) return 0;
-        var perShard = sharing.Select(sh => CountAcrossAttempts(shardOutput[sh], needle)).ToList();
+        var perShard = sharing.Select(sh => CountAcrossAttempts(shardOutput[sh], needle, shardResumed?[sh] ?? false)).ToList();
         var common = perShard.Min();
         return common * (sharing.Count - 1);
     }
 
-    // The one counts line each attempt of a worker prints (Reporter.PrintSummary, #4562), after its
-    // per-bundle headers and before it resumes into the next attempt (#5269).
+    // The summary line each attempt of a worker prints (Reporter.PrintSummary, #4562), whole: a failing
+    // test's message is printed at column 0 too, and a prefix match would take a quoted one for an attempt.
     private static readonly System.Text.RegularExpressions.Regex AttemptSummaryLine =
-        new(@"^Tests: \d+ .*$", System.Text.RegularExpressions.RegexOptions.Multiline);
+        new(@"^Tests: \d+   passed \d+   failed \d+.*        Time: [\d.]+ s \(wall [\d.]+ s\)\s*$",
+            System.Text.RegularExpressions.RegexOptions.Multiline);
 
-    /// <summary>A worker that resumes after a watchdog abort (#2280) writes every attempt into the one
-    /// output, each ending in its own counts line. Cut there: the headers of one attempt are one
-    /// sighting each, and a bundle failing the same way in the next attempt is not a second bundle.</summary>
-    internal static IReadOnlyList<string> Attempts(string output)
+    /// <summary>A worker that resumed after a watchdog abort (#2280) wrote every attempt into the one output,
+    /// each ending in its own summary line: cut there, so a bundle failing the same way in the next attempt
+    /// is not a second bundle. Only a worker that RESUMED is cut (<paramref name="resumed"/>, from its
+    /// stderr): anything else is one attempt however its output reads, because a cut inside one attempt
+    /// can fold two bundles of one label into one and hide a lost bundle (#2715).</summary>
+    internal static IReadOnlyList<string> Attempts(string output, bool resumed)
     {
+        if (!resumed) return new[] { output };
         var attempts = new List<string>();
         var from = 0;
         foreach (System.Text.RegularExpressions.Match m in AttemptSummaryLine.Matches(output))
@@ -699,16 +705,26 @@ internal static class ParallelFanOut
 
     /// <summary><paramref name="needle"/> counted in the attempt that printed it most, never summed over
     /// attempts: a resumed worker reruns its bundles, so the same bundle reports it once per attempt.</summary>
-    internal static int CountAcrossAttempts(string output, string needle)
-        => Attempts(output).Select(a => CountOccurrences(a, needle)).DefaultIfEmpty(0).Max();
+    internal static int CountAcrossAttempts(string output, string needle, bool resumed)
+        => Attempts(output, resumed).Select(a => CountOccurrences(a, needle)).DefaultIfEmpty(0).Max();
+
+    /// <summary>The bundles one worker reports as not run (COMPILE FAIL / EXEC FAIL) and as partial (SUITE
+    /// ERRORS), from its captured output. Headers are on stdout; stderr is counted as one attempt.</summary>
+    internal static (int NotRun, int Partial) CountLostBundles(string stdout, string stderr)
+    {
+        var resumed = AbortResume.WasResumed(stderr);
+        var notRun = NotRunHeaders.Sum(h => CountBundleHeaders(stdout, h, resumed) + CountBundleHeaders(stderr, h, false));
+        var partial = CountBundleHeaders(stdout, PartialLossHeader, resumed) + CountBundleHeaders(stderr, PartialLossHeader, false);
+        return (notRun, partial);
+    }
 
     /// <summary>How many bundles a worker's output reports under <paramref name="headerSuffix"/> (` — SUITE
     /// ERRORS (`, ` — COMPILE FAIL ===`): per bundle label, the most any one attempt printed, summed over
     /// labels. A bundle that fails identically in every attempt of a resumed worker is one bundle (#5269).</summary>
-    internal static int CountBundleHeaders(string output, string headerSuffix)
+    internal static int CountBundleHeaders(string output, string headerSuffix, bool resumed)
     {
         var mostInOneAttempt = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var attempt in Attempts(output))
+        foreach (var attempt in Attempts(output, resumed))
         {
             var inThisAttempt = new Dictionary<string, int>(StringComparer.Ordinal);
             var idx = 0;

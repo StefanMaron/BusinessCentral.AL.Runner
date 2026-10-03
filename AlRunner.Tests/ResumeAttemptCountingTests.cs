@@ -119,34 +119,37 @@ public sealed class ResumeAttemptCountingTests : IDisposable
 
     private const string Errors = " — SUITE ERRORS (";
     private const string CompileFail = " — COMPILE FAIL ===";
+    private const string SummaryLine = "Tests: 3   passed 1   failed 0   errors 1        Time: 1.0 s (wall 2.0 s)";
 
-    private static string Attempt(params string[] lines) =>
-        string.Join("\n", lines) + "\nTests: 3   passed 1   failed 0   errors 1        Time: 1.0 s (wall 2.0 s)\n";
+    private static string Attempt(params string[] lines) => string.Join("\n", lines) + "\n" + SummaryLine + "\n";
+
+    private static string Suite(string label, int n = 1) => $"=== {label} — SUITE ERRORS ({n}) ===";
 
     [Fact]
     public void CountBundleHeaders_OneAttempt_CountsEachBundle()
     {
-        var output = Attempt("=== a — SUITE ERRORS (1) ===", "=== b — SUITE ERRORS (2) ===");
+        var output = Attempt(Suite("a"), Suite("b", 2));
 
-        Assert.Equal(2, ParallelFanOut.CountBundleHeaders(output, Errors));
+        Assert.Equal(2, ParallelFanOut.CountBundleHeaders(output, Errors, resumed: true));
+        Assert.Equal(2, ParallelFanOut.CountBundleHeaders(output, Errors, resumed: false));
     }
 
     /// <summary>The shape of #5269: the worker resumed, and the bundle lost a suite in both attempts.</summary>
     [Fact]
     public void CountBundleHeaders_ABundleReportedByEveryAttempt_IsOneBundle()
     {
-        var output = Attempt("=== a — SUITE ERRORS (2) ===") + "resume: x\n" + Attempt("=== a — SUITE ERRORS (1) ===");
+        var output = Attempt(Suite("a", 2)) + "resume: x\n" + Attempt(Suite("a"));
 
-        Assert.Equal(1, ParallelFanOut.CountBundleHeaders(output, Errors));
+        Assert.Equal(1, ParallelFanOut.CountBundleHeaders(output, Errors, resumed: true));
     }
 
-    /// <summary>The sibling shape, which #5269 said it had not run: COMPILE FAIL is counted the same way.</summary>
+    /// <summary>The sibling shape: COMPILE FAIL is counted the same way.</summary>
     [Fact]
     public void CountBundleHeaders_ACompileFailReportedByEveryAttempt_IsOneBundle()
     {
         var output = Attempt("=== a — COMPILE FAIL ===") + Attempt("=== a — COMPILE FAIL ===");
 
-        Assert.Equal(1, ParallelFanOut.CountBundleHeaders(output, CompileFail));
+        Assert.Equal(1, ParallelFanOut.CountBundleHeaders(output, CompileFail, resumed: true));
     }
 
     /// <summary>A bundle that reported in one attempt only (a watchdog abort is not repeated) still counts,
@@ -154,9 +157,29 @@ public sealed class ResumeAttemptCountingTests : IDisposable
     [Fact]
     public void CountBundleHeaders_DifferentBundlesInDifferentAttempts_AreDifferentBundles()
     {
-        var output = Attempt("=== a — SUITE ERRORS (1) ===") + Attempt("=== b — SUITE ERRORS (1) ===");
+        var output = Attempt(Suite("a")) + Attempt(Suite("b"));
 
-        Assert.Equal(2, ParallelFanOut.CountBundleHeaders(output, Errors));
+        Assert.Equal(2, ParallelFanOut.CountBundleHeaders(output, Errors, resumed: true));
+    }
+
+    /// <summary>"The attempt that printed it most": counts 1, 3, 2 of one label are 3, which is neither the
+    /// first attempt's nor the last's.</summary>
+    [Fact]
+    public void CountBundleHeaders_TakesTheAttemptThatPrintedTheLabelMost_NotTheFirstOrTheLast()
+    {
+        var output = Attempt(Suite("t")) + Attempt(Suite("t"), Suite("t"), Suite("t")) + Attempt(Suite("t"), Suite("t"));
+
+        Assert.Equal(3, ParallelFanOut.CountBundleHeaders(output, Errors, resumed: true));
+    }
+
+    /// <summary>Two bundles named `test` in one worker; the first attempt lost both (one only to the
+    /// watchdog), the resumed one only the bundle with the drop: two bundles, though the last attempt says one.</summary>
+    [Fact]
+    public void CountBundleHeaders_TwoSameLabelBundlesWhereOnlyTheEarlierAttemptSawBoth_AreTwo()
+    {
+        var output = Attempt(Suite("test", 2), Suite("test")) + Attempt(Suite("test"));
+
+        Assert.Equal(2, ParallelFanOut.CountBundleHeaders(output, Errors, resumed: true));
     }
 
     /// <summary>Two bundles that share a label in one attempt are two bundles; only a repeat across
@@ -164,20 +187,71 @@ public sealed class ResumeAttemptCountingTests : IDisposable
     [Fact]
     public void CountBundleHeaders_TwoBundlesSharingALabelInOneAttempt_AreTwo()
     {
-        var output = Attempt("=== tests — SUITE ERRORS (1) ===", "=== tests — SUITE ERRORS (1) ===")
-            + Attempt("=== tests — SUITE ERRORS (1) ===", "=== tests — SUITE ERRORS (1) ===");
+        var output = Attempt(Suite("tests"), Suite("tests")) + Attempt(Suite("tests"), Suite("tests"));
 
-        Assert.Equal(2, ParallelFanOut.CountBundleHeaders(output, Errors));
+        Assert.Equal(2, ParallelFanOut.CountBundleHeaders(output, Errors, resumed: true));
     }
 
-    /// <summary>A worker that died before it printed a counts line has no attempts to separate: what it
-    /// printed is one attempt, counted as before.</summary>
+    /// <summary>A worker that died before it printed a summary line has no attempts to separate.</summary>
     [Fact]
-    public void CountBundleHeaders_WithNoCountsLine_CountsTheWholeOutputAsOneAttempt()
+    public void CountBundleHeaders_WithNoSummaryLine_CountsTheWholeOutputAsOneAttempt()
     {
-        Assert.Equal(2, ParallelFanOut.CountBundleHeaders(
-            "=== a — SUITE ERRORS (1) ===\n=== b — SUITE ERRORS (1) ===\n", Errors));
-        Assert.Equal(0, ParallelFanOut.CountBundleHeaders("", Errors));
+        Assert.Equal(2, ParallelFanOut.CountBundleHeaders(Suite("a") + "\n" + Suite("b") + "\n", Errors, resumed: true));
+        Assert.Equal(0, ParallelFanOut.CountBundleHeaders("", Errors, resumed: true));
+    }
+
+    // The line a failing test's message can forge: the runner prints message lines at column 0.
+    private const string Forged = "Tests: 3   passed 1   failed 0   errors 1        Time: 1.0 s (wall 2.0 s)";
+
+    /// <summary>A worker that did not resume is one attempt, so a summary line inside a test's message between
+    /// two same-label bundles cannot fold them into one: both are counted, as before this change (#2715).</summary>
+    [Fact]
+    public void CountLostBundles_AWorkerThatDidNotResume_IsNeverCutAtAForgedSummaryLine()
+    {
+        var stdout = Suite("test") + "\n" + Forged + "\n" + Suite("test") + "\n" + SummaryLine + "\n";
+
+        Assert.Equal(2, ParallelFanOut.CountLostBundles(stdout, "[log] nothing resumed\n").Partial);
+    }
+
+    /// <summary>The same for the bundles that did not run at all.</summary>
+    [Fact]
+    public void CountLostBundles_ForgedSummaryLineBetweenTwoSameLabelCompileFails_CountsBoth()
+    {
+        var header = "=== test — COMPILE FAIL ===";
+        var stdout = header + "\n" + Forged + "\n" + header + "\n" + SummaryLine + "\n";
+
+        Assert.Equal(2, ParallelFanOut.CountLostBundles(stdout, "").NotRun);
+    }
+
+    /// <summary>A worker that resumed is cut, and its repeated bundles are one each: the stderr notice is what says so.</summary>
+    [Fact]
+    public void CountLostBundles_AWorkerThatResumed_CountsABundleOncePerAttempt()
+    {
+        var stderr = AbortResume.AttemptEndedNotice + ". Continuing in a fresh process\n";
+        var stdout = Attempt(Suite("a", 2), "=== c — COMPILE FAIL ===") + Attempt(Suite("a"), "=== c — COMPILE FAIL ===");
+
+        Assert.Equal((1, 1), ParallelFanOut.CountLostBundles(stdout, stderr));
+    }
+
+    [Fact]
+    public void WasResumed_ReadsTheNoticeAtTheStartOfAStderrLine_AndNothingQuotedMidLine()
+    {
+        Assert.True(AbortResume.WasResumed("x\n" + AbortResume.AttemptEndedNotice + ". Continuing\n"));
+        Assert.False(AbortResume.WasResumed("a test said: " + AbortResume.AttemptEndedNotice + "\n"));
+        Assert.False(AbortResume.WasResumed(""));
+    }
+
+    /// <summary>Only a whole summary line is an attempt boundary: the prefix at column 0 with something else
+    /// after it, and the full line quoted mid-line, are message text. Two same-label bundles around either
+    /// are two bundles, in one attempt.</summary>
+    [Fact]
+    public void Attempts_AreCutOnlyAtAWholeSummaryLineAtTheStartOfALine()
+    {
+        var prefixOnly = Suite("t") + "\nTests: 3 forged by a message\n" + Suite("t") + "\n" + SummaryLine + "\n";
+        var midLine = Suite("t") + "\nmessage " + SummaryLine + "\n" + Suite("t") + "\n" + SummaryLine + "\n";
+
+        Assert.Equal(2, ParallelFanOut.CountBundleHeaders(prefixOnly, Errors, resumed: true));
+        Assert.Equal(2, ParallelFanOut.CountBundleHeaders(midLine, Errors, resumed: true));
     }
 
     /// <summary>A shared bundle both of whose workers resumed: each printed the header in both of its
@@ -186,10 +260,10 @@ public sealed class ResumeAttemptCountingTests : IDisposable
     public void ExtraSightings_AResumedWorkersAttemptsAreNotExtraSightings()
     {
         var header = "=== a — SUITE ERRORS (";
-        var resumed = Attempt(header + "2) ===") + Attempt(header + "1) ===");
-        var alsoResumed = Attempt(header + "1) ===") + Attempt(header + "1) ===");
+        var resumed = Attempt(Suite("a", 2)) + Attempt(Suite("a"));
+        var alsoResumed = Attempt(Suite("a")) + Attempt(Suite("a"));
 
-        Assert.Equal(1, ParallelFanOut.ExtraSightings(new[] { resumed, alsoResumed }, new[] { 0, 1 }, header));
-        Assert.Equal(1, ParallelFanOut.CountAcrossAttempts(resumed, header));
+        Assert.Equal(1, ParallelFanOut.ExtraSightings(new[] { resumed, alsoResumed }, new[] { 0, 1 }, header, new[] { true, true }));
+        Assert.Equal(1, ParallelFanOut.CountAcrossAttempts(resumed, header, resumed: true));
     }
 }

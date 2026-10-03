@@ -1,9 +1,9 @@
 {
-  "id": "c2c3d4e5-f6a7-4809-9b1c-2c3d4e5f6142",
-  "name": "Runner Tests Fixture - Resume Emit Excluded Sibling",
+  "id": "c2c3d4e5-f6a7-4809-9b1c-2c3d4e5f6143",
+  "name": "Runner Tests Fixture - Resume Emit Excluded Compile Fail",
   "publisher": "AL Runner",
   "version": "1.0.0.0",
-  "brief": "The heaviest bundle of the --jobs run, so it takes a worker alone and the other two bundles share the other (and resume there).",
+  "brief": "A bundle whose only codeunit cannot bind, so it COMPILE FAILs in the shard whose worker resumes (#5269).",
   "description": "Used by AlRunner.Tests/ResumeEmitExcludedJobsTests.cs.",
   "privacyStatement": "",
   "EULA": "",
@@ -14,8 +14,8 @@
   "screenshots": [],
   "idRanges": [
     {
-      "from": 50960,
-      "to": 50979
+      "from": 50940,
+      "to": 50959
     }
   ],
   "runtime": "14.0",
