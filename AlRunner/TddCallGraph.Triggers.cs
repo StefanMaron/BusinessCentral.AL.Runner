@@ -67,23 +67,10 @@ internal sealed partial class TddCallGraph
         if (WildcardOf(key) is { } wildcard) yield return wildcard;
     }
 
-    /// <summary>The keys of <paramref name="node"/> a later bundle enters it through: its own and, for a
-    /// trigger, the wildcard of its name.</summary>
-    private IEnumerable<string> KeysOf(Node node)
-    {
-        if (KeyOf(node) is not { } key) yield break;
-        yield return key;
-        if (node is not NavSyntax.MethodDeclarationSyntax && WildcardOf(key) is { } wildcard) yield return wildcard;
-    }
-
-    private static string KeyObjectNameOf(NavSyntax.ObjectSyntax o) => ObjectName(o);
-
     private string KeyObjectName(NavSyntax.ObjectSyntax o, Node method)
         => method is not NavSyntax.MethodDeclarationSyntax && _extensionBase.TryGetValue(o, out var baseTable)
             ? baseTable
             : Name(o.Name);
-
-    private static string ObjectName(NavSyntax.ObjectSyntax o) => Name(o.Name);
 
     private void CollectTriggers(NavCA.SemanticModel model, NavCA.SyntaxNode root)
     {

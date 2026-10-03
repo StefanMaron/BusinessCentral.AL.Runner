@@ -1273,8 +1273,9 @@ It runs the same generation as the CLI and `--watch --tdd` (`--guide`, "TDD MODE
   counts as raising the database events around it, whatever `RunTrigger` says (`OnBeforeInsertEvent` and the like).
   The trigger, and every subscriber of those events in any bundle of the request, is reached by a test
   that runs the operation, directly or through a procedure that does; a table extension's trigger
-  counts for its base table. The table is the one the record variable is declared with: a `RecordRef`
-  or a `FieldRef` names none, so its operation counts for every table. `Codeunit.Run` reaches the
+  counts for its base table. The table is the one the record variable is declared with: a `RecordRef`,
+  a `FieldRef` or a record that is not a variable (a procedure's return value) names none, so its
+  operation counts for every table. `Codeunit.Run` reaches the
   `OnRun` of the codeunit named by `Codeunit::Name` or declared on the variable, and any `OnRun` when it
   is given an id or an expression. Not followed, so a test that reaches a stub only that way carries no
   `generatedStubs`: the triggers of a page, report, query or xmlport, a `TestPage`'s actions, and a

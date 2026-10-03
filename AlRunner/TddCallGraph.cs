@@ -13,8 +13,10 @@ namespace AlRunner;
 /// an edge per invocation that binds to a procedure declared in the same compile, and from a
 /// [Test] to each handler its [HandlerFunctions] names, and from an event publisher declared in the
 /// compile to each [EventSubscriber] naming it (#5161). A publisher the compile does not declare as
-/// a procedure (a table trigger event, an event of a precompiled object) adds no edge. Calls that
-/// do not bind (the missing member itself, a codeunit run by id) add no edge, and a call to a
+/// a procedure (an event of a precompiled object) adds no edge. A table operation and Codeunit.Run start
+/// a trigger and database events that no call binds to, so each is recorded as a raise of the trigger's or
+/// the event's key (TddCallGraph.Triggers.cs, #5286). Calls that do not bind (the missing member itself)
+/// add no edge, and a call to a
 /// procedure another compile declares adds none inside this graph: it is kept as an external call,
 /// which <see cref="ReachThroughDependencies"/> follows into the bundles compiled before this one.
 /// A subscriber whose publisher this compile does not declare (it is in another source bundle, #5264)
@@ -230,8 +232,7 @@ internal sealed partial class TddCallGraph
         var keys = new List<string>();
         var reached = ReachClosure(new[] { start }, out var raisers);
         foreach (var m in reached)
-            foreach (var k in KeysOf(m))
-                if (!keys.Contains(k)) keys.Add(k);
+            if (KeyOf(m) is { } k && !keys.Contains(k)) keys.Add(k);
         foreach (var k in raisers)
             if (!keys.Contains(k)) keys.Add(k);
         return keys;
@@ -260,7 +261,7 @@ internal sealed partial class TddCallGraph
             var reached = ReachClosure(seeds, out var raisers);
             foreach (var m in reached)
             {
-                foreach (var k in KeysOf(m)) procedures.Add((k, member));
+                if (KeyOf(m) is { } k) procedures.Add((k, member));
                 if (TestLabel(m) is { } label) tests.Add((label, member));
             }
             foreach (var k in raisers) procedures.Add((k, member));
@@ -337,9 +338,9 @@ internal sealed partial class TddCallGraph
     }
 
     /// <summary>"ObjectName.MethodName" of every [Test] procedure that is, or transitively calls,
-    /// the procedure containing <paramref name="diag"/>. A test that raises the event of a subscriber
-    /// in this compile is not named here: it is named by the compile after the re-run, which
-    /// follows the subscriber's raisers (<see cref="ReachClosure"/>, #5264).</summary>
+    /// the procedure containing <paramref name="diag"/>, or raises what it subscribes to or is
+    /// (<see cref="ReachClosure"/>: a database event or trigger of a table operation in this compile, #5286).
+    /// A test of another bundle that raises it is named by that bundle's compile.</summary>
     public IReadOnlyList<string> TestsReaching(NavDiag.Diagnostic diag)
     {
         var tree = diag.Location.SourceTree;

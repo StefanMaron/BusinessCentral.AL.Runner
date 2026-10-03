@@ -262,4 +262,25 @@ codeunit 72310 "Trg Tests"
     begin
         Runner.Run();
     end;
+
+    [Test]
+    procedure InsertOnAMethodResult_NamesNoTableVariable()
+    begin
+        NewRec().Insert(true);
+    end;
+
+    [Test]
+    procedure ModifyTrue_RunsTheTriggerOfATableExtensionNamingItsTableById()
+    var
+        Rec: Record "Trg Ext Rec";
+    begin
+        Rec.PK := 'K34';
+        Rec.Insert();
+        Rec.Modify(true);
+    end;
+
+    local procedure NewRec() Result: Record "Trg Rec"
+    begin
+        Result.PK := 'K33';
+    end;
 }

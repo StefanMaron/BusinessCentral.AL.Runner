@@ -377,8 +377,9 @@ internal static partial class ProgramSupport
         w.WriteLine("  like): the trigger, and every subscriber of those events in any folder of the run,");
         w.WriteLine("  is reached by a test that runs the operation, directly or through a procedure that");
         w.WriteLine("  does. A table extension's trigger counts for its base table. The table is the one");
-        w.WriteLine("  the record variable is declared with; a RecordRef or a FieldRef names none, so its");
-        w.WriteLine("  operation counts for every table. Codeunit.Run reaches the OnRun of the codeunit");
+        w.WriteLine("  the record variable is declared with; a RecordRef, a FieldRef or a record that is");
+        w.WriteLine("  not a variable (a procedure's return value) names none, so its operation counts");
+        w.WriteLine("  for every table. Codeunit.Run reaches the OnRun of the codeunit");
         w.WriteLine("  named by Codeunit::Name or declared on the variable, and any OnRun when it is");
         w.WriteLine("  given an id or an expression. Procedures, tables and codeunits of one name count");
         w.WriteLine("  as one. Not followed, so a test that reaches a stub only that way carries no line:");

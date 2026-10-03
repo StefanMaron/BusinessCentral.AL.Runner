@@ -50,6 +50,8 @@ public sealed class TddTriggerEventsTests : IClassFixture<TddTriggerEventsRun>
         AssertStubs("ModifyAllTrue_RunsTheOnModifyTrigger", "MissingModify");
         // Inside the table, with no record variable: the receiver is the table itself.
         AssertStubs("BareInsertInsideTheTable_RunsTheOnInsertTrigger", "MissingInsert");
+        // A table extension's trigger runs for its base table, whether it names the table or gives its id.
+        AssertStubs("ModifyTrue_RunsTheTriggerOfATableExtensionNamingItsTableById", "MissingExt");
 
         // The same operations with no RunTrigger, or with false, run no trigger.
         AssertStubs("InsertWithoutRunTrigger_IsNotAnnotated");
@@ -121,6 +123,13 @@ public sealed class TddTriggerEventsTests : IClassFixture<TddTriggerEventsRun>
             Assert.DoesNotContain(Stub(member), insert);
 
         AssertStubs("FieldRefValidate_StartsTheFieldTriggerOfAnyTable", "MissingValidate", "MissingAfterValidate");
+
+        // A record the receiver expression does not name by a variable (a procedure's return value) is no
+        // better known: the table is not read, so the operation counts for every table.
+        var result = _run.StubsOf("InsertOnAMethodResult_NamesNoTableVariable");
+        foreach (var member in new[] { "MissingInsert", "MissingBeforeInsert", "MissingTrigEvent" })
+            Assert.Contains(Stub(member), result);
+        Assert.DoesNotContain(Stub("MissingModify"), result);
     }
 
     /// <summary>
@@ -136,8 +145,8 @@ public sealed class TddTriggerEventsTests : IClassFixture<TddTriggerEventsRun>
         AssertStubs("ListInsert_IsNotARecordOperation_IsNotAnnotated");
         AssertStubs("Quiet_IsNotAnnotated");
         // Every member is generated, and the tests naming one are counted: the controls are not among them.
-        Assert.Contains("--tdd: generated 15 member(s) this run:", _run.StdErr);
-        Assert.Equal(29, _run.Tests.Count);
-        Assert.Equal(21, _run.Tests.Count(t => t.TryGetProperty("generatedStubs", out _)));
+        Assert.Contains("--tdd: generated 16 member(s) this run:", _run.StdErr);
+        Assert.Equal(31, _run.Tests.Count);
+        Assert.Equal(23, _run.Tests.Count(t => t.TryGetProperty("generatedStubs", out _)));
     }
 }
