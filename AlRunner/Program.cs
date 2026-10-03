@@ -6660,11 +6660,10 @@ return strictExitCode ? computedExitCode : 0;
                     AlRunner.Infrastructure.PhaseLog.AddAppEmit(et.Elapsed);
                 }
                 // An emit-retry exclusion means one or more AL objects are NOT in the
-                // compiled module, so any tests they declare silently vanish and the
-                // request looks green. Fail loudly with the same classification the CLI's
-                // bundled-mode EMIT-EXCLUDED guard uses (.claude/rules/loud-failures.md);
-                // without this the server path ran the surviving objects and reported
-                // exitCode 0 while e.g. a whole test codeunit was missing from the run.
+                // compiled module, so any tests they declare would silently vanish and the
+                // request look green: report it the way the CLI's bundled-mode EMIT-EXCLUDED
+                // guard does (.claude/rules/loud-failures.md), with the survivors' results and
+                // exit code 3 where #3476's triage clears the drop (#5118), a refusal otherwise.
                 // #5034: under tdd the recovered module runs and the excluded objects' tests are
                 // reported FAILED (compile) instead, as the CLI's TDD-EXCLUDED branch does. Only
                 // when nothing survives and there is no test to report does it fall through.

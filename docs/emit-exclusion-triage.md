@@ -107,4 +107,6 @@ rather than a wrong verdict, and it is left alone here rather than changed in pa
 - `--tdd` is untouched: it keeps the survivors, as it always did, and reports the dropped
   objects' tests as **FAILED**, because a red test is the point of that flag. The default path
   reports them **SKIPPED**, because nothing measured whether they would pass.
-- `--server`'s own EMIT-EXCLUDED guard is a separate code path and still refuses outright.
+- `--server`'s `runTests` asks the same question (`ExcludedObjectTriage.TriageDrops`) and gives the
+  same answer: survivors run, the dropped tests stream as `skipped`, exit 3 (#5118; docs/server-mode.md).
+  `execute` and `--dap` still refuse outright, having no row to show a skipped test in.
