@@ -104,9 +104,9 @@ the backup-reader sidecar included), `--test-data`, BC 28.1.49838.53910, the wor
 Not in the model, and each one measured to be real:
 
 - **A cold cache.** The first compile of Tests-ERM peaked at 3.4 GB in one process, against 1.5 GB
-  warm (SMB 2.2, VAT 1.8, SCM 3.6). Workers started against an empty cache are not sized for it, and
-  every worker of a shared bundle compiles it itself: SMB on `--jobs 2` with a fresh cache took 418 s
-  of CPU and 4.5 GB against 190 s and 2.2 GB for one process, at the same wall time (#5238).
+  warm (SMB 2.2, VAT 1.8, SCM 3.6). That peak is now paid by ONE worker of a shared bundle, not by
+  each ([§ Cold cache](#cold-cache)), but it is still not in the model: a plan sized to the warm
+  numbers does not fit the worker that compiles.
 - **Abort-resume stacks attempts.** The aborted attempt stays alive while the retry runs, so a run
   that resumed twice held three attempts at once: Tests-SCM-Service (two watchdog aborts) peaked at
   10.8 GB (PSS), and one process of it reached 6.5 GB on its own. That run is why it is not in the
@@ -150,13 +150,92 @@ about 2.5, floor 20 against floor 100 (the second does not share the bundle):
 | cold, 1 run each | 15.8 s wall, 45.8 s CPU, 1,048 MB | 13.2 s wall, 27.4 s CPU, 559 MB |
 
 So sharing a bundle of fast tests costs about a fifth more wall time warm, twice the CPU and twice
-the memory, and on a cold cache it is the compile-once-per-worker cost of #5238. Lowering the
-default would have charged that to every `--jobs` user for the benefit of the slow-test ones.
+the memory. (The cold column was taken before the workers stopped compiling a bundle each, #5238:
+[§ Cold cache](#cold-cache).) Lowering the default would have charged that to every `--jobs` user
+for the benefit of the slow-test ones.
 
 No files-per-piece number is right for both. File count is a poor proxy for time: seconds per test
 differ two to three times between the two buckets here (0.22 s in ERM, 0.46 to 0.57 s in SMB) and
 tests per file run from under 1 to 41 across the BaseApp buckets. Weighing by test count or by a
 recorded duration, and measuring the weight itself, is #5239 (`CountTests` exists now).
+
+## Cold cache
+
+Against an empty `--cache` the workers of a shared bundle used to compile everything it needs, each
+of them: the bundle's own AL-output entry, and every dependency compiled from source (the
+`compiled-deps` entries, which on Tests-SMB cost far more than the bundle: `Any`, `System
+Application Test Library` and `Tests-TestLibraries` each took between 13 s and 66 s in the runs here, the
+bundle's own emit and C# compile about 6 s). CPU and memory were paid
+once per worker while wall time stayed put, so a run that only watched the clock did not see it
+(#5238). Nothing locked the "entry missing, compile, publish" step: `AlCacheWriter` makes concurrent
+writers correct (identical bytes, atomic rename), not cheap.
+
+Two locks, in this order (`CompilePhase`, then `CacheCompileLock`):
+
+- **The compile phase**, per shared bundle, in the run's claim directory. The first worker that
+  misses takes it and keeps it until its own compile phase for the bundle is over (every app loaded,
+  before any test runs). A worker that misses meanwhile waits for it and then finds everything
+  cached. This is what puts all the compiling in ONE process: per-key locks alone only stop two
+  workers compiling the same key, and the workers then split the keys between them, so both carry
+  the compiler's footprint (measured on Tests-SMB `--jobs 2`, one unpaired run on a busier box:
+  CPU 390 s to 295 s, peak 4.3 to 4.1 GB; with the phase, below). A worker that waited and then
+  hits gives the phase back at once, so a third worker waits for a compile, never for a load, and a
+  holder that has compiled keeps it through any later hit.
+- **A lock per cache key**, beside the entry (`<key>.compile.lock`), for every process that
+  shares a cache directory, workers or not. It is what makes one of two unrelated runs compile a
+  shared dependency while the other waits, without holding up a run that needs a different key.
+
+Both are OS file locks: a killed holder frees them with its process, so there is no stale lock,
+only a live holder that is slow. The wait is bounded (`AL_RUNNER_CACHE_LOCK_WAIT_SEC`, default
+1800, longer than the 301 s of wall #5238 recorded for the largest cold compile, Tests-ERM); on expiry the waiter says so
+and compiles in its own process, which is the behaviour before the locks: slower, never wrong. A
+lock file that cannot be taken for any other reason is named and compiled around, not read as "free",
+with one case that is not: on Unix .NET reports a conflict only for `EWOULDBLOCK`, so a filesystem that
+refuses `flock`, or `DOTNET_SYSTEM_IO_DISABLEFILELOCKING`, would give every process the lock without a
+message, which is the behaviour before the locks (correct, not cheaper). That is a reading of .NET's
+`SafeFileHandle.Unix.cs` by the reviewer of #5248, not something measured here.
+A wait of more than 5 s prints one line saying what it is waiting for. The lock files are never
+deleted (unlinking one another process already opened lets a third lock a different file).
+
+Measured on `Tests-SMB`, BC 28.1.49838.53910, `--test-data`, one small codeunit selected
+(`--test Codeunit138041`, 4 tests), `AL_RUNNER_JOBS_SPLIT_MIN_FILES=1`, a fresh `--cache` per run, one
+box at a load of about 3, `tools/process-tree-peak.py`. Base is `origin/main` at 3993c32b.
+
+| run | wall | CPU | peak process-tree PSS |
+|---|---|---|---|
+| one process, base | 67 s | 177 s | 3,769 MB |
+| one process, with the locks | 68 s | 180 s | 3,695 MB |
+| `--jobs 2`, base (2 runs) | 114 s, 119 s | 341 s, 356 s | 4,335 MB, 4,484 MB |
+| `--jobs 2`, with the locks (2 runs) | 92 s, 92 s | 162 s, 166 s | 3,385 MB, 3,188 MB |
+
+CPU of the two-worker run is now that of one process's cold compile, where it was twice that. The
+one-process rows run without the worker GC settings a `--jobs` worker gets (one heap, conserve
+memory 9), so their peak is not comparable with the `--jobs` rows. A synthetic bundle (45 files, 90
+trivial tests, no `--test-data`), three runs each, alternating base and new: `--jobs 2` cold took
+17.4 to 18.3 s, 52 to 58 s of CPU and 1,044 to 1,064 MB before, and 15.0 to 15.5 s, 31 to 33 s and
+776 to 786 MB after. The warm run of that bundle against the cache the cold one wrote: 2.8 s, no
+compile, both workers read the entry, 90 of 90 passed in both.
+
+**A key that publishes nothing is not waited for.** An EMIT-EXCLUDED bundle (a dropped object keeps
+the module out of the cache), a failed compile and a dependency whose source compile throws leave no
+entry, so waiting for the holder would only queue the workers to compile the same thing one after
+another, on every run. Such a compile (`UncacheableCompile`) gives both locks up when it ends and
+leaves `<key>.uncacheable` beside where the entry would be; a process that sees the marker compiles
+without waiting, and a later compile that does publish the key removes it. It is a hint about cost
+only: it skips the locks and nothing else, and a stale one costs the locks and nothing else. The
+FIRST run is still serial for the compile that finds out, because the workers are already waiting
+when it does; the ones waiting on a lock (the key lock, the phase, or the key lock while sharing a phase) see
+the marker the moment they get it, hand on whatever they held and compile side by side from there,
+rather than one after another. A
+45-file synthetic bundle with one uncompilable test codeunit, `--jobs 2`, three runs each at a load
+of 4 to 5 (base / the first push of #5248 / with the marker): cold 18.1 to 21.0 s / 22.8 to 24.2 s /
+23.9 to 25.2 s; warm 11.2 to 12.0 s / 16.2 to 17.7 s / 10.0 to 11.4 s. Cold, CPU and peak memory stay
+below base; warm they match it.
+
+Not covered, and found still duplicated: the install baseline (`[InstallBaselineDisk] wrote`) is
+written by each worker on a cold cache (#5252, cost not measured). A holder that drops
+`NoteCompiling` in `LoadOne` is not caught by any test either: it would hand the phase on after a
+hit on a key an unrelated process compiled, costing time and never correctness.
 
 ## Speed and correctness on a large bucket
 

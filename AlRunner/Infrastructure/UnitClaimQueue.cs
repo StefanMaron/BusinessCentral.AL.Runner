@@ -76,6 +76,12 @@ internal sealed class UnitClaimQueue
         }
     }
 
+    /// <summary>The lock the workers of this shared bundle serialise their compile phase on
+    /// (<see cref="CompilePhase"/>). Beside the claim files, so it dies with the run's scratch.</summary>
+    internal string CompilePhaseLockPath
+        => Path.Combine(_dir, Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(_bundleKey)), 0, 16)
+            + ".compile-phase.lock");
+
     /// <summary>Whether some worker has already claimed that codeunit. A read, never a claim.</summary>
     public bool IsClaimed(string assemblyName, string codeunitTypeName)
         => File.Exists(Path.Combine(_dir, ClaimFileName(_bundleKey, assemblyName, codeunitTypeName)));

@@ -739,8 +739,9 @@ public sealed class DependencyLoader
         // #2247: the emit-exclusion report, cached like the six above because a HIT skips
         // the compile that would otherwise produce it.
         var emitExcludedSidecar = Path.Combine(cacheDir, cacheKey + ".emit-excluded.txt");
-        if (File.Exists(cachedDll))
+        (Assembly? Asm, string? Tier3CacheKey, IReadOnlyList<Assembly> Assemblies)? TryServeFromSourceCache()
         {
+            if (!File.Exists(cachedDll)) return null;
             try
             {
                 var cachedBytes = File.ReadAllBytes(cachedDll);
@@ -772,8 +773,64 @@ public sealed class DependencyLoader
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"[deps] source-cache read/load failed for {m.Name}: {ex.Message}; rebuilding");
+                return null;
             }
         }
+        if (TryServeFromSourceCache() is { } cacheHit) return cacheHit;
+
+        // #5238: a miss is a compile, and `--jobs` workers sharing a bundle all miss together, so
+        // without this every one of them compiles every dependency. Among those workers one takes
+        // the whole compile phase (CompilePhase) and the rest wait for it here; for any other
+        // process sharing the cache directory the per-key lock makes one compile the key.
+        // Both are held through the compile and the publish below.
+        void Say(string line) => Console.Error.WriteLine(line);
+        var what = $"dependency {m.Name} v{m.Version}";
+        var phase = CompilePhase.Current;
+        // A key whose compile publishes nothing (UncacheableCompile) has nothing to wait for.
+        var uncacheableMarker = UncacheableCompile.MarkerPath(cacheDir, cacheKey);
+        CacheCompileLock? compileGate = null;
+        if (!UncacheableCompile.Exists(uncacheableMarker))
+        {
+            if (phase != null && phase.EnterToCompile(what, CacheCompileLock.MaxWaitFromEnvironment(Say), Say))
+            {
+                if (TryServeFromSourceCache() is { } cacheHitAfterPhase)
+                {
+                    phase.ReleaseIfNotCompiling();
+                    return cacheHitAfterPhase;
+                }
+                // The holder found out while this worker waited that it cannot publish this key.
+                if (UncacheableCompile.Exists(uncacheableMarker)) phase.ReleaseUnproductive();
+            }
+            if (!UncacheableCompile.Exists(uncacheableMarker))
+            {
+                compileGate = CacheCompileLock.Acquire(
+                    Path.Combine(cacheDir, cacheKey + ".compile.lock"), what,
+                    CacheCompileLock.MaxWaitFromEnvironment(Say), Say);
+                if (compileGate.WaitedForSibling)
+                {
+                    if (TryServeFromSourceCache() is { } cacheHitAfterWait)
+                    {
+                        compileGate.Dispose();
+                        phase?.ReleaseIfNotCompiling();
+                        return cacheHitAfterWait;
+                    }
+                    // The holder found out while this process waited that it publishes nothing:
+                    // let the next waiter in now, not after this compile too.
+                    if (UncacheableCompile.Exists(uncacheableMarker))
+                    {
+                        compileGate.Dispose();
+                        compileGate = null;
+                        phase?.ReleaseUnproductive();
+                    }
+                }
+            }
+        }
+        phase?.NoteCompiling();
+        Console.Error.WriteLine($"[deps] compiling {m.Name} v{m.Version} (source-cache MISS key={cacheKey[..12]})");
+        // Held to the end of the method. A compile that ends without publishing (it throws, the
+        // write fails) gives the locks up and leaves the marker.
+        using var compileGateScope = compileGate;
+        using var cacheOutcome = new UncacheableCompile(uncacheableMarker, compileGate, phase);
 
         // Per-process, NOT the machine-wide identity-only path this used to be (#2696): the
         // delete-then-rewrite below raced two runners resolving the same dependency, and one
@@ -916,6 +973,7 @@ public sealed class DependencyLoader
                 objectMetadataSidecar,
                 AlObjectMetadataRegistry.Keys.Where(k => !objectKeysBeforeEmit.Contains(k)).ToArray(),
                 emitExcludedSidecar: emitExcludedSidecar, emitExcludedReport: emitExcludedReport);
+            cacheOutcome.Published();
             Console.Error.WriteLine(
                 $"[deps] source-cache WROTE: {m.Name} v{m.Version} key={cacheKey[..12]} ({compile.AssemblyBytes!.Length} bytes, {sidecarCount} report-metadata entries, {enumSidecarCount} enum-registry entries)");
         }

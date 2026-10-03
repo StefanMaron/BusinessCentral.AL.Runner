@@ -2949,6 +2949,10 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
     var bundleAbs = Path.GetFullPath(bundle);
     var rel = AlRunner.Infrastructure.WorkingDirectory.DisplayPath(bundleAbs, AlRunner.Infrastructure.WorkingDirectory.TryGet());
     AlRunner.Infrastructure.PhaseLog.BeginBundle(rel, i2);
+    // #5238: null unless this process is one of several workers sharing this bundle. Released at
+    // the end of the per-app compile loop below (before any test runs); `using` covers the paths
+    // that leave the iteration earlier.
+    using var compilePhase = AlRunner.Infrastructure.CompilePhase.Open(bundleAbs);
 
     // Forget the previous bundle's install-trigger registrations so a bundle
     // without deps doesn't inherit a sibling bundle's Install codeunits.
@@ -3492,6 +3496,10 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
         string? cachePath = null;
         string? sidecarPath = null;
         string? querySidecarPath = null;
+        // #5238: held from a cache MISS to the publish below, so `--jobs` workers sharing this
+        // bundle compile it once between them. Null when nothing was missed or nothing is cached.
+        AlRunner.Infrastructure.CacheCompileLock? compileGate = null;
+        string uncacheableMarker = "";
         // A bundle declaring an AL query also needs its query-symbols sidecar: the MetaQuery
         // design is built from the compilation's SymbolReference, which only emit produces.
         // Serving a HIT without it leaves NCLMetaQuery null and every query Find NREs inside
@@ -3543,29 +3551,70 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
             cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
             sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
             querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
-            if (AlRunner.Infrastructure.AlCacheSidecars.IsCompleteEntry(
-                    File.Exists(cachePath), File.Exists(sidecarPath),
-                    bundleDeclaresQuery, File.Exists(querySidecarPath)))
+            uncacheableMarker = AlRunner.Infrastructure.UncacheableCompile.MarkerPath(alCacheDir, cacheKey);
+            void ReadCompleteEntry(bool reportIncomplete)
             {
-                try
+                if (AlRunner.Infrastructure.AlCacheSidecars.IsCompleteEntry(
+                        File.Exists(cachePath), File.Exists(sidecarPath),
+                        bundleDeclaresQuery, File.Exists(querySidecarPath)))
                 {
-                    cachedBytes = File.ReadAllBytes(cachePath);
-                    // A short read of a file another process is still writing is not an I/O
-                    // error — ReadAllBytes happily hands back whatever bytes are on disk.
-                    // Validate the PE image explicitly so a torn/truncated entry is rejected
-                    // here as a MISS instead of reaching Assembly.Load downstream (issue #1810).
-                    AlRunner.Infrastructure.AlCacheSidecars.ValidateCachedAssemblyBytes(cachedBytes, cachePath);
+                    try
+                    {
+                        cachedBytes = File.ReadAllBytes(cachePath);
+                        // A short read of a file another process is still writing is not an I/O
+                        // error — ReadAllBytes happily hands back whatever bytes are on disk.
+                        // Validate the PE image explicitly so a torn/truncated entry is rejected
+                        // here as a MISS instead of reaching Assembly.Load downstream (issue #1810).
+                        AlRunner.Infrastructure.AlCacheSidecars.ValidateCachedAssemblyBytes(cachedBytes, cachePath);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"  [cache] read failed for {cachePath}: {ex.Message}");
+                        cachedBytes = null;
+                    }
                 }
-                catch (Exception ex)
+                else if (reportIncomplete && File.Exists(cachePath))
                 {
-                    Console.Error.WriteLine($"  [cache] read failed for {cachePath}: {ex.Message}");
-                    cachedBytes = null;
+                    var missing = !File.Exists(sidecarPath) ? sidecarPath : querySidecarPath;
+                    Console.Error.WriteLine($"  [cache] DLL present but sidecar missing — treating as MISS ({missing})");
                 }
             }
-            else if (File.Exists(cachePath))
+            ReadCompleteEntry(reportIncomplete: true);
+            // #5238: a MISS is a compile. Take the key's lock so a process compiling it right now
+            // is waited for, then read the entry again: it is a HIT when that process finished.
+            // --print-cache-key compiles nothing, so it never waits.
+            // A key whose compile publishes nothing (UncacheableCompile) has nothing to wait for.
+            if (cachedBytes == null && !printCacheKeyOnly
+                && !AlRunner.Infrastructure.UncacheableCompile.Exists(uncacheableMarker))
             {
-                var missing = !File.Exists(sidecarPath) ? sidecarPath : querySidecarPath;
-                Console.Error.WriteLine($"  [cache] DLL present but sidecar missing — treating as MISS ({missing})");
+                void Say(string line) => Console.Error.WriteLine(line);
+                var gateWait = AlRunner.Infrastructure.CacheCompileLock.MaxWaitFromEnvironment(Say);
+                var gateWhat = $"{moduleName} ({rel})";
+                // Among the workers of a shared bundle, one takes the whole compile phase.
+                if (compilePhase != null && compilePhase.EnterToCompile(gateWhat, gateWait, Say))
+                {
+                    ReadCompleteEntry(reportIncomplete: false);
+                    // The holder found out while this worker waited that it cannot publish this key.
+                    if (cachedBytes == null && AlRunner.Infrastructure.UncacheableCompile.Exists(uncacheableMarker))
+                        compilePhase.ReleaseUnproductive();
+                }
+                if (cachedBytes == null && !AlRunner.Infrastructure.UncacheableCompile.Exists(uncacheableMarker))
+                {
+                    compileGate = AlRunner.Infrastructure.CacheCompileLock.Acquire(
+                        Path.Combine(alCacheDir, cacheKey + ".compile.lock"), gateWhat, gateWait, Say);
+                    if (compileGate.WaitedForSibling)
+                    {
+                        ReadCompleteEntry(reportIncomplete: false);
+                        // The holder found out while this process waited that it publishes nothing:
+                        // let the next waiter in now, not after this compile too.
+                        if (cachedBytes == null && AlRunner.Infrastructure.UncacheableCompile.Exists(uncacheableMarker))
+                        {
+                            compileGate.Dispose();
+                            compileGate = null;
+                            compilePhase?.ReleaseUnproductive();
+                        }
+                    }
+                }
             }
             }
         }
@@ -3633,10 +3682,21 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                     Console.Error.WriteLine($"  [cache] HIT  key={cacheKey} path={cachePath} ({cachedBytes.Length} bytes, {replayed} enum entries replayed) — skipping Emit+Compile");
                 AlRunner.Infrastructure.PhaseLog.NoteCacheHit();
                 assemblyBytes = cachedBytes;
+                // Nothing left to compile, so nothing left to hold back.
+                compileGate?.Dispose();
+                compileGate = null;
+                compilePhase?.ReleaseIfNotCompiling();
             }
         }
         if (needCompile && assemblyBytes == null)
         {
+            // Released when this block ends, after the publish below, and on any exception.
+            using var compileGateScope = compileGate;
+            compilePhase?.NoteCompiling();
+            // Gives the locks up and leaves the marker unless this compile publishes the entry.
+            using var cacheOutcome = cacheKey != null && alCacheDir != null
+                ? new AlRunner.Infrastructure.UncacheableCompile(uncacheableMarker, compileGate, compilePhase)
+                : null;
             // cacheKey == null with alCacheDir set is #2954's do-not-cache path: there is no key
             // to miss against, and counting it as a MISS would put it in the same bucket as a
             // cold entry that the next run will HIT. It never will — nothing was written.
@@ -4168,6 +4228,7 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
                                     querySidecarPath!, tmp => File.Copy(qsrc, tmp, overwrite: true));
                             AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
                                 cachePath, tmp => File.WriteAllBytes(tmp, assemblyBytes));
+                            cacheOutcome?.Published();
                             // Issue #2239: same category as [cache] HIT/MISS above — cache
                             // population detail, not a result. Observed printing
                             // unconditionally on every cold run while verifying that fix
@@ -4300,6 +4361,8 @@ foreach (var bundle in watchAffected ? new List<string>() : bundles)
         // test run below is a SEPARATE pass, and leaving this row open would bank the
         // whole pass onto it.
         AlRunner.Infrastructure.PhaseLog.EndApp();
+        // #5238: this bundle's compile phase is over; the workers waiting on it load what it wrote.
+        compilePhase?.Dispose();
 
         if (deferBundleRuns)
         {
