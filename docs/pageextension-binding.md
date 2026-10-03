@@ -101,3 +101,21 @@ The part's form is built through `NavFormHandle.CreateTarget`, the Page-variable
 bound before its `SetSourceTable` and `RunnerPageInstance.Adopt` / `AdoptFromHost` reuse them. Corpus codeunit 60980
 `SubPageExtControl_BoundToExtensionGlobal_IsFoundAndReadsItsValue` measures it (#4181, fixed
 together with #4738).
+
+## Which page an extension's `extends` clause names
+
+The runner picks a source pageextension's base page by the name its `extends` clause states, not
+from the compiler's resolution (#5085). `RecordPatches.ExtendsTarget` splits the clause into the
+object name and the namespace written in front of it, and three predicates in
+`RecordPatches.AlPageParser.cs` decide the match:
+
+- A **qualified** clause (`extends NS."Page"`) matches a source page of that name in namespace NS.
+  It matches a dependency's page of that name only when no source page of that name sits in NS.
+- A **bare** clause matches a source page by name, and a dependency's page only when no source
+  page of that name sits in the extension's own namespace (the compiler looks there first).
+- Dependency pages carry no namespace in the symbol cache, so two dependencies that share a page
+  name are not told apart, and a bare clause is not checked against the file's `using`s.
+
+Before this, the whole clause text was kept as the name, so a qualified clause equalled no page
+and the extension attached to nothing. A tableextension's clause is reduced to its last name
+segment, as a reportextension's already was, and is matched by name alone (#5223).

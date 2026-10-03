@@ -29,7 +29,7 @@ public static partial class RecordPatches
             }
             case "PageExtension":
                 return _parsedPageExtensions.TryGetValue(extensionId, out var pageExt) && pageExt.BaseName.Length > 0
-                    ? _parsedPages.Values.Where(p => NamesEqual(p.Name, pageExt.BaseName)).Select(p => p.Id).Distinct().ToList()
+                    ? _parsedPages.Values.Where(p => ExtensionTargetsSourcePage(pageExt, p)).Select(p => p.Id).Distinct().ToList()
                     : Array.Empty<int>();
             case "ReportExtension":
                 return _parsedReportExtensions.TryGetValue(extensionId, out var reportExt) && reportExt.BaseObjectName is { Length: > 0 } reportName
@@ -51,20 +51,48 @@ public static partial class RecordPatches
         try
         {
             var pageIdsByName = new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
+            var sourcePagesByName = new Dictionary<string, List<ParsedPage>>(StringComparer.OrdinalIgnoreCase);
+            var dependencyPagesByName = new Dictionary<string, List<BcAppSymbolCache.PageSymbol>>(StringComparer.OrdinalIgnoreCase);
             void Index(string name, int id)
             {
                 var key = NameKey(name);
                 if (!pageIdsByName.TryGetValue(key, out var ids)) pageIdsByName[key] = ids = new List<int>();
                 if (!ids.Contains(id)) ids.Add(id);
             }
-            foreach (var p in _parsedPages.Values) Index(p.Name, p.Id);
-            foreach (var p in DependencyPageSymbolsById().Values) Index(p.Name, p.Id);
+            foreach (var p in _parsedPages.Values)
+            {
+                Index(p.Name, p.Id);
+                var key = NameKey(p.Name);
+                if (!sourcePagesByName.TryGetValue(key, out var list)) sourcePagesByName[key] = list = new List<ParsedPage>();
+                list.Add(p);
+            }
+            foreach (var p in DependencyPageSymbolsById().Values)
+            {
+                Index(p.Name, p.Id);
+                var key = NameKey(p.Name);
+                if (!dependencyPagesByName.TryGetValue(key, out var list)) dependencyPagesByName[key] = list = new List<BcAppSymbolCache.PageSymbol>();
+                list.Add(p);
+            }
 
             var result = new Dictionary<int, List<int>>();
             void Add(int extId, string baseName)
                 => result[extId] = baseName.Length > 0 && pageIdsByName.TryGetValue(NameKey(baseName), out var ids)
                     ? ids.ToList() : new List<int>();
-            foreach (var ext in _parsedPageExtensions.Values) Add(ext.Id, ext.BaseName);
+            // A source extension's written namespace decides between same-named pages (#5085).
+            void AddSource(ParsedPage ext)
+            {
+                var key = NameKey(ext.BaseName);
+                var ids = new List<int>();
+                if (ext.BaseName.Length > 0)
+                {
+                    if (sourcePagesByName.TryGetValue(key, out var sources))
+                        ids.AddRange(sources.Where(p => ExtensionTargetsSourcePage(ext, p)).Select(p => p.Id));
+                    if (dependencyPagesByName.TryGetValue(key, out var dependencies))
+                        ids.AddRange(dependencies.Where(p => ExtensionTargetsDependencyPage(ext, p.Name)).Select(p => p.Id));
+                }
+                result[ext.Id] = ids.Distinct().ToList();
+            }
+            foreach (var ext in _parsedPageExtensions.Values) AddSource(ext);
             foreach (var symbols in DependencyAppSymbols())
                 foreach (var ext in symbols.PageExtensions ?? (IReadOnlyList<BcAppSymbolCache.PageExtensionSymbol>)Array.Empty<BcAppSymbolCache.PageExtensionSymbol>())
                     if (!result.ContainsKey(ext.Id)) Add(ext.Id, ext.TargetObjectName);

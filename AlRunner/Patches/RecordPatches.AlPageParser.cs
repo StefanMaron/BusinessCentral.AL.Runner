@@ -32,6 +32,7 @@ public static partial class RecordPatches
     private static void TryParsePageFile(string text)
     {
         var objects = ParseAlObjects(text);
+        var (fileNamespace, fileUsings) = FileScope(objects);
 
         // Pages and pageextensions go into SEPARATE dictionaries, mirroring
         // _parsedReports / _parsedReportExtensions. AL gives `page` and `pageextension`
@@ -76,7 +77,8 @@ public static partial class RecordPatches
                 CardPageName: PageRefText(PropValue(props, "CardPageId")),
                 MemberIdToName: ParseMemberNames(id, p),
                 MemberIdToActionRefTarget: ParseActionRefTargets(id, p),
-                DeclaredSystemActions: ParseDeclaredSystemActions(p));
+                DeclaredSystemActions: ParseDeclaredSystemActions(p),
+                Namespace: fileNamespace, Usings: fileUsings);
         }
 
         foreach (var obj in objects)
@@ -91,15 +93,17 @@ public static partial class RecordPatches
             // GetPageControlFieldMap merges them into the BASE page's map, which is where a
             // TestPage looks.
             var (extFieldMap, extControls) = ParsePageControls(id, pe.Layout);
+            var (baseName, baseNamespace) = ExtendsTarget(pe.BaseObject?.ToString());
             _parsedPageExtensions[id] = new ParsedPage(id, IdentText(pe.Name), IsExtension: true,
                 SourceTableName: string.Empty,
                 ControlIdToFieldName: extFieldMap,
                 InsertAllowed: !PropIs(pe.PropertyList, "InsertAllowed", "false"),
-                BaseName: Unquote(pe.BaseObject?.ToString()?.Trim() ?? ""),
+                BaseName: baseName,
                 Controls: extControls,
                 MemberIdToName: ParseMemberNames(id, pe),
                 MemberIdToActionRefTarget: ParseActionRefTargets(id, pe),
-                ModifiedControlNames: ParseModifiedControlNames(pe));
+                ModifiedControlNames: ParseModifiedControlNames(pe),
+                Namespace: fileNamespace, Usings: fileUsings, BaseNamespace: baseNamespace);
         }
     }
 
@@ -476,8 +480,9 @@ public static partial class RecordPatches
         if (string.IsNullOrEmpty(baseName)) return new List<int>();
 
         var result = new List<int>();
+        var sourcePage = TryGetInAppGroupScope("page", _parsedPages, pageId, out var parsedPage) ? parsedPage : null;
         foreach (var ext in InAppGroupScope("pageextension", _parsedPageExtensions))
-            if (NamesEqual(ext.BaseName, baseName))
+            if (sourcePage != null ? ExtensionTargetsSourcePage(ext, sourcePage) : ExtensionTargetsDependencyPage(ext, baseName))
                 result.Add(ext.Id);
         // Issue #2723's pageextension arm: a pageextension that itself ships PRECOMPILED in a
         // dependency .app (Base Application's "Activity Log Extension" over "Activity Log",
@@ -496,6 +501,49 @@ public static partial class RecordPatches
         result.Sort();
         return result;
     }
+
+    /// <summary>An <c>extends</c> clause as (object name, namespace written in front of it or null).
+    /// Split on the dots outside quotes, so <c>"Doc. Card"</c> stays one name.</summary>
+    private static (string Name, string? Namespace) ExtendsTarget(string? clause)
+    {
+        var parts = new List<string>();
+        var current = new System.Text.StringBuilder();
+        var quoted = false;
+        foreach (var ch in (clause ?? "").Trim())
+        {
+            if (ch == '"') { quoted = !quoted; continue; }
+            if (ch == '.' && !quoted) { parts.Add(current.ToString().Trim()); current.Clear(); continue; }
+            current.Append(ch);
+        }
+        parts.Add(current.ToString().Trim());
+        return (parts[^1], parts.Count > 1 ? string.Join(".", parts.Take(parts.Count - 1)) : null);
+    }
+
+    /// <summary>
+    /// Whether source pageextension <paramref name="ext"/> extends the source-parsed page
+    /// <paramref name="page"/> (#5085): same name, and when the clause writes a namespace, the
+    /// page's own namespace equals it. An unqualified clause matches by name alone, as before.
+    /// </summary>
+    private static bool ExtensionTargetsSourcePage(ParsedPage ext, ParsedPage page)
+        => NamesEqual(ext.BaseName, page.Name)
+           && (ext.BaseNamespace is null
+               || string.Equals(ext.BaseNamespace, page.Namespace, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Whether source pageextension <paramref name="ext"/> extends a page a dependency .app ships
+    /// under <paramref name="dependencyPageName"/> (#5085). A written namespace names the
+    /// dependency's page unless a source page of that name sits in it; a bare name means the
+    /// source page of that name in the extension's own namespace when there is one, which the
+    /// compiler resolves first, and the dependency's page otherwise. SymbolReference.json pages
+    /// carry no namespace here, so the dependency's own namespace is not compared and two
+    /// dependencies sharing a page name are not told apart.
+    /// </summary>
+    private static bool ExtensionTargetsDependencyPage(ParsedPage ext, string dependencyPageName)
+        => NamesEqual(ext.BaseName, dependencyPageName)
+           && !InAppGroupScope("page", _parsedPages).Any(p => ext.BaseNamespace is null
+               ? NamesEqual(p.Name, ext.BaseName)
+                   && string.Equals(p.Namespace, ext.Namespace, StringComparison.OrdinalIgnoreCase)
+               : ExtensionTargetsSourcePage(ext, p));
 
     /// <summary>
     /// <paramref name="pageId"/>'s declared NAME — the runner's own AL-source-parsed pages
@@ -583,7 +631,7 @@ public static partial class RecordPatches
             // Only extensions of THIS page. Binding every extension's controls onto every page
             // would fabricate bindings that the AL never declared.
             foreach (var ext in _parsedPageExtensions.Values)
-                if (NamesEqual(ext.BaseName, page.Name))
+                if (ExtensionTargetsSourcePage(ext, page))
                     BindControls(ext.ControlIdToFieldName, table, result);
             return result;
         }
@@ -607,7 +655,7 @@ public static partial class RecordPatches
             if (fieldNo != 0) depResult[control.Id] = fieldNo;
         }
         foreach (var ext in _parsedPageExtensions.Values)
-            if (NamesEqual(ext.BaseName, symbol.Name))
+            if (ExtensionTargetsDependencyPage(ext, symbol.Name))
                 BindControls(ext.ControlIdToFieldName, depTable, depResult);
         return depResult;
 
@@ -846,7 +894,7 @@ public static partial class RecordPatches
 
         AddAll(page.Controls);
         foreach (var ext in _parsedPageExtensions.Values)
-            if (NamesEqual(ext.BaseName, page.Name))
+            if (ExtensionTargetsSourcePage(ext, page))
                 AddAll(ext.Controls);
         return result;
     }
@@ -977,7 +1025,15 @@ internal record ParsedPage(
     /// <summary>For a pageextension: the BASE-page control names its <c>modify(...)</c> blocks
     /// target — see <see cref="RecordPatches"/>.ParseModifiedControlNames (#3573). Always empty
     /// for a page.</summary>
-    IReadOnlySet<string>? ModifiedControlNames = null)
+    IReadOnlySet<string>? ModifiedControlNames = null,
+    /// <summary>The namespace the declaring file states, null for the global one.</summary>
+    string? Namespace = null,
+    /// <summary>The namespaces the declaring file imports with <c>using</c>.</summary>
+    IReadOnlyList<string>? Usings = null,
+    /// <summary>For a pageextension whose <c>extends</c> clause writes a namespace in front of
+    /// the page name (<c>extends NS."Page"</c>), that namespace; null for a bare name. The
+    /// name itself is <see cref="BaseName"/> either way (#5085).</summary>
+    string? BaseNamespace = null)
 {
     // Positional records can't give a collection parameter a literal default that isn't a
     // constant, so a null Controls (constructed via the shorter historical call sites/tests,
