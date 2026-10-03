@@ -142,7 +142,7 @@ public sealed class TddLibBundleTests
         Assert.True(_refused.Exit == 1, $"exit {_refused.Exit}\n{_refused.StdErr}");
         Assert.DoesNotContain("FATAL", _refused.StdErr);
         Assert.DoesNotContain("EMIT-ZERO", _refused.StdErr);
-        Assert.Equal(2, _refused.Tests.Count);
+        Assert.Equal(3, _refused.Tests.Count);
 
         Assert.Equal("fail", _refused.Find("ViaLibrary_FailsBecauseTheLibraryCannotCompile").GetProperty("status").GetString());
         Assert.Contains("Codeunit 65480", _refused.Failure("ViaLibrary_FailsBecauseTheLibraryCannotCompile"));
@@ -158,5 +158,11 @@ public sealed class TddLibBundleTests
         Assert.DoesNotContain("--tdd: generated", _refused.StdErr);
         Assert.DoesNotContain("no test referenced a missing symbol", _refused.StdErr);
         Assert.Contains("--tdd: no members were generated this run — 1 object(s) could not be compiled", _refused.StdErr);
+
+        // A test object of the bundle was dropped as well and is reported FAILED: the closing line says so
+        // too, instead of mentioning only the library object (it declares no test of its own).
+        Assert.Equal("fail", _refused.Find("OwnRefusedCall_IsReportedFailed").GetProperty("status").GetString());
+        Assert.Contains("MissingOwn", _refused.Failure("OwnRefusedCall_IsReportedFailed"));
+        Assert.Contains("1 [Test] procedure(s) of other dropped objects are reported FAILED above.", _refused.StdErr);
     }
 }

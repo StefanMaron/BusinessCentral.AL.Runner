@@ -32,6 +32,13 @@ public class TddRunResult : IDisposable
         _run = new Lazy<(string, int, JsonDocument)>(Execute);
     }
 
+    /// <summary>Set before the first read to run against a cache root another run shares: a second run on
+    /// one cache is a warm run, which a fresh cache per instance never is.</summary>
+    public string? CacheRoot { get; init; }
+
+    /// <summary>Set before the first read to run without --tdd.</summary>
+    public bool Plain { get; init; }
+
     public string StdErr => _run.Value.StdErr;
     public int Exit => _run.Value.Exit;
     public List<JsonElement> Tests => _run.Value.Doc.RootElement.GetProperty("tests").EnumerateArray().ToList();
@@ -41,7 +48,7 @@ public class TddRunResult : IDisposable
         Directory.CreateDirectory(_scratch);
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
-        args.Append($" --tdd --cache \"{Path.Combine(_scratch, "cache")}\" --output-json");
+        args.Append($"{(Plain ? "" : " --tdd")} --cache \"{CacheRoot ?? Path.Combine(_scratch, "cache")}\" --output-json");
         foreach (var f in _folders) args.Append($" \"{f}\"");
         var psi = new ProcessStartInfo
         {

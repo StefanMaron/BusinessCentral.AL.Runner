@@ -74,8 +74,8 @@ public static class TddCrossBundle
     // Members generated into another bundle, with the module whose compile asked for them. Kept
     // across the re-run: on the re-run the dependent compiles clean and reports nothing itself.
     private static readonly List<(string DependentModule, TddGeneratedMember Member)> Generated = new();
-    // (file, kind, member) keys whose generation was refused or rolled back — never retried in
-    // this cycle, so a refused guess cannot re-run the cycle forever.
+    // (file, kind, member) keys never tried again in this cycle, so a refused guess cannot re-run the
+    // cycle forever: every key tried (Attempted), and the ones rolled back after a failed recompile (Refused).
     private static readonly HashSet<string> Refused = new(StringComparer.Ordinal);
     private static readonly HashSet<string> Attempted = new(StringComparer.Ordinal);
     // #5161: procedures of a bundle that reach a member generated into ANOTHER bundle, by
@@ -163,11 +163,6 @@ public static class TddCrossBundle
             Attempted.Add(key);
             return true;
         }
-    }
-
-    internal static void Refuse(string key)
-    {
-        lock (Sync) Refused.Add(key);
     }
 
     internal static void RecordGenerated(string dependentModule, TddGeneratedMember member)

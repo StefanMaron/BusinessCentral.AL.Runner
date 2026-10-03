@@ -104,10 +104,10 @@ public static class TddGeneration
         // key -> every diagnostic naming it, generated or not: after the member exists, a test that
         // reaches ANY of those sites compiles against it, the refused one included.
         var diagsByKey = new Dictionary<string, List<NavDiag.Diagnostic>>(StringComparer.Ordinal);
-        // The cross-bundle state is asked once per key: the keys this call began, and the ones it
-        // refused to begin because an earlier compile of the cycle already attempted them.
+        // The cross-bundle state (TddCrossBundle.TryBeginAttempt) is asked once per key and records the
+        // attempt, which is what stops a refused key being retried in this cycle; a key an earlier
+        // compile of the cycle already attempted is blocked here.
         var crossSeen = new HashSet<string>(StringComparer.Ordinal);
-        var crossBegun = new HashSet<string>(StringComparer.Ordinal);
         var blockedKeys = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var diag in emitResult.Diagnostics)
@@ -130,14 +130,10 @@ public static class TddGeneration
                 if (generatedByKey.ContainsKey(key) || blockedKeys.Contains(key)) continue;
 
                 // Begun once per key, here, so a refusal at one site does not close the key to the next.
-                if (target.Value.CrossFile != null && crossSeen.Add(key))
+                if (target.Value.CrossFile != null && crossSeen.Add(key) && !TddCrossBundle.TryBeginAttempt(key))
                 {
-                    if (!TddCrossBundle.TryBeginAttempt(key))
-                    {
-                        blockedKeys.Add(key);
-                        continue;
-                    }
-                    crossBegun.Add(key);
+                    blockedKeys.Add(key);
+                    continue;
                 }
                 var member = target.Value.CrossFile != null
                     ? TryGenerateCrossBundle(compilation, target.Value)
@@ -150,10 +146,6 @@ public static class TddGeneration
                 // leaves it for the pre-existing refuse path — never a reason to fail the run.
             }
         }
-        // A cross-bundle key none of whose sites generated is never retried in this cycle, so a
-        // refused guess cannot re-run the cycle forever.
-        foreach (var key in crossBegun)
-            if (!generatedByKey.ContainsKey(key)) TddCrossBundle.Refuse(key);
 
         // key -> every "ObjectDisplayName.MethodName" this run's compile identified as
         // depending on it — EVERY diagnostic naming the same missing member, not just whichever

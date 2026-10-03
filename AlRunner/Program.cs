@@ -2703,7 +2703,10 @@ List<string> TddClosingLines()
         lines.Add(
             $"--tdd: no members were generated this run — {tddExcludedObjectCount} object(s) could not be " +
             "compiled (named by the TDD-EXCLUDED line above); they declare no [Test] procedure, so no " +
-            "FAILED test of their own reports it.");
+            "FAILED test of their own reports it." +
+            (tddSyntheticFailedCount > 0
+                ? $" {tddSyntheticFailedCount} [Test] procedure(s) of other dropped objects are reported FAILED above."
+                : ""));
     }
     else if (generatedMembers.Count == 0 && tddSyntheticFailedCount > 0)
     {

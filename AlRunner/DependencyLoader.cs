@@ -742,6 +742,10 @@ public sealed class DependencyLoader
         (Assembly? Asm, string? Tier3CacheKey, IReadOnlyList<Assembly> Assemblies)? TryServeFromSourceCache()
         {
             if (!File.Exists(cachedDll)) return null;
+            // #5263: the key has no --tdd term, so a plain run's partial answer (an object dropped for a
+            // missing member) shares this key. Served to a --tdd run it never compiles, the AL0132 that
+            // would trigger generation never appears, and nothing is generated. Recompile instead.
+            if (BcCompiler.IsTddMode() && CachedDropWasAMissingMember(emitExcludedSidecar)) return null;
             try
             {
                 var cachedBytes = File.ReadAllBytes(cachedDll);
@@ -1013,6 +1017,22 @@ public sealed class DependencyLoader
             Console.Error.WriteLine($"[dep-load-fail] {m.Publisher}_{m.Name} v{m.Version}: LOAD-FAIL — {detail}");
             throw new DependencyLoadException(m.Publisher, m.Name, m.Version.ToString(), "LOAD-FAIL", detail, ex);
         }
+    }
+
+    /// <summary>
+    /// Whether the cached emit-exclusion report of a source dependency names a missing member (AL0132,
+    /// or AL0126 for a missing overload), the two diagnostics --tdd generates from. An unreadable report
+    /// counts as one: a cached partial answer that cannot be told apart is not served to --tdd.
+    /// </summary>
+    private static bool CachedDropWasAMissingMember(string emitExcludedSidecar)
+    {
+        if (!File.Exists(emitExcludedSidecar)) return false;
+        try
+        {
+            var report = File.ReadAllText(emitExcludedSidecar);
+            return report.Contains("AL0132", StringComparison.Ordinal) || report.Contains("AL0126", StringComparison.Ordinal);
+        }
+        catch (IOException) { return true; }
     }
 
     /// <summary>
