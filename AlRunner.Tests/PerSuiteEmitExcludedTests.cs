@@ -132,6 +132,21 @@ public sealed class PerSuiteEmitExcludedTests
         return (root, Run(root, perSuite: true));
     });
 
+    // An interface declares no executable AL, so the suite emits no source and BC reports no error: nothing
+    // failed, there is just nothing to run. suiteB is healthy.
+    private static readonly Lazy<(string Root, Spawned Run)> InterfaceOnly = new(() =>
+    {
+        var root = NewRoot("interface-only");
+        Suite(root, "suiteI", 64000, ("Iface.Interface.al", """
+            interface "PS Excl Iface Only"
+            {
+                procedure Foo(): Integer;
+            }
+            """));
+        Suite(root, "suiteB", 62000, ("Good.al", Healthy(62002, "B Probe", "BFine")));
+        return (root, Run(root, perSuite: true));
+    });
+
     // The shared --jobs fixture of #5256 (one dropped codeunit of 3 tests, 3 healthy of 2), as one suite.
     private static readonly Lazy<Spawned> SharedUnderJobs = new(() =>
     {
@@ -220,6 +235,23 @@ public sealed class PerSuiteEmitExcludedTests
         Assert.DoesNotContain("SUITE ERRORS", run.Output);
         Assert.Equal(2, run.Rows.Count(r => r.StartsWith("PASS ")));
         Assert.Matches(@"^Tests: 2\s+passed 2\s+failed 0\s+errors 0$", run.Counts);
+    }
+
+    /// <summary>
+    /// #5299's EMIT-ZERO means "no source emitted AND BC reported errors". A suite that emits nothing and
+    /// reports nothing (an interface-only one) is not a failed compile: it passes, its neighbour runs, and
+    /// no suite error is raised for it. (#5303: the 'errors reported' half of the guard was unpinned.)
+    /// </summary>
+    [SkippableFact]
+    public void ASuiteThatEmitsNothingAndReportsNoError_IsNotEmitZero()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (_, run) = InterfaceOnly.Value;
+
+        Assert.Equal(0, run.Exit);
+        Assert.DoesNotContain("EMIT-ZERO", run.Output);
+        Assert.DoesNotContain("SUITE ERRORS", run.Output);
+        Assert.Equal(new[] { "PASS Codeunit62002.BFine" }, run.Rows);
     }
 
     /// <summary>
