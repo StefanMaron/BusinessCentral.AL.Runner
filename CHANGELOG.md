@@ -21,6 +21,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **coverage:** Code Coverage line rows take an object's text from the compiled folder, not a same-app-id sibling
 - **deps:** a deferred platform-apps attempt must not be green when a dependency's floor was withheld
 - **tdd:** generate nested-argument and overload members, follow event subscribers (#5146, #5228, #5161)
 - **coverage:** report every object's lines in one frame when a same-app-id source project is found
