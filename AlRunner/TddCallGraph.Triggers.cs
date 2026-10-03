@@ -20,7 +20,7 @@ internal sealed partial class TddCallGraph
 
     /// <summary>What one record method starts: its trigger, the database events around it, and the
     /// argument that says whether the trigger runs (-1: always). An omitted or literal false
-    /// RunTrigger runs no trigger, but the events are raised whatever it says.</summary>
+    /// RunTrigger runs no trigger; the events count as raised whatever it says.</summary>
     private readonly record struct RecordOperation(string Trigger, string[] Events, int RunTriggerArgument);
 
     private static readonly Dictionary<string, RecordOperation> RecordOperations = new(StringComparer.OrdinalIgnoreCase)
@@ -48,7 +48,7 @@ internal sealed partial class TddCallGraph
     /// <summary>The key a raise is recorded under when its receiver names no table or codeunit the graph
     /// can read (a RecordRef, a FieldRef, a codeunit id that is not a literal object reference): every
     /// entry point of that name answers it.</summary>
-    internal static string WildcardKey(string entryPoint) => ProcKey(AnyObject, entryPoint);
+    private static string WildcardKey(string entryPoint) => ProcKey(AnyObject, entryPoint);
 
     /// <summary>The wildcard key for <paramref name="key"/>, when it is an entry point's key.</summary>
     private static string? WildcardOf(string key)
