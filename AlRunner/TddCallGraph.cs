@@ -13,8 +13,9 @@ namespace AlRunner;
 /// [Test] to each handler its [HandlerFunctions] names, and from an event publisher declared in the
 /// compile to each [EventSubscriber] naming it (#5161). A publisher the compile does not declare as
 /// a procedure (a table trigger event, an event of a precompiled object) adds no edge. Calls that
-/// do not bind (the missing member itself, a precompiled dependency, a codeunit run by id) add
-/// no edge. Over-approximates execution — a branch that never runs still counts — which keeps
+/// do not bind (the missing member itself, a codeunit run by id) add no edge, and a call to a
+/// procedure another compile declares adds none inside this graph: it is kept as an external call,
+/// which <see cref="ReachThroughDependencies"/> follows into the bundles compiled before this one. Over-approximates execution — a branch that never runs still counts — which keeps
 /// the annotation a statement about what the test's code references.
 /// </summary>
 internal sealed class TddCallGraph

@@ -899,8 +899,8 @@ public sealed class DependencyLoader
         // #5243: --tdd generated a member into ANOTHER source bundle (this compile's, or an earlier
         // one's) and that bundle is not recompiled yet, so this compile bound against its old
         // symbols. A dependency that lost objects to the missing member is not a verdict, and
-        // nothing of it may reach the compiled-deps cache below: its key does not name the bundle
-        // the member went into, so the re-run would be served the stale assembly.
+        // nothing of it may reach the compiled-deps cache below: its key (ComputeSourceDependencyCacheKeyCore)
+        // does not name the bundle the member went into, so a re-run could be served the stale assembly.
         if ((emitted.Count == 0 || emitOutput.ExcludedObjects.Count > 0)
             && BcCompiler.IsTddMode() && TddCrossBundle.HasPendingRecompile())
             throw new DependencyLoadException(m.Publisher, m.Name, m.Version.ToString(),
