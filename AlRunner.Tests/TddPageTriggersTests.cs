@@ -149,8 +149,8 @@ public sealed class TddPageTriggersTests : IClassFixture<TddPageTriggersRun>
 
     /// <summary>
     /// A page opened by the code under test (Page.RunModal of a named page, Run on a Page variable) runs every
-    /// trigger of the page, whatever the handler does; OK on a modal page and Edit on a list page are Invokes of
-    /// a built-in action, which close the page and open a page the call cannot name.
+    /// trigger of the page, whatever the handler does; the built-in actions a TestPage returns (OK on a modal page) start
+    /// every trigger of that page when called, and Edit on a list page opens a page the call cannot name.
     /// </summary>
     [SkippableFact]
     public void PageRunAndBuiltInActions_StartThePagesTriggers()

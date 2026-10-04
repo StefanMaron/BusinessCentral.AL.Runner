@@ -138,6 +138,9 @@ public sealed class TddCallGraphPageKeyTests
         foreach (var reader in new[] { "Caption", "Editable", "GetField", "GetValidationError", "IsExpanded", "ValidationErrorCount", "Trap" })
             Assert.Empty(TddCallGraph.TestPageMethodTriggers(reader));
         Assert.Equal(AllTriggers, TddCallGraph.TestPageMethodTriggers("SomethingABcLaterAdds"));
+        // The built-in actions a TestPage returns are not in the list: calling one starts every trigger of its page.
+        foreach (var builtIn in new[] { "OK", "Cancel", "Yes", "No", "Edit", "View" })
+            Assert.Equal(AllTriggers, TddCallGraph.TestPageMethodTriggers(builtIn));
     }
 
     private static void AssertCall(string[] control, string[] page, bool everyPage, string name, bool typesValue)

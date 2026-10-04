@@ -417,9 +417,10 @@ internal static partial class ProgramSupport
         w.WriteLine("  the OnValidate that control has on its page (its own, not another control's) and the");
         w.WriteLine("  save; its Lookup also its OnLookup and, because it opens a lookup page the call cannot");
         w.WriteLine("  name, every page's triggers; Drilldown and AssistEdit their own trigger; Invoke on an");
-        w.WriteLine("  action its OnAction, that action's and no other's. Invoke of a built-in action counts");
-        w.WriteLine("  OK, Cancel, Yes and No as closing the page, Edit and View as opening a page it cannot");
-        w.WriteLine("  name (every page). Page code that calls CurrPage.Update, SaveRecord or Close starts the");
+        w.WriteLine("  action its OnAction, that action's and no other's. The built-in actions a TestPage");
+        w.WriteLine("  returns (OK, Cancel, Yes, No, Edit, View) start every trigger of the page when called,");
+        w.WriteLine("  and Invoke of Edit or View also opens a page it cannot name (every page). Page code that");
+        w.WriteLine("  calls CurrPage.Update, SaveRecord or Close starts the");
         w.WriteLine("  row, save or close triggers of its page. Page.Run and Page.RunModal of a named page, and");
         w.WriteLine("  Run or RunModal on a Page variable, start every trigger of that page (a handler that");
         w.WriteLine("  replaces the page counts anyway), and of every page when it is named by an id or an");

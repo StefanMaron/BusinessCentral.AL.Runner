@@ -321,22 +321,17 @@ internal sealed partial class TddCallGraph
         return true;
     }
 
-    /// <summary>Invoke on a built-in action a TestPage returns (<c>P.OK().Invoke()</c>): OK, Cancel, Yes and No close
-    /// the page, so they start its close triggers and the save of the row; Edit and View open a card page the
-    /// graph cannot name, so they count for every page.</summary>
+    /// <summary>Invoke on the Edit or View action a TestPage returns (<c>L.Edit().Invoke()</c>): it opens a card page
+    /// the graph cannot name, so every page counts. The other built-in actions (OK, Cancel, Yes, No) are methods the
+    /// list of TestPage methods does not know, so calling one already starts every trigger of that page.</summary>
     private bool AddBuiltInActionInvoke(NavCA.SemanticModel model, NavSyntax.MemberAccessExpressionSyntax invoke, Node caller)
     {
         if (invoke.Expression is not NavSyntax.InvocationExpressionSyntax { Expression: NavSyntax.MemberAccessExpressionSyntax builtIn }
-            || TypeOf(model.GetSymbolInfo(builtIn.Expression).Symbol) is not { NavTypeKind: NavCA.NavTypeKind.TestPage or NavCA.NavTypeKind.TestPart } pageType)
+            || TypeOf(model.GetSymbolInfo(builtIn.Expression).Symbol) is not { NavTypeKind: NavCA.NavTypeKind.TestPage or NavCA.NavTypeKind.TestPart })
             return false;
         var action = Name(builtIn.Name as NavSyntax.IdentifierNameSyntax);
-        if (action.Equals("Edit", StringComparison.OrdinalIgnoreCase) || action.Equals("View", StringComparison.OrdinalIgnoreCase))
-        {
-            RaisePage(caller, null, AllOps);
-            return true;
-        }
-        var page = pageType.NavTypeKind == NavCA.NavTypeKind.TestPart ? PageOfTestPart(pageType) : TestPageTarget(pageType);
-        AddTestPagePageOperation(page, "Close", caller);
+        if (!action.Equals("Edit", StringComparison.OrdinalIgnoreCase) && !action.Equals("View", StringComparison.OrdinalIgnoreCase)) return false;
+        RaisePage(caller, null, AllOps);
         return true;
     }
 }
