@@ -22,9 +22,9 @@ load it and each runs only the test codeunits it claims.
 - **Not shared** with `--count-baseline` (each worker would compare its fraction of the bundle
   against the whole bundle's count) or `--expectations-require-match` (each worker discovers only
   the codeunits it claimed, so every other entry would read as unmatched). The plan line says so.
-- **One bundle** is fanned out only when it is shared, and not when the run also passes `--out`,
-  `--output-json`, `--count-out` or `--coverage`: a fan-out writes each worker's own `--out` /
-  `--output-json` and refuses the other two, and a single bundle never used to be affected.
+- **One bundle** is fanned out only when it is shared, and not when the run also passes `--count-out` or
+  `--coverage`: a fan-out refuses both, and a single bundle never used to be affected. `--out` and
+  `--output-json` do not keep it in one process: the parent writes them (§ Reports).
 
 ## How the claim works
 
@@ -382,6 +382,36 @@ Up to 6 workers the order is within 0.3% of the best; at 12 it leaves 35% on the
 slowest codeunit (54 tests) is claimed late. A recorded per-codeunit duration is not kept anywhere
 (#5235).
 
+## Reports
+
+The caller's `--out`, `--output-json` and `--output-junit` describe the run, so the PARENT writes each of
+them (#5129); a worker never writes the path the caller named.
+
+- `--output-junit`: each worker writes a JUnit file of its own and the parent concatenates the suites
+  under one `testsuites` (`JUnitReport.WriteMergedJUnit`, in shard order).
+- `--out` and `--output-json`: a worker is given `AL_RUNNER_JOBS_SHARD_RESULTS` and writes its whole
+  results there, in the format a watchdog resume carries between attempts (`ResumeCarry`). The parent reads
+  the files, folds them with the merge a resume uses for its attempts (`ResumeCarry.MergeAttempts`, so a
+  bundle several workers share is one bucket holding the tests each claimed, and a suite error every worker
+  found is listed once), orders the buckets as the caller named the bundles, and calls the writers a
+  single-process run calls. The workers are run without `--out` and `--output-json`; a worker still prints
+  its FAILURE CLASSIFICATION block when `--out` was named, and its output is text, so the parent's
+  `NOT RUN` / `PARTIAL` lines read it as for any other run. `--output-json`'s document is the only thing
+  on stdout, and everything else, the workers' output included, goes to stderr.
+- A worker that handed back no readable results (killed, crashed before its output block) is named on
+  stderr, each bundle it held is listed as failed to execute in both reports, with how the worker ended,
+  and the run exits at least 2: the report is short, which is a statement about the report and not about
+  the AL. A report the parent cannot write raises a run that would have exited 0 to 2, as in a single
+  process (`JobsReports.Escalate`).
+- `--no-strict-exit` is applied by the parent, to the run's own code: a worker forced to exit 0 hid
+  its verdict, so the aggregate said `Result: PASSED` over failing tests and the document's `exitCode` read
+  0. The document's `exitCode` is the run's own code, as in a single process.
+- Not forwarded as a report: `--count-out` and `--coverage` are refused under a fan-out (#3966, #3675);
+  `--dump-csharp DIR` is per bundle, written by the worker that compiles it.
+
+Tests: `JobsReportsEndToEndTests` (a two-bundle run, a shared bundle, a worker that resumes, `--tdd`,
+`--no-strict-exit`, each compared with the same folders in one process) and `JobsReportsMergeTests`.
+
 ## What it does not do yet
 
 - The wall time of the whole surface (all 33 buckets) under `--jobs` was not measured: #5240.
@@ -389,5 +419,3 @@ slowest codeunit (54 tests) is claimed late. A recorded per-codeunit duration is
   (#5239).
 - Memory is not modelled for a cold cache, for abort-resume chains or for workers holding several
   bundles (§ Memory), and the reading exists on Linux only.
-- The caller's `--output-junit` is merged from the shard files; `--out` is still written by every
-  worker to the one path (#5129).

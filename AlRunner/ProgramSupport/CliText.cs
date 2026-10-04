@@ -646,11 +646,13 @@ internal static partial class ProgramSupport
         w.WriteLine("                          served (largest first); this includes a single heavy bundle.");
         w.WriteLine("                          Not with --isolation disabled, --count-baseline or");
         w.WriteLine("                          --expectations-require-match, and a single bundle that also");
-        w.WriteLine("                          passes --out, --output-json, --count-out or --coverage stays");
-        w.WriteLine("                          in one process. Every worker of a shared bundle pays a base");
-        w.WriteLine("                          of about 1.4 GB again, so free memory limits how many share");
-        w.WriteLine("                          one (Linux only; AL_RUNNER_JOBS_FREE_MEMORY_MB, a positive");
-        w.WriteLine("                          number of MB, overrides the reading).");
+        w.WriteLine("                          passes --count-out or --coverage stays in one process.");
+        w.WriteLine("                          --out, --output-json and --output-junit are written once, by");
+        w.WriteLine("                          this process, from every worker's results. Every worker of a");
+        w.WriteLine("                          shared bundle pays a base of about 1.4 GB again, so free");
+        w.WriteLine("                          memory limits how many share one (Linux only;");
+        w.WriteLine("                          AL_RUNNER_JOBS_FREE_MEMORY_MB, a positive number of MB,");
+        w.WriteLine("                          overrides the reading).");
         w.WriteLine("                          A bundle is shared only when each worker gets at least");
         w.WriteLine("                          AL_RUNNER_JOBS_SPLIT_MIN_FILES AL files of it (default 100;");
         w.WriteLine("                          20 pays for slow tests, e.g. --test-data BaseApp buckets).");

@@ -207,6 +207,40 @@ public sealed class JobsReportsEndToEndTests
         Assert.DoesNotContain("Result: PASSED", run.Stderr);
     }
 
+    // ── controls: nothing to fan out, nothing to write ──────────────────────────────────────
+
+    /// <summary>One light bundle is not fanned out, so `--jobs 2` leaves the run in this process exactly as before:
+    /// the reports are the single-process writers', each with the bundle's own two tests and one failure.</summary>
+    [SkippableFact]
+    public void OneLightBundleUnderJobs_IsNotFannedOut_AndItsReportsAreTheSingleProcessOnes()
+    {
+        TestArtifacts.SkipIfMissing();
+        var run = Go("jobs-one-bundle", "--jobs 2", reports: true, A);
+
+        Assert.Equal(1, run.Exit);
+        Assert.DoesNotContain("worker process(es)", run.Stdout + run.Stderr);
+        Assert.Equal(new[] { "Codeunit65760.A_Passes", "Codeunit65760.A_FailsOnPurpose" }, TestNames(run));
+        Assert.Single(Failures(run));
+        Assert.Equal(2, JUnitCases(run).Count);
+        Assert.DoesNotContain("merged from", run.Stdout + run.Stderr);
+    }
+
+    /// <summary>A path the run cannot write is refused before any worker starts, as for a single process (#2403): exit 2,
+    /// the flag named, no plan line. The parent's own late write cannot be the first to find out.</summary>
+    [SkippableFact]
+    public void AnUnusableOutPath_IsRefusedBeforeTheFanOut()
+    {
+        TestArtifacts.SkipIfMissing();
+        var blocker = Path.Combine(Scratch, "blocker");
+        File.WriteAllText(blocker, "a file where --out needs a directory");
+        var run = Go("jobs-unusable-out", $"--jobs 2 --out \"{Path.Combine(blocker, "results.json")}\"", reports: false, A, B);
+
+        Assert.Equal(2, run.Exit);
+        Assert.Contains("--out '", run.Stdout + run.Stderr);
+        Assert.Contains("is not a usable output path", run.Stdout + run.Stderr);
+        Assert.DoesNotContain("worker process(es)", run.Stdout + run.Stderr);
+    }
+
     // ── a bundle several workers share ──────────────────────────────────────────────────────
 
     /// <summary>One bundle used to stay in one process whenever it passed --out or --output-json, because each worker
