@@ -133,6 +133,9 @@ public sealed class JobsReportsEndToEndTests
         Assert.Equal(Failures(Plain.Value), Failures(jobs));
         Assert.Contains("Classification -> ", jobs.Stderr);
         Assert.Contains("(merged from 2 worker(s))", jobs.Stderr);
+        // no worker wrote the path itself (its line is "Classification → <path>"): the parent's write comes last
+        // and would hide it, so the file alone cannot show a worker that still did
+        Assert.DoesNotContain("Classification → ", jobs.Stderr);
     }
 
     // ── --output-json ───────────────────────────────────────────────────────────────────────
