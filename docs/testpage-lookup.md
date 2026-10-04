@@ -221,8 +221,9 @@ FAIL  Lookup_RelationToTableWithNoLookupPage_HandlerBound_FailsWithoutRunningIt 
 
 So `asserterror` does not catch it: on BC a test that reaches this shape fails, whatever it
 wraps the call in. No corpus test can assert that, so the PR was withdrawn as a measurement.
-The runner cannot reproduce it either — its `asserterror` catches a raw `NullReferenceException`
-(probed on this branch) — so a named refusal is the honest answer; the runner-extras
+The runner's `asserterror` matches that since #4976 (a raw `NullReferenceException` escapes it, see
+[`asserterror` and raw CLR exceptions](limitations.md#asserterror-and-raw-clr-exceptions)), but the
+runner still does not imitate the crash: a named refusal is the honest answer, and the runner-extras
 `testpage-lookup-tablerelation-oos` bundle pins it.
 
 Which page BC *intended* remains unmeasurable, for the reason above, and nothing here needs it.

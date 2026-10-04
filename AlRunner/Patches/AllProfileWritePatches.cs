@@ -324,13 +324,15 @@ public static class AllProfileWritePatches
     private static Exception NavCSideError(string format, params object?[] args)
     {
         var message = string.Format(System.Globalization.CultureInfo.CurrentCulture, format, args);
-        _navCSideExceptionType ??= typeof(NavRecord).Assembly.GetType(
-            "Microsoft.Dynamics.Nav.Runtime.NavCSideException");
+        // ResolveNavCSideExceptionType, not Ncl.GetType(Runtime name): the type is defined in Types and
+        // forwarded, and the Ncl lookup answers null in some hosts. The old untyped fallback here was
+        // an InvalidOperationException that asserterror swallowed; since #4976 it would escape, so an
+        // unresolvable type refuses by name instead (BcShapeGapException, never an untyped stand-in).
+        _navCSideExceptionType ??= ALDatabasePatches.ResolveNavCSideExceptionType();
         if (_navCSideExceptionType != null
             && Activator.CreateInstance(_navCSideExceptionType, message) is Exception typed)
             return typed;
-        // Never swallow the refusal: an untyped exception still stops the write and still
-        // carries BC's message, which is what AL observes.
-        return new InvalidOperationException(message);
+        throw RecordPatches.AllProfileShapeGap(
+            "BC's NavCSideException type could not be resolved, so the refusal BC raises here cannot be built");
     }
 }

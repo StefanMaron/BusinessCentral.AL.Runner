@@ -229,7 +229,7 @@ public sealed class AssertErrorSymbolReadCatchabilityTests : IDisposable
         // Returning normally IS the pass signal. Without this row, "the seam stopped catching
         // anything at all" would satisfy every tear-through row above.
         BcRuntime.NavMethodScope_AssertError(
-            null!, () => throw new InvalidOperationException("Bug3241 ordinary AL error"));
+            null!, () => throw new Microsoft.Dynamics.Nav.Types.Exceptions.NavALException("Bug3241 ordinary AL error"));
     }
 
     [Fact]

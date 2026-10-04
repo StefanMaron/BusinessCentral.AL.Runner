@@ -259,15 +259,16 @@ public static partial class RecordPatches
         var format = InvalidFeatureKeyFieldMessage();
         var message = string.Format(System.Globalization.CultureInfo.CurrentCulture, format, fieldCaption);
 
-        var navCSideExceptionType = typeof(NavRecord).Assembly.GetType(
-            "Microsoft.Dynamics.Nav.Runtime.NavCSideException");
+        // ResolveNavCSideExceptionType, not Ncl.GetType(Runtime name): the type is defined in Types and
+        // forwarded, and the Ncl lookup answers null in some hosts (see that method). The old untyped
+        // InvalidOperationException fallback would escape asserterror since #4976, so refuse by name.
+        var navCSideExceptionType = ALDatabasePatches.ResolveNavCSideExceptionType();
         if (navCSideExceptionType != null
             && Activator.CreateInstance(navCSideExceptionType, message) is Exception typed)
             return typed;
 
-        // Never swallow the refusal: an untyped exception still stops the write and still
-        // carries BC's message, which is what AL's asserterror observes.
-        return new InvalidOperationException(message);
+        throw FeatureKeyModifyShapeGap(
+            "BC's NavCSideException type could not be resolved, so the refusal BC raises here cannot be built");
     }
 
     /// <summary>

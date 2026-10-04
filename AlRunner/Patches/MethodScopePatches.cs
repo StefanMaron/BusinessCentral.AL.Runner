@@ -570,8 +570,9 @@ public static partial class BcRuntime
     /// <summary>
     /// Replacement for NavMethodScope.AssertError(Action body). The real method calls
     /// session.Rollback() in its catch path, which NREs on the skeleton session. We invert the
-    /// pass/fail semantics in headless mode: if the body throws, the asserterror succeeded;
-    /// if the body completes normally, throw NavNCLAssertErrorException so the test driver
+    /// pass/fail semantics in headless mode: if the body throws an error real BC's asserterror
+    /// catches (<see cref="IsCatchableByAssertError"/>), the asserterror succeeded; any other
+    /// exception escapes; if the body completes normally, throw NavNCLAssertErrorException so the test driver
     /// sees an asserterror failure.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -638,6 +639,15 @@ public static partial class BcRuntime
             // populates), fall back to the original exception unchanged, matching this
             // method's prior behaviour.
             var effectiveEx = TryRemapToALException(self, ex) ?? ex;
+            // The catch BC's asserterror does NOT have: a raw CLR exception escapes (#4976).
+            // Citation: NavMethodScope.AssertError after the remap above is `catch (NavBaseException)`
+            // plus an InnerException walk for one, else `throw` — Ncl 27.5.46862.53931 and
+            // 28.4.53241.54346, same decompiled body; measured on the service tier, a NullReference-
+            // Exception under asserterror fails the test with "Unexpected CLR exception thrown"
+            // (corpus PR #505 measurement, Windows nightly run 36603989739). Swallowing it here made
+            // the asserterror PASS where BC is red. Trap: the remap must run first, or the four CLR
+            // types BC turns into AL errors would escape too.
+            if (!IsCatchableByAssertError(ex, effectiveEx)) throw;
             // Store the (possibly remapped) exception in skeleton session.lastException so
             // that ALSystemErrorHandling.get_ALGetLastErrorText (and the patched override
             // in MiscPatches) can return its message — Assert.ExpectedError / Library
@@ -654,6 +664,30 @@ public static partial class BcRuntime
             return; /* asserterror passed: body threw something */
         }
         throw new Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLAssertErrorException();
+    }
+
+    /// <summary>
+    /// True when real BC's asserterror would catch the exception: it is, or the real
+    /// RemapToALExceptionAndThrow turned it into, a NavBaseException, or a NavBaseException sits on
+    /// its InnerException chain. The four CLR types BC remaps are listed too, so a remap that
+    /// failed reflectively (null scope) cannot make an exception BC catches escape. A runner
+    /// out-of-scope signal stays catchable, typed or as the "out-of-scope: " message convention
+    /// (<see cref="AlRunner.Infrastructure.OutOfScopeMessage.FromException"/>, which is how the
+    /// refusals raised inside BC code arrive as an InvalidOperationException): that is the
+    /// deliberate, pinned contract of #2871 (AssertErrorOutOfScopeCatchabilityTests), not a BC behaviour.
+    /// </summary>
+    private static bool IsCatchableByAssertError(Exception raw, Exception remapped)
+    {
+        if (raw is DivideByZeroException or IndexOutOfRangeException or FormatException or OverflowException)
+            return true;
+        const int MaxDepth = 16;
+        var e = remapped;
+        for (var d = 0; e != null && d < MaxDepth; d++, e = e.InnerException)
+        {
+            if (e is Microsoft.Dynamics.Nav.Types.Exceptions.NavBaseException)
+                return true;
+        }
+        return AlRunner.Infrastructure.OutOfScopeMessage.FromException(remapped) != null;
     }
 
     private static System.Reflection.MethodInfo? _mRemapToALExceptionAndThrow;

@@ -13,9 +13,10 @@
 // It is NOT uncatchable from AL, and an earlier version of this comment claimed it was.
 // AL `asserterror` DOES catch it. The runner's asserterror replacement —
 // BcRuntime.NavMethodScope_AssertError in AlRunner/Patches/MethodScopePatches.cs, bound
-// over NavMethodScope::AssertError/1 in NclCecilRewrite.Runtime.cs — is an unfiltered
-// `catch (Exception)`, so a refusal raised inside an `asserterror` block makes that
-// asserterror PASS. Runner-extras suites rely on this deliberately:
+// over NavMethodScope::AssertError/1 in NclCecilRewrite.Runtime.cs — catches only what real
+// BC's asserterror catches (a NavBaseException, #4976) plus this type by deliberate exception,
+// so a refusal raised inside an `asserterror` block makes that asserterror PASS.
+// Runner-extras suites rely on this deliberately:
 // tests/runner-extras/table-connection-live-oos and tests/runner-extras/
 // date-virtual-table-window both do `asserterror <oos surface>` followed by
 // `Assert.ExpectedError('out-of-scope: ...')`. Do not write a new refusal on the

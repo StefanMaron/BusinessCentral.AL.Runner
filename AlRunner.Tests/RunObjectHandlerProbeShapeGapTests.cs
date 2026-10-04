@@ -68,19 +68,20 @@ public sealed class RunObjectHandlerProbeShapeGapTests
 
     // ══ 1. The behavioural half — why the type is not interchangeable here ════════════════
 
-    // An InvalidOperationException raised on AL's call stack is CAUGHT by the asserterror
-    // replacement, and catching is how an asserterror reports success. So a BC build that
-    // moved HasTrap would turn `asserterror InvokeTheAction()` from a FAILURE (real BC runs
-    // the action and returns) into a PASS. Returning normally from the call below IS that
-    // inverted pass — asserted here so the claim is measured, not argued.
+    // Since #4976 the asserterror replacement catches only what real BC catches, and a raw
+    // InvalidOperationException is not that, so it tears through. Before it, the catch
+    // swallowed it and a BC build that moved HasTrap would have turned
+    // `asserterror InvokeTheAction()` from a FAILURE (real BC runs the action and returns)
+    // into a PASS; the dedicated type below stays the contract, this arm pins the net.
     [Fact]
-    public void AssertError_SwallowsAnInvalidOperationException_SoAGuardRaisingOneInvertsTheResult()
+    public void AssertError_TearsThroughARawInvalidOperationException_TooSoAGuardRaisingOneCannotInvertTheResult()
     {
-        var ex = Record.Exception(() => BcRuntime.NavMethodScope_AssertError(
-            null!, () => throw new InvalidOperationException(
-                "NavTestExecution.HasTrap(int) not found — Ncl shape changed; do not commit")));
+        var raised = new InvalidOperationException(
+            "NavTestExecution.HasTrap(int) not found — Ncl shape changed; do not commit");
 
-        Assert.Null(ex);   // no throw == the asserterror PASSED on a build where BC's shape moved
+        var ex = Record.Exception(() => BcRuntime.NavMethodScope_AssertError(null!, () => throw raised));
+
+        Assert.Same(raised, ex);
     }
 
     // The same refusal, raised as the type these guards now use, tears through instead — so
