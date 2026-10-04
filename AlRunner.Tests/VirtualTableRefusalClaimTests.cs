@@ -508,7 +508,13 @@ public sealed class VirtualTableRefusalClaimTests
         // own session, and the one runner-side precondition left (a PermissionSetupMonitor on the
         // skeleton database) refuses with a BcShapeGapException, which this count excludes.
         // 88 was READ OUT of this test's own failure message ("Expected: 89, Actual: 88").
-        Assert.Equal(88, total);
+        //
+        // 88 -> 90 (#4976): two REAL refusal sites, one each in AllProfileWritePatches.NavCSideError
+        // and RecordPatches.FeatureKeyVirtualTable.BuildFeatureKeyReadOnlyError — BC's NavCSideException
+        // type could not be resolved. Both used to fall back to an InvalidOperationException, which
+        // asserterror stopped swallowing in the same change. 90 was READ OUT of this test's own
+        // failure message ("Expected: 88, Actual: 90").
+        Assert.Equal(90, total);
     }
 
     // A refusal SITE is a *call* to a `*ShapeGap(` factory, not only a `throw` of one (#4058).

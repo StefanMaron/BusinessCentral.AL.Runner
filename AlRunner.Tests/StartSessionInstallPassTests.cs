@@ -11,6 +11,7 @@
 
 using System;
 using AlRunner;
+using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
 using Xunit;
@@ -48,7 +49,7 @@ public sealed class StartSessionInstallPassTests
         var ex = Record.Exception(() => BcRuntime.AlRunnerStartSession(
             DataError.ThrowError, sessionId, NoSuchCodeunit, null, null));
 
-        Assert.IsType<InvalidOperationException>(ex);
+        Assert.IsType<RunnerOutOfScopeException>(ex);   // typed since #4976: a raw CLR exception escapes asserterror
         Assert.Contains($"codeunit {NoSuchCodeunit} is not present", ex!.Message, StringComparison.Ordinal);
     }
 
