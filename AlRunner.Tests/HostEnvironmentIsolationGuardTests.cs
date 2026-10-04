@@ -102,7 +102,6 @@ public sealed class HostEnvironmentIsolationGuardTests
     internal sealed record Verdict(
         IReadOnlyDictionary<Type, IReadOnlyList<string>> DirectMutators,
         IReadOnlyList<Type> ExemptInitializerTypes,
-        IReadOnlyList<string> Unreadable,
         int MethodsRead,
         IReadOnlyList<string> Violations);
 
@@ -137,7 +136,6 @@ public sealed class HostEnvironmentIsolationGuardTests
         var nodes = universe.Select(t => NodeOf(t, isTestClass)).ToHashSet();
         var direct = new Dictionary<Type, List<string>>();
         var exempt = new HashSet<Type>();
-        var unreadable = new List<string>();
         var edges = new Dictionary<Type, HashSet<Type>>();
         var methodsRead = 0;
 
@@ -158,62 +156,51 @@ public sealed class HostEnvironmentIsolationGuardTests
                 if (IsNativeSetter(method)) Mutates(node, $"{where} is a P/Invoke of a native environment setter");
 
                 var isInitializer = method.GetCustomAttributes(typeof(ModuleInitializerAttribute), false).Length > 0;
-                byte[]? il;
-                try { il = method.GetMethodBody()?.GetILAsByteArray(); }
-                catch (Exception e)
+
+                // A body this scan cannot read is a failure naming the method, never a skip: a
+                // type it silently passed over is a type it vouched for.
+                try
                 {
-                    unreadable.Add($"{where}: {e.GetType().Name}: {e.Message}");
-                    continue;
-                }
-                if (il is null) continue;
-                methodsRead++;
+                    var il = method.GetMethodBody()?.GetILAsByteArray();
+                    if (il is null) continue;
+                    methodsRead++;
 
-                IEnumerable<(OpCode Op, int Operand)> instructions;
-                try { instructions = decode(il).ToList(); }
-                catch (Exception e)
-                {
-                    unreadable.Add($"{where}: {e.GetType().Name}: {e.Message}");
-                    continue;
-                }
-
-                var typeArgs = type.IsGenericType ? type.GetGenericArguments() : null;
-                var methodArgs = method.IsGenericMethod ? method.GetGenericArguments() : null;
-                foreach (var (op, operand) in instructions)
-                {
-                    if (op.OperandType == OperandType.InlineString)
+                    var typeArgs = type.IsGenericType ? type.GetGenericArguments() : null;
+                    var methodArgs = method.IsGenericMethod ? method.GetGenericArguments() : null;
+                    foreach (var (op, operand) in decode(il).ToList())
                     {
-                        string? text = null;
-                        try { text = method.Module.ResolveString(operand); }
-                        catch (Exception e) { unreadable.Add($"{where}: string token: {e.Message}"); }
-                        if (text == SetEnvName) Mutates(node, $"{where} names the method as a string");
-                        continue;
-                    }
-                    if (op.OperandType != OperandType.InlineMethod && op.OperandType != OperandType.InlineTok)
-                        continue;
-
-                    MemberInfo? target;
-                    try { target = method.Module.ResolveMember(operand, typeArgs, methodArgs); }
-                    catch (Exception e)
-                    {
-                        unreadable.Add($"{where}: token 0x{operand:X}: {e.GetType().Name}: {e.Message}");
-                        continue;
-                    }
-                    if (target is not MethodBase called) continue;
-
-                    if (IsSetEnvironmentVariable(called) || IsNativeSetter(called))
-                    {
-                        if (isInitializer) exempt.Add(node);
-                        else Mutates(node, $"{where} calls {called.DeclaringType!.Name}.{called.Name}");
-                    }
-                    else if (called.DeclaringType is { } owner && owner.Assembly == type.Assembly)
-                    {
-                        var calleeNode = NodeOf(owner, isTestClass);
-                        if (calleeNode != node && nodes.Contains(calleeNode))
+                        if (op.OperandType == OperandType.InlineString)
                         {
-                            if (!edges.TryGetValue(node, out var set)) edges[node] = set = new HashSet<Type>();
-                            set.Add(calleeNode);
+                            if (method.Module.ResolveString(operand) == SetEnvName)
+                                Mutates(node, $"{where} names the method as a string");
+                            continue;
+                        }
+                        if (op.OperandType != OperandType.InlineMethod && op.OperandType != OperandType.InlineTok)
+                            continue;
+
+                        if (method.Module.ResolveMember(operand, typeArgs, methodArgs) is not MethodBase called)
+                            continue;
+
+                        if (IsSetEnvironmentVariable(called) || IsNativeSetter(called))
+                        {
+                            if (isInitializer) exempt.Add(node);
+                            else Mutates(node, $"{where} calls {called.DeclaringType!.Name}.{called.Name}");
+                        }
+                        else if (called.DeclaringType is { } owner && owner.Assembly == type.Assembly)
+                        {
+                            var calleeNode = NodeOf(owner, isTestClass);
+                            if (calleeNode != node && nodes.Contains(calleeNode))
+                            {
+                                if (!edges.TryGetValue(node, out var set)) edges[node] = set = new HashSet<Type>();
+                                set.Add(calleeNode);
+                            }
                         }
                     }
+                }
+                catch (Exception e)
+                {
+                    throw new InvalidOperationException(
+                        $"the host-environment scan cannot read {where}: {e.GetType().Name}: {e.Message}", e);
                 }
             }
         }
@@ -271,7 +258,7 @@ public sealed class HostEnvironmentIsolationGuardTests
 
         return new Verdict(
             direct.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<string>)kv.Value),
-            exempt.ToList(), unreadable, methodsRead, violations);
+            exempt.ToList(), methodsRead, violations);
     }
 
     // ── what xunit calls a test class, and what collection it runs in ─────────────────────────
@@ -324,9 +311,6 @@ public sealed class HostEnvironmentIsolationGuardTests
     {
         var verdict = AnalyzeRealAssembly();
 
-        Assert.True(verdict.Unreadable.Count == 0,
-            "the scan could not read part of the assembly, so it cannot vouch for it:\n" +
-            string.Join("\n", verdict.Unreadable));
         Assert.True(verdict.MethodsRead > 1000,
             $"only {verdict.MethodsRead} method bodies were read from the whole test assembly, " +
             "so an empty violation list means nothing");
@@ -372,6 +356,7 @@ public sealed class HostEnvironmentIsolationGuardTests
         typeof(HostEnvironmentGuardFixtures.LambdaSetter),
         typeof(HostEnvironmentGuardFixtures.AsyncSetter),
         typeof(HostEnvironmentGuardFixtures.MethodGroupSetter),
+        typeof(HostEnvironmentGuardFixtures.ExpressionSetter),
         typeof(HostEnvironmentGuardFixtures.ReflectionSetter),
         typeof(HostEnvironmentGuardFixtures.NativeSetter),
         typeof(HostEnvironmentGuardFixtures.MixedInitializerSetter),
@@ -383,7 +368,6 @@ public sealed class HostEnvironmentIsolationGuardTests
     {
         var verdict = AnalyzeFixtures(null, fixture);
 
-        Assert.Empty(verdict.Unreadable);
         var violation = Assert.Single(verdict.Violations);
         Assert.Contains(fixture.Name, violation);
         Assert.Contains("in no xunit collection", violation);
@@ -453,16 +437,16 @@ public sealed class HostEnvironmentIsolationGuardTests
     }
 
     [Fact]
-    public void ABodyThatCannotBeDecoded_IsReportedAsUnreadable_NotSkipped()
+    public void ABodyThatCannotBeDecoded_FailsTheScanNamingTheMethod_NotSkipped()
     {
         var fixture = typeof(HostEnvironmentGuardFixtures.LiteralSetter);
-        var verdict = Analyze(
-            WithNested(fixture), t => t == fixture, _ => null, NonParallelCollections(),
-            _ => throw new InvalidOperationException("synthetic decode failure"));
 
-        Assert.Contains(verdict.Unreadable, u => u.Contains("synthetic decode failure"));
-        // Nothing is claimed about a body that was not read; the sweep fails on any unreadable one.
-        Assert.Empty(verdict.DirectMutators);
+        var failure = Assert.Throws<InvalidOperationException>(() => Analyze(
+            WithNested(fixture), t => t == fixture, _ => null, NonParallelCollections(),
+            _ => throw new InvalidOperationException("synthetic decode failure")));
+
+        Assert.Contains("cannot read LiteralSetter.Run", failure.Message);
+        Assert.Contains("synthetic decode failure", failure.Message);
     }
 
     [Fact]

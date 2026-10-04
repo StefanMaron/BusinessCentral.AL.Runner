@@ -59,6 +59,12 @@ internal sealed class MethodGroupSetter
     internal Action<string, string?> Build() => Environment.SetEnvironmentVariable;
 }
 
+internal sealed class ExpressionSetter
+{
+    internal System.Linq.Expressions.Expression<Action<string, string?>> Build() =>
+        (name, value) => Environment.SetEnvironmentVariable(name, value);
+}
+
 internal sealed class ReflectionSetter
 {
     internal void Run(string name) =>
