@@ -18,10 +18,11 @@ internal sealed partial class TddCallGraph
     // The key a trigger no operation is known to start is raised under, by every page operation.
     private const string PageCode = "OnPageCode";
 
-    // What each kind of TestPage operation can start. Over-approximations, never under: a row move saves a row a
-    // SetValue made dirty, so it can run the page's own OnInsertRecord / OnModifyRecord (OnModifyRecord ran at
-    // Close in the probe, and the corpus shows the save at a move and at Close); OnNewRecord is only measured
-    // for the open of a new record and a New, and counts there only.
+    // What each kind of TestPage operation can start, each an over-approximation and never an under one: a row
+    // move, a New and a Close save the row a typed value made dirty, so they can run the page's own OnInsertRecord
+    // and OnModifyRecord (OnModifyRecord ran at Close in the probe, and the corpus shows the save at a move and at
+    // Close). The sets are asserted whole in TddCallGraphPageKeyTests: every test of the fixture opens its page
+    // first, so a name an open already starts cannot be pinned through a run.
     private static readonly string[] OpenOps =
         { "OnInit", "OnOpenPage", "OnFindRecord", "OnNextRecord", "OnAfterGetRecord", "OnAfterGetCurrRecord", "OnNewRecord" };
     private static readonly string[] MoveOps =
@@ -29,8 +30,8 @@ internal sealed partial class TddCallGraph
     private static readonly string[] NewRowOps =
         { "OnNewRecord", "OnAfterGetRecord", "OnAfterGetCurrRecord", "OnInsertRecord", "OnModifyRecord" };
     private static readonly string[] CloseOps = { "OnQueryClosePage", "OnClosePage", "OnInsertRecord", "OnModifyRecord" };
-    private static readonly string[] TypedOps = { "OnInsertRecord", "OnModifyRecord", "OnNewRecord" };
-    private static readonly string[] FocusOps = { "OnNewRecord", "OnInsertRecord", "OnAfterGetRecord", "OnAfterGetCurrRecord" };
+    private static readonly string[] TypedOps = { "OnInsertRecord", "OnModifyRecord" };
+    private static readonly string[] FocusOps = { "OnInsertRecord" };
     private static readonly string[] AllOps =
         {
             "OnInit", "OnOpenPage", "OnClosePage", "OnQueryClosePage", "OnNewRecord", "OnInsertRecord", "OnModifyRecord",
@@ -54,11 +55,10 @@ internal sealed partial class TddCallGraph
     private static readonly string[] ControlTriggers = { "OnValidate", "OnLookup", "OnDrillDown", "OnAssistEdit", "OnAction" };
     private const string UnknownControl = "@?";
 
-    // A TestPage method that runs no page code: the ones that read the page or return an action to Invoke later.
+    // A TestPage method that runs no page code: the ones that read the page or prepare a trap for one it opens.
     private static readonly HashSet<string> TestPageReaders = new(StringComparer.OrdinalIgnoreCase)
     {
         "Caption", "Editable", "GetField", "GetValidationError", "IsExpanded", "ValidationErrorCount", "Trap",
-        "OK", "Cancel", "Yes", "No", "Edit", "View",
     };
 
     private static readonly Dictionary<string, string[]> TestPageOperations = new(StringComparer.OrdinalIgnoreCase)
@@ -184,33 +184,31 @@ internal sealed partial class TddCallGraph
         return null;
     }
 
-    /// <summary>What a call on a control starts on its page, and on the table of its field. SetValue, Value with an
-    /// argument and an assignment type a value (the field's validate, and the row saved when the focus leaves it),
-    /// Lookup also validates the selected value (not measured; counted), Drilldown and AssistEdit run their own
-    /// trigger only, and Invoke on a field is any of its triggers (a probe saw it run none: counted, an
-    /// over-approximation).</summary>
+    /// <summary>What a call on a control starts on its page: SetValue, Value with an argument and an assignment type
+    /// a value (the field's validate, and the row saved when the focus leaves it); Lookup also starts its OnLookup and,
+    /// because it opens a lookup page the call cannot name, every page's triggers (a probe: a [ModalPageHandler] for
+    /// the related table's page saw its OnOpenPage run); Activate may insert a draft row; Drilldown and AssistEdit
+    /// start their own trigger; Invoke on a field is any of its triggers (a probe saw it run none: counted, an
+    /// over-approximation); every other member reads.</summary>
+    internal static (IReadOnlyList<string> Control, IReadOnlyList<string> Page, bool EveryPage) ControlCall(string name, bool typesValue)
+    {
+        if (name.Equals("Lookup", StringComparison.OrdinalIgnoreCase)) return (new[] { "OnLookup", "OnValidate" }, TypedOps, true);
+        if (typesValue) return (new[] { "OnValidate" }, TypedOps, false);
+        if (name.Equals("Activate", StringComparison.OrdinalIgnoreCase)) return (Array.Empty<string>(), FocusOps, false);
+        if (name.Equals("Drilldown", StringComparison.OrdinalIgnoreCase)) return (new[] { "OnDrillDown" }, Array.Empty<string>(), false);
+        if (name.Equals("AssistEdit", StringComparison.OrdinalIgnoreCase)) return (new[] { "OnAssistEdit" }, Array.Empty<string>(), false);
+        if (name.Equals("Invoke", StringComparison.OrdinalIgnoreCase))
+            return (new[] { "OnLookup", "OnDrillDown", "OnAssistEdit", "OnAction" }, Array.Empty<string>(), false);
+        return (Array.Empty<string>(), Array.Empty<string>(), false);
+    }
+
     private void AddControlPageOperation(NavCA.IControlSymbol control, string name, bool typesValue, Node caller)
     {
         var page = PageOfSymbol(control);
-        var field = control.Name;
-        if (typesValue || name.Equals("Lookup", StringComparison.OrdinalIgnoreCase))
-        {
-            // A lookup of a field with a table relation opens the related table's lookup page, which the graph cannot
-            // name: its triggers run too (probe: a [ModalPageHandler] for it saw the page's OnOpenPage run).
-            if (name.Equals("Lookup", StringComparison.OrdinalIgnoreCase))
-            {
-                RaiseControlTrigger(caller, page, field, "OnLookup");
-                RaisePage(caller, null, AllOps);
-            }
-            RaiseControlTrigger(caller, page, field, "OnValidate");
-            RaisePage(caller, page, TypedOps);
-        }
-        else if (name.Equals("Activate", StringComparison.OrdinalIgnoreCase)) RaisePage(caller, page, FocusOps);
-        else if (name.Equals("Drilldown", StringComparison.OrdinalIgnoreCase)) RaiseControlTrigger(caller, page, field, "OnDrillDown");
-        else if (name.Equals("AssistEdit", StringComparison.OrdinalIgnoreCase)) RaiseControlTrigger(caller, page, field, "OnAssistEdit");
-        else if (name.Equals("Invoke", StringComparison.OrdinalIgnoreCase))
-            foreach (var trigger in new[] { "OnLookup", "OnDrillDown", "OnAssistEdit", "OnAction" })
-                RaiseControlTrigger(caller, page, field, trigger);
+        var (controlTriggers, pageTriggers, everyPage) = ControlCall(name, typesValue);
+        foreach (var trigger in controlTriggers) RaiseControlTrigger(caller, page, control.Name, trigger);
+        if (pageTriggers.Count > 0) RaisePage(caller, page, pageTriggers);
+        if (everyPage) RaisePage(caller, null, AllOps);
     }
 
     /// <summary>Invoke on an action starts its OnAction, whatever else it does: a page opened by its
@@ -236,12 +234,17 @@ internal sealed partial class TddCallGraph
         return pages;
     }
 
-    /// <summary>What a TestPage (or TestPart) method starts on its page. A name the lists do not know starts
-    /// every trigger of the page: a method a later BC adds over-annotates and never misses.</summary>
+    /// <summary>The page triggers a TestPage (or TestPart) method starts: none for a reader, the set of its kind for a
+    /// known method, and every trigger of the page for a name this list does not know, so a method a later BC adds
+    /// over-annotates and never misses.</summary>
+    internal static IReadOnlyList<string> TestPageMethodTriggers(string method)
+        => TestPageReaders.Contains(method) ? Array.Empty<string>()
+            : TestPageOperations.TryGetValue(method, out var ops) ? ops : AllOps;
+
     private void AddTestPagePageOperation(NavCA.ITypeSymbol? page, string name, Node caller)
     {
-        if (TestPageReaders.Contains(name)) return;
-        var ops = TestPageOperations.TryGetValue(name, out var known) ? known : AllOps;
+        var ops = TestPageMethodTriggers(name);
+        if (ops.Count == 0) return;
         if (page == null)
         {
             RaisePage(caller, null, ops);
@@ -276,11 +279,17 @@ internal sealed partial class TddCallGraph
         if (mae.Expression is not NavSyntax.IdentifierNameSyntax receiver
             || !Name(receiver).Equals("CurrPage", StringComparison.OrdinalIgnoreCase)) return false;
         if (EnclosingPage(caller) is not { } page) return false;
-        if (name.Equals("Update", StringComparison.OrdinalIgnoreCase)) RaisePage(caller, page, UpdateOps);
-        else if (name.Equals("SaveRecord", StringComparison.OrdinalIgnoreCase)) RaisePage(caller, page, SaveOps);
-        else if (name.Equals("Close", StringComparison.OrdinalIgnoreCase)) RaisePage(caller, page, CloseOps);
+        var triggers = CurrentPageTriggers(name);
+        if (triggers.Count > 0) RaisePage(caller, page, triggers);
         return true;
     }
+
+    /// <summary>The page triggers a call on <c>CurrPage</c> starts: Update, SaveRecord and Close; the rest read.</summary>
+    internal static IReadOnlyList<string> CurrentPageTriggers(string name)
+        => name.Equals("Update", StringComparison.OrdinalIgnoreCase) ? UpdateOps
+            : name.Equals("SaveRecord", StringComparison.OrdinalIgnoreCase) ? SaveOps
+            : name.Equals("Close", StringComparison.OrdinalIgnoreCase) ? CloseOps
+            : Array.Empty<string>();
 
     /// <summary>Records <c>Page.Run</c> / <c>Page.RunModal</c> of a page named by <c>Page::"Name"</c>, and
     /// <c>Run</c> / <c>RunModal</c> on a Page variable: the page opens and closes in the request, so every one of

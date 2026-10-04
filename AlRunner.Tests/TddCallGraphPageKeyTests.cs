@@ -93,4 +93,84 @@ public sealed class TddCallGraphPageKeyTests
         Assert.True(Reaches(TddCallGraph.PageRaiseKeys(null, new[] { "OnOpenPage" }), TddCallGraph.TriggerKeys("P", "OnBackground", null)));
         Assert.False(Reaches(TddCallGraph.PageRaiseKeys("Q", new[] { "OnOpenPage" }), TddCallGraph.TriggerKeys("P", "OnOpenPage", null)));
     }
+
+    private static readonly string[] Open =
+        { "OnInit", "OnOpenPage", "OnFindRecord", "OnNextRecord", "OnAfterGetRecord", "OnAfterGetCurrRecord", "OnNewRecord" };
+    private static readonly string[] Move =
+        { "OnFindRecord", "OnNextRecord", "OnAfterGetRecord", "OnAfterGetCurrRecord", "OnInsertRecord", "OnModifyRecord" };
+    private static readonly string[] AllTriggers =
+        {
+            "OnInit", "OnOpenPage", "OnClosePage", "OnQueryClosePage", "OnNewRecord", "OnInsertRecord", "OnModifyRecord",
+            "OnDeleteRecord", "OnAfterGetRecord", "OnAfterGetCurrRecord", "OnFindRecord", "OnNextRecord",
+        };
+
+    /// <summary>What a TestPage method starts, whole: an open starts the open and row triggers, a move the row triggers and
+    /// the save of the row it leaves, a New a new row and that save, a Close the close triggers and that save; a reader
+    /// none; a method this list does not know every trigger (a later BC's method over-annotates and never misses).</summary>
+    [Theory]
+    [InlineData("OpenView")]
+    [InlineData("OpenEdit")]
+    [InlineData("OpenNew")]
+    public void TestPageMethodTriggers_AnOpenStartsTheOpenAndRowTriggers(string method)
+        => Assert.Equal(Open, TddCallGraph.TestPageMethodTriggers(method));
+
+    [Theory]
+    [InlineData("First")]
+    [InlineData("Last")]
+    [InlineData("Next")]
+    [InlineData("Prev")]
+    [InlineData("Previous")]
+    [InlineData("GoToKey")]
+    [InlineData("GoToRecord")]
+    [InlineData("FindFirstField")]
+    [InlineData("FindNextField")]
+    [InlineData("FindPreviousField")]
+    [InlineData("Expand")]
+    public void TestPageMethodTriggers_AMoveStartsTheRowTriggersAndTheSave(string method)
+        => Assert.Equal(Move, TddCallGraph.TestPageMethodTriggers(method));
+
+    [Fact]
+    public void TestPageMethodTriggers_NewCloseReadersAndUnknownMethods()
+    {
+        Assert.Equal(new[] { "OnNewRecord", "OnAfterGetRecord", "OnAfterGetCurrRecord", "OnInsertRecord", "OnModifyRecord" },
+            TddCallGraph.TestPageMethodTriggers("New"));
+        Assert.Equal(new[] { "OnQueryClosePage", "OnClosePage", "OnInsertRecord", "OnModifyRecord" }, TddCallGraph.TestPageMethodTriggers("Close"));
+        foreach (var reader in new[] { "Caption", "Editable", "GetField", "GetValidationError", "IsExpanded", "ValidationErrorCount", "Trap" })
+            Assert.Empty(TddCallGraph.TestPageMethodTriggers(reader));
+        Assert.Equal(AllTriggers, TddCallGraph.TestPageMethodTriggers("SomethingABcLaterAdds"));
+    }
+
+    private static void AssertCall(string[] control, string[] page, bool everyPage, string name, bool typesValue)
+    {
+        var call = TddCallGraph.ControlCall(name, typesValue);
+        Assert.Equal(control, call.Control);
+        Assert.Equal(page, call.Page);
+        Assert.Equal(everyPage, call.EveryPage);
+    }
+
+    [Fact]
+    public void ControlCall_NamesTheControlTriggersThePageTriggersAndWhetherEveryPageCounts()
+    {
+        var none = Array.Empty<string>();
+        var save = new[] { "OnInsertRecord", "OnModifyRecord" };
+        AssertCall(new[] { "OnValidate" }, save, false, "SetValue", true);
+        AssertCall(new[] { "OnValidate" }, save, false, "Value", true);
+        AssertCall(new[] { "OnLookup", "OnValidate" }, save, true, "Lookup", false);
+        AssertCall(none, new[] { "OnInsertRecord" }, false, "Activate", false);
+        AssertCall(new[] { "OnDrillDown" }, none, false, "Drilldown", false);
+        AssertCall(new[] { "OnAssistEdit" }, none, false, "AssistEdit", false);
+        AssertCall(new[] { "OnLookup", "OnDrillDown", "OnAssistEdit", "OnAction" }, none, false, "Invoke", false);
+        AssertCall(none, none, false, "AsInteger", false);
+        AssertCall(none, none, false, "Value", false);
+    }
+
+    /// <summary>What CurrPage starts in a page's code, whole.</summary>
+    [Fact]
+    public void CurrentPageTriggers_UpdateSaveAndCloseOnly()
+    {
+        Assert.Equal(new[] { "OnAfterGetRecord", "OnAfterGetCurrRecord", "OnInsertRecord", "OnModifyRecord" }, TddCallGraph.CurrentPageTriggers("Update"));
+        Assert.Equal(new[] { "OnInsertRecord", "OnModifyRecord" }, TddCallGraph.CurrentPageTriggers("SaveRecord"));
+        Assert.Equal(new[] { "OnQueryClosePage", "OnClosePage", "OnInsertRecord", "OnModifyRecord" }, TddCallGraph.CurrentPageTriggers("Close"));
+        Assert.Empty(TddCallGraph.CurrentPageTriggers("Caption"));
+    }
 }
