@@ -181,6 +181,21 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // UnmeasuredWeightSeconds, so its upper leg is rounded down (#2175, #5311).
             ["CodeCoverageLogSiblingSourceTests"] = 55,
             ["CodeCoverageLogServerRequestTests"] = 34,
+            // #5308: absent from this table; failed the weight step at 75.2s on PR #5312's run 37175132918 (both C# legs).
+            // CI 75.18s (BC 27.5) and 76.40s (BC 28.5) on PR #5312 run 37175132918, the lower leg rounded down (#5319).
+            ["TddLibTestPageTests"] = 75,
+            // Absent from this table. CI 51.76s (BC 27.5) and 52.50s (BC 28.5) on PR #5312 run 37175132918, the lower leg
+            // rounded down (#5319).
+            ["DapMultiTargetLineTests"] = 51,
+            // Absent from this table. CI 51.16s (BC 27.5) and 50.83s (BC 28.5) on PR #5312 run 37175132918, the lower leg
+            // rounded down (#5319).
+            ["ServerFloorBundleStateTests"] = 50,
+            // Absent from this table. CI 46.49s (BC 27.5) and 48.95s (BC 28.5) on PR #5312 run 37175132918, the lower leg
+            // rounded down (#5319).
+            ["DapLineBaseTests"] = 46,
+            // Absent from this table. CI 45.98s (BC 27.5) and 47.06s (BC 28.5) on PR #5312 run 37175132918, the lower leg
+            // rounded down (#5319).
+            ["SharedCliServerTests"] = 45,
             // Absent from this table. CI 55.6s (BC 27.5) and 57.0s (BC 28.5) on main run 37161245486, the lower leg
             // rounded down; 59.2s and 59.4s on main run 37150623105 (#5311).
             ["CoveragePackagedSiblingSourceTests"] = 55,
@@ -244,7 +259,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // #4851/#4859/#4888: each test spawns the runner cold, then warm on one cache. Absent from
             // this table on main run 36344474690: 66.5s (BC 28.5) and 68.2s (BC 27.5); the observed
             // maximum, rounded down.
-            ["AllObjPopulateCostTests"] = 68,
+            // Re-recorded: the value below was more than 25% under CI. CI 101.10s (BC 27.5) and 100.03s (BC 28.5) on PR
+            // #5312 run 37175132918, the lower leg rounded down (#5319).
+            ["AllObjPopulateCostTests"] = 100,
             // #4834/#4833: the dupX/dupY fixture, spawned cold, cold-then-warm and in server mode.
             // Main run 36344474690: 237.8s (BC 27.5) and 235.0s (BC 28.5), the heaviest collection
             // of the run, dispatched at t=517s/533s on the old 75; observed maximum, rounded down.
@@ -269,7 +286,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             ["ServerCancelTests"] = 285,
             // perf/boot-overhead: 37.8s measured on the same run; below the 60s freshness
             // threshold, listed so it is dispatched by measured cost, not by the fallback.
-            ["EventSubscriberScanEquivalenceTests"] = 37,
+            // Re-recorded: the value below was more than 25% under CI. CI 55.42s (BC 27.5) and 55.17s (BC 28.5) on PR
+            // #5312 run 37175132918, the lower leg rounded down (#5319).
+            ["EventSubscriberScanEquivalenceTests"] = 55,
             // #4273: four runner spawns (cold + warm coverage, --precompile, a Tier-1 run). CI 43.8s (BC 27.5) and 43.7s
             // (BC 28.5) on main run 37161245486, the lower leg rounded down (#5311).
             ["CoveragePackagedDependencyTests"] = 43,
@@ -334,7 +353,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // would satisfy the gate while still dispatching it near
             // UnmeasuredWeightSeconds, which is the single-threaded tail #1887 exists to
             // prevent.
-            ["BcVersionDefaultDocumentationTests"] = 62,
+            // Re-recorded: the value below was more than 25% under CI. CI 87.06s (BC 27.5) and 89.46s (BC 28.5) on PR
+            // #5312 run 37175132918, the lower leg rounded down (#5319).
+            ["BcVersionDefaultDocumentationTests"] = 87,
             // #2801/#3082: this PR's own new collection. Measured 60.1s on the BC 28.4 leg
             // of run 34028084404, where it was absent from this table and tripped
             // check-collection-weights.py; every other leg of that run stayed under 60s,
@@ -495,7 +516,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // single-threaded tail #1887 exists to prevent, which is the one thing the figure
             // must be right about. (It was the only collection on that run's stale list, which
             // is a different claim from being the most expensive one in the table.)
-            ["DeferredPlatformAppsWithholdTests"] = 135,
+            // Re-recorded: the value below was more than 25% under CI. CI 177.88s (BC 27.5) and 177.66s (BC 28.5) on PR
+            // #5312 run 37175132918, the lower leg rounded down (#5319).
+            ["DeferredPlatformAppsWithholdTests"] = 177,
             ["ProvisionExplicitModesTests"] = 80,
             // #1940/#1941/#1943: 4 tests, each spawning a real runner subprocess (two
             // single-bundle, two layered two-bundle dep compiles) — needed because
@@ -506,7 +529,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             ["TestPageDrillDownDispatchTests"] = 75,
             ["ServerTestIsolationTests"] = 69,
             ["ServerStreamingTests"] = 50,
-            ["ExpectationManifestWiringTests"] = 47,
+            // Re-recorded: the value below was more than 25% under CI. CI 72.79s (BC 27.5) and 74.24s (BC 28.5) on PR
+            // #5312 run 37175132918, the lower leg rounded down (#5319).
+            ["ExpectationManifestWiringTests"] = 72,
             ["LayeredCacheTests"] = 46,
             ["TestIsolationMethodAliasTests"] = 45,
             ["BatchAppIdentityTests"] = 42,
@@ -517,7 +542,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // 28.5) on main run 37161245486; the lower leg is within 5s of UnmeasuredWeightSeconds, so the upper leg
             // rounded down (#2175, #5311).
             ["ResumeThreeAttemptsTests"] = 33,
-            ["EmitExclusionLoudnessTests"] = 33,
+            // Re-recorded: the value below was more than 25% under CI. CI 67.62s (BC 27.5) and 67.78s (BC 28.5) on PR
+            // #5312 run 37175132918, the lower leg rounded down (#5319).
+            ["EmitExclusionLoudnessTests"] = 67,
             ["BundleSuiteErrorLoudnessTests"] = 32,
             ["BcVersionFloorSkipTests"] = 32,
             ["OutputFormatTests"] = 31,
