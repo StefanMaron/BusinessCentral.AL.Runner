@@ -2386,6 +2386,8 @@ int tddSyntheticFailedCount = 0;
 int tddPeerReportedCount = 0;
 // The claim files of dropped objects THIS process won: a --tdd re-run compiles the bundle again and must keep them.
 var tddOwnedDrops = new HashSet<string>(StringComparer.Ordinal);
+// #5326: the claims on test codeunits this process made, which --tdd's re-run gives back when it discards the pass.
+var unitClaimLedger = new AlRunner.Infrastructure.UnitClaimLedger();
 // --tdd: objects dropped from a compile this run (TDD-EXCLUDED) that declare no [Test]. They add no
 // FAILED test above, so a closing line that read only tddSyntheticFailedCount said nothing was missing.
 int tddExcludedObjectCount = 0;
@@ -4485,7 +4487,7 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
         void RunLoadedApps()
         {
         // Per bundle, and here rather than above because a deferred run (#4931) comes back later.
-        executor.UnitClaim = AlRunner.Infrastructure.UnitClaimQueue.ForBundle(bundleAbs);
+        executor.UnitClaim = AlRunner.Infrastructure.UnitClaimQueue.ForBundle(bundleAbs, unitClaimLedger);
         // Every app's assembly is now in the AppDomain, so this single walk resolves
         // every table's Record CLR type in one pass — including tables belonging to
         // apps that loaded LATER than the app that first registered their NCLMetaTable
@@ -4565,7 +4567,7 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
     }
     else
     {
-        executor.UnitClaim = AlRunner.Infrastructure.UnitClaimQueue.ForBundle(bundleAbs);
+        executor.UnitClaim = AlRunner.Infrastructure.UnitClaimQueue.ForBundle(bundleAbs, unitClaimLedger);
         int si = 0;
         foreach (var suite in suites)
         {
@@ -4833,6 +4835,12 @@ if (tddMode && TddCrossBundle.TakePendingRecompile() && tddRecompileReruns < Tdd
     Console.Error.WriteLine(
         "--tdd: generated member(s) into another bundle of this run — recompiling it and " +
         "compiling the bundles that depend on it again.");
+    // #5326: this pass's results are thrown away, so the test codeunits it ran are unreported: free their claims.
+    var releasedClaims = unitClaimLedger.Release();
+    if (releasedClaims > 0)
+        Console.Error.WriteLine(
+            $"--tdd: gave back {releasedClaims} test codeunit claim(s) this worker made in the discarded pass; " +
+            "the re-run claims and reports them again.");
     tddRecompileRerun = true;
     continue;
 }
