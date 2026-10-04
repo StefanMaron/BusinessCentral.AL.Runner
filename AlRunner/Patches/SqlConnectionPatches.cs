@@ -37,10 +37,12 @@ public static class SqlConnectionPatches
     ///
     /// <para>Observably equivalent to what it replaces: the two conditions tested are exactly the two
     /// dereferences that open BC's body (<c>get_DatabaseServer</c>, then
-    /// <c>get_SqlConnectionProvider</c>, both read from the same IL in 27.5 and 28.5 Ncl), so it fires
-    /// only where BC would already have thrown a NullReferenceException — it changes the exception, never
-    /// an outcome. A database that does have a provider is untouched. Measured over the corpus and
-    /// runner-extras in the PR for #5190.</para>
+    /// <c>get_SqlConnectionProvider</c>), so it fires only where BC would already have thrown a
+    /// NullReferenceException — it changes the exception, never an outcome. A database that does have a
+    /// provider is untouched. Citation: that IL hashes identically in every Ncl build cached on the
+    /// measuring box (27.0 through 28.5), and the corpus and runner-extras change no result (PR for
+    /// #5190). Trap: re-check both if a BC build moves <c>TryOpenConnection</c>; the Cecil shape
+    /// assertion refuses first.</para>
     /// </summary>
     public static void RefuseWithoutDatabaseServer(NavDatabase database)
     {
@@ -53,8 +55,7 @@ public static class SqlConnectionPatches
 
     /// <summary>
     /// The refusal for a connection request made from <paramref name="frames"/> (innermost first).
-    /// Separate from <see cref="RefuseWithoutDatabaseServer"/> so the naming can be tested with
-    /// constructed frames, no BC engine needed.
+    /// Separate from <see cref="RefuseWithoutDatabaseServer"/> so the naming can be tested with chosen frames.
     /// </summary>
     internal static RunnerOutOfScopeException Refusal(IEnumerable<MethodBase?> frames)
     {
@@ -71,11 +72,11 @@ public static class SqlConnectionPatches
         }
 
         var asker = requester ?? "an unidentified frame";
-        // Reason starts with "not-yet-implemented" ON PURPOSE: an AL [TryFunction] and a guarded
-        // Codeunit.Run trap a PERMANENT refusal into `false` (ApplicationObjectBasePatches
-        // IsPermanentOutOfScope), and this backstop cannot know that every surface behind it is
-        // permanent. Trapped, it would turn the NRE that used to tear through the try into a silent
-        // `false` - the #5149 hazard again. Not trapped, it keeps tearing through, now with a name.
+        // Reason starts with "not-yet-implemented" ON PURPOSE: an AL [TryFunction] traps a PERMANENT
+        // refusal into `false` (ApplicationObjectBasePatches.IsPermanentOutOfScope), and this backstop
+        // cannot know that every surface behind it is permanent. Trapped, it would turn the NRE that
+        // used to tear through the try into a quiet `false`. Not trapped, it keeps tearing through,
+        // now with a name. (A guarded Codeunit.Run swallows every exception regardless: #5342.)
         var reason =
             "not-yet-implemented — the runner has no SQL Server: the skeleton database carries no database "
             + "server and no SQL connection provider, and this surface has no answer of its own that works "

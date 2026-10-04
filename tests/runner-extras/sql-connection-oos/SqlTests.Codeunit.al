@@ -9,7 +9,7 @@
 //
 // Not tested here: a GUARDED Codeunit.Run (`if not Codeunit.Run(...) then`). The runner's
 // Codeunit.Run catches every exception into `false` with an empty GetLastErrorText(), refusals
-// included, whatever surface raised them; that is not specific to SQL and is tracked on its own.
+// included, whatever surface raised them; that is not specific to SQL and is tracked as #5342.
 //
 // Database.AlterKey is the statement that drives it. The TryFunction test and the control at the
 // bottom matter as much as the refusal: the backstop must not turn into a quiet `false`, and a surface
