@@ -1,0 +1,23 @@
+{
+  "id": "c2c3d4e5-f6a7-4809-9b1c-2c3d4e5f6262",
+  "name": "Runner Tests Fixture - Jobs Tdd Excluded",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "--tdd under --jobs sharing (#5262): a shared bundle whose dropped objects are a test codeunit and a codeunit a surviving test reaches by id.",
+  "description": "Used by AlRunner.Tests/JobsSharedBundleTddExcludedTests.cs.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 51000,
+      "to": 51019
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

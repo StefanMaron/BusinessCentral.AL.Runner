@@ -46,8 +46,30 @@ through the same directory (`UnitClaimQueue.ClaimDropped`) and only the worker t
 `[Test]` procedures as SKIPPED, so the aggregate and the merged JUnit count them once, as a single
 process does (#5256). Every worker still prints the EMIT-EXCLUDED line, and a worker left with no
 test of its own and nothing but that drop to report is a partial bundle, not a COMPILE FAIL one
-(`BundleFailureStage.OnlyDropsAPeerReports`). The `--tdd` branch reports an excluded object's
-synthetic FAILED tests the same way from every worker and is not covered (#5262).
+(`BundleFailureStage.OnlyDropsAPeerReports`).
+
+`--tdd` takes the same per-object claim for its TDD-EXCLUDED objects (#5262), so the worker that wins an
+object reports its synthetic FAILED rows (exit 1, not the SKIPPED rows and exit 3 above) and the aggregate
+and the merged JUnit count them once, as a single process does. What each worker prints stays its own:
+
+- The TDD-EXCLUDED line names every dropped object (it is that worker's compile) and says how many this
+  worker claimed (`claimed 1 of 1`). Its closing `--tdd:` line counts only what this worker reported;
+  the procedures of objects another worker claimed are named as reported there, not here, so a worker that
+  claimed nothing never says that no test referenced a missing symbol.
+- The table of dropped codeunits (`TddSupport.RegisterDroppedCodeunits`) is filled by every worker, claimed or
+  not: a test that reaches a dropped codeunit runs on whichever worker claimed the test's own codeunit, and
+  must fail naming it.
+- `--tdd`'s re-run (a generated member lands in another bundle and the bundle compiles again, #5037) throws a
+  pass's rows away, and the claim files that pass made answer "exists" to the next. A worker therefore keeps
+  the claims it won in this process (`ClaimDropped` with `tddOwnedDrops`); a resumed attempt is another
+  process and does not, its carried rows are its earlier attempt's.
+
+Tests: `JobsSharedBundleTddExcludedTests` (two workers) and `JobsSharedBundleTddExcludedWorkerTests` (one worker
+at a time over a claim directory, for the cases that depend on who won).
+
+One case is not covered and is its own defect: a worker that runs ONE bundle and only compiles a dependency-only
+folder does not defer its run, so `--tdd`'s re-run discards a pass that already ran and claimed that bundle's test
+codeunits (#5318).
 
 A worker that resumes after a watchdog abort (#2280) compiles the bundle again and finds the same drop. It
 does not report SKIPPED rows its carried attempts already hold (`ResumeCarry.NotYetReported`, #5268), so

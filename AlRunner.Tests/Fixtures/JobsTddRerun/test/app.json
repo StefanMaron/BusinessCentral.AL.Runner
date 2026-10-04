@@ -1,0 +1,30 @@
+{
+  "id": "3f6a9e12-5d7b-4c84-a0e2-9c1b8d4f7e35",
+  "name": "Runner Tests Fixture - Jobs Tdd Rerun Test",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "The test app: calls a member the app lacks (--tdd generates it, then re-runs) and has a dropped test codeunit.",
+  "description": "Used by AlRunner.Tests/JobsSharedBundleTddRerunTests.cs.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "8b1d5c47-2e9a-4f60-b3d1-7a4e6c0f9a21",
+      "name": "Runner Tests Fixture - Jobs Tdd Rerun App",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 51120,
+      "to": 51139
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

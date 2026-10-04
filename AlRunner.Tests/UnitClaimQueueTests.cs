@@ -96,6 +96,31 @@ public sealed class UnitClaimQueueTests : IDisposable
         Assert.Empty(q.ClaimDropped("App", new[] { Dropped("A", "A") }));
     }
 
+    /// <summary>#5262: a --tdd re-run compiles a worker's bundle again and finds its own claim files, which
+    /// answer "exists". The set of what this process won makes the second pass keep them; a claim a PEER holds
+    /// is still lost with the same set, and the set is keyed by bundle and app group so one bundle's win says
+    /// nothing about a same-named object in another.</summary>
+    [Fact]
+    public void ClaimDropped_WithAnOwnedSet_KeepsWhatThisProcessWon_AndStillLosesWhatAPeerWon()
+    {
+        var details = new[] { Dropped("/b/erm/A.al", "A"), Dropped("/b/erm/B.al", "B") };
+        var owned = new HashSet<string>();
+
+        Assert.Equal(new[] { "A", "B" }, new UnitClaimQueue(_dir, "/b/erm").ClaimDropped("App", details, owned).Select(d => d.ObjectDisplayName));
+        // the second pass is another queue over the same directory, as ForBundle builds one per call
+        Assert.Equal(new[] { "A", "B" }, new UnitClaimQueue(_dir, "/b/erm").ClaimDropped("App", details, owned).Select(d => d.ObjectDisplayName));
+        // the control: the files exist, so without the set the same second pass would own nothing
+        Assert.Empty(new UnitClaimQueue(_dir, "/b/erm").ClaimDropped("App", details));
+        // a peer process has its own (empty) set, and loses
+        Assert.Empty(new UnitClaimQueue(_dir, "/b/erm").ClaimDropped("App", details, new HashSet<string>()));
+
+        // what a peer won stays the peer's, though this process owns the same name elsewhere
+        Assert.True(new UnitClaimQueue(_dir, "/b/scm").TryClaimDropped("App", "/b/erm/A.al|A"));
+        Assert.Empty(new UnitClaimQueue(_dir, "/b/scm").ClaimDropped("App", new[] { details[0] }, owned));
+        Assert.True(new UnitClaimQueue(_dir, "/b/erm").TryClaimDropped("OtherApp", "/b/erm/A.al|A"));
+        Assert.Empty(new UnitClaimQueue(_dir, "/b/erm").ClaimDropped("OtherApp", new[] { details[0] }, owned));
+    }
+
     [Fact]
     public void IsClaimed_ReadsWithoutClaiming()
     {
