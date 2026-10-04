@@ -41,7 +41,9 @@ public static class ResumeCarry
         string Codeunit, string Method, AlRunner.TestOutcome Outcome, string? Message,
         string? FullException, long DurationTicks, string? AlCallStack,
         string? CodeunitDisplayName, ExpectationResult? Expectation,
-        bool InsideTestProc, bool TimedOut, string? Diagnosis);
+        bool InsideTestProc, bool TimedOut, string? Diagnosis,
+        // #5129: --output-json's `generatedStubs`. Trailing and defaulted like CompanyInitFailures below.
+        List<string>? GeneratedStubs = null);
 
     /// <summary>One bundle's result. Timings are carried so a resumed run's reported wall time
     /// is the run's, not the last attempt's.</summary>
@@ -74,7 +76,8 @@ public static class ResumeCarry
                 tests.Add(new CarriedTest(
                     t.Codeunit, t.Method, t.Outcome, t.Message, t.FullException,
                     t.Duration.Ticks, t.AlCallStack, t.CodeunitDisplayName, t.Expectation,
-                    t.InsideTestProc, t.TimedOut, t.Diagnosis));
+                    t.InsideTestProc, t.TimedOut, t.Diagnosis,
+                    t.GeneratedStubs == null ? null : new List<string>(t.GeneratedStubs)));
             payload.Add(new CarriedBucket(
                 b.BucketPath, b.Stage, new List<string>(b.CompileErrors), b.ProcessError, tests,
                 b.EmitTime.Ticks, b.CompileTime.Ticks, b.RunTime.Ticks, b.RanGroupCount,
@@ -237,7 +240,8 @@ public static class ResumeCarry
                         t.Codeunit, t.Method, t.Outcome, t.Message, t.FullException,
                         TimeSpan.FromTicks(t.DurationTicks), t.AlCallStack, t.CodeunitDisplayName,
                         Exception: null, Expectation: t.Expectation, InsideTestProc: t.InsideTestProc,
-                        TimedOut: t.TimedOut, CapturedValues: null, Diagnosis: t.Diagnosis));
+                        TimedOut: t.TimedOut, CapturedValues: null, Diagnosis: t.Diagnosis,
+                        GeneratedStubs: t.GeneratedStubs));
                 all.Add(new BucketResult(
                     b.BucketPath, b.Stage, b.CompileErrors, b.ProcessError, tests,
                     TimeSpan.FromTicks(b.EmitTicks), TimeSpan.FromTicks(b.CompileTicks),
