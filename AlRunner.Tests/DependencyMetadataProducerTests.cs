@@ -28,6 +28,7 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+[Collection(HostEnvironmentSerialCollection.Name)]
 public sealed class DependencyMetadataProducerTests
 {
     private static AppManifest Manifest(string name, string version = "1.0.0.0") =>

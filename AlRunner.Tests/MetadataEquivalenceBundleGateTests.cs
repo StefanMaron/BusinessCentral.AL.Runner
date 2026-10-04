@@ -27,6 +27,7 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+[Collection(HostEnvironmentSerialCollection.Name)]
 public sealed class MetadataEquivalenceBundleGateTests
 {
     private static string TestsDir()
