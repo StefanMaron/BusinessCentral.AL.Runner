@@ -129,8 +129,8 @@ internal sealed partial class TddCallGraph
         if (model.GetDeclaredSymbol(ext) is NavCA.IApplicationObjectExtensionTypeSymbol { Target: { } target }
             && target.Name.Length > 0)
             return target.Name;
-        var baseObject = ext is NavSyntax.TableExtensionSyntax te ? te.BaseObject : (ext as NavSyntax.PageExtensionSyntax)?.BaseObject;
-        return Unquote(baseObject?.ToString().Trim() ?? "");
+        // A page extension has no text fallback: the compiler's symbol resolves every extension that compiles.
+        return Unquote((ext as NavSyntax.TableExtensionSyntax)?.BaseObject?.ToString().Trim() ?? "");
     }
 
     /// <summary>Records what the invocation <paramref name="inv"/> starts: a record method's trigger and

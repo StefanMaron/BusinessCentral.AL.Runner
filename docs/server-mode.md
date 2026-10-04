@@ -1314,7 +1314,7 @@ It runs the same generation as the CLI and `--watch --tdd` (`--guide`, "TDD MODE
   `Page.Run` and `Page.RunModal` of a named page, and `Run` or `RunModal` on a `Page` variable, start every trigger of
   that page (a handler that replaces the page counts anyway), and of every page when it is named by an id or an
   expression. A trigger name this list does not know is started by every one of these. Not followed, so a test that
-  reaches a stub only that way carries no `generatedStubs`: the triggers and events of a report, query or xmlport, a
+  reaches a stub only that way carries no `generatedStubs`: the triggers and events of a report, query or xmlport (#5322), a
   `TestRequestPage`, the page an action's `RunObject` opens, and a table operation, `Codeunit.Run` or page operation
   inside a precompiled `.app` that the test only calls.
   A procedure of another `sourcePaths` bundle

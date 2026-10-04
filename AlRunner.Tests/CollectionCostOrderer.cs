@@ -479,6 +479,10 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // run 37161245486; the lower leg is within 5s of UnmeasuredWeightSeconds, so the upper leg rounded down
             // (#2175, #5311).
             ["TddLibOwnMemberTests"] = 32,
+            // #5309: a TestPage drive of a library page across two bundles: one run, and four runs on one cache root for
+            // each of two listing orders. 44s (23 + 16 + 5) on a local Release run before any CI leg had read it;
+            // a CI figure replaces this one.
+            ["TddLibPageTriggersTests"] = 44,
             // #5027/#5035/#5050: --watch processes, one of them through nine cycles. CI 81.9s (BC 27.5) and 80.2s (BC
             // 28.5) on main run 37161245486, the lower leg rounded down (#5311).
             ["WatchAffectedSelectionTests"] = 80,

@@ -427,7 +427,7 @@ internal static partial class ProgramSupport
         w.WriteLine("  expression. A trigger name this list does not know is started by every one of these.");
         w.WriteLine("  Procedures, tables, codeunits and pages of one name count as one. Not followed, so a test");
         w.WriteLine("  that reaches a stub only that way carries no line: the triggers and events of a");
-        w.WriteLine("  report, query or xmlport, a TestRequestPage, the page an action's RunObject opens, and a");
+        w.WriteLine("  report, query or xmlport (#5322), a TestRequestPage, the page an action's RunObject opens, and a");
         w.WriteLine("  table operation, Codeunit.Run or page operation inside a precompiled .app that the test");
         w.WriteLine("  only calls.");
         w.WriteLine();
