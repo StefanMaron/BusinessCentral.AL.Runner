@@ -21,11 +21,13 @@ internal sealed class UnitClaimQueue
 
     private readonly string _dir;
     private readonly string _bundleKey;
+    private readonly UnitClaimLedger? _ledger;
 
-    public UnitClaimQueue(string dir, string bundleFullPath)
+    public UnitClaimQueue(string dir, string bundleFullPath, UnitClaimLedger? ledger = null)
     {
         _dir = dir;
         _bundleKey = Normalize(bundleFullPath);
+        _ledger = ledger;
     }
 
     /// <summary>
@@ -34,14 +36,15 @@ internal sealed class UnitClaimQueue
     /// bundle list is a malformed hand-off and throws, because null there would run every unit on
     /// every worker and report each test once per worker.
     /// </summary>
-    public static UnitClaimQueue? ForBundle(string bundleFullPath)
+    public static UnitClaimQueue? ForBundle(string bundleFullPath, UnitClaimLedger? ledger = null)
         => ForBundle(bundleFullPath,
             Environment.GetEnvironmentVariable(DirEnvVar),
-            Environment.GetEnvironmentVariable(BundlesEnvVar));
+            Environment.GetEnvironmentVariable(BundlesEnvVar), ledger);
 
     /// <summary><see cref="ForBundle(string)"/> over explicit values, so the decision is testable
     /// without writing this process's environment.</summary>
-    internal static UnitClaimQueue? ForBundle(string bundleFullPath, string? dir, string? list)
+    internal static UnitClaimQueue? ForBundle(string bundleFullPath, string? dir, string? list,
+        UnitClaimLedger? ledger = null)
     {
         if (string.IsNullOrEmpty(dir)) return null;
         if (string.IsNullOrEmpty(list))
@@ -52,7 +55,7 @@ internal sealed class UnitClaimQueue
         var key = Normalize(bundleFullPath);
         foreach (var b in list.Split('|', StringSplitOptions.RemoveEmptyEntries))
             if (string.Equals(Normalize(b), key, StringComparison.OrdinalIgnoreCase))
-                return new UnitClaimQueue(dir, bundleFullPath);
+                return new UnitClaimQueue(dir, bundleFullPath, ledger);
         return null;
     }
 
@@ -63,11 +66,18 @@ internal sealed class UnitClaimQueue
     /// it as "claimed" would run it on several workers.
     /// </summary>
     public bool TryClaim(string assemblyName, string codeunitTypeName)
+        => TryCreate(assemblyName, codeunitTypeName, record: true);
+
+    /// <summary><paramref name="record"/>: tell the ledger, so --tdd's re-run can give the claim back
+    /// (<see cref="UnitClaimLedger"/>). A dropped object's claim is not recorded: its owner keeps it across the
+    /// re-run (<see cref="ClaimDropped(string, IReadOnlyList{TddExcludedObjectDetail}, ISet{string})"/>).</summary>
+    private bool TryCreate(string assemblyName, string codeunitTypeName, bool record)
     {
         var path = Path.Combine(_dir, ClaimFileName(_bundleKey, assemblyName, codeunitTypeName));
         try
         {
-            using var _ = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            using (new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { }
+            if (record) _ledger?.Won(path);
             return true;
         }
         catch (IOException) when (File.Exists(path))
@@ -83,7 +93,7 @@ internal sealed class UnitClaimQueue
     /// tests as SKIPPED. The prefix keeps the key apart from a real codeunit's type name.
     /// </summary>
     public bool TryClaimDropped(string moduleName, string droppedObjectKey)
-        => TryClaim(moduleName, DroppedClaimType(droppedObjectKey));
+        => TryCreate(moduleName, DroppedClaimType(droppedObjectKey), record: false);
 
     private static string DroppedClaimType(string droppedObjectKey) => "emit-excluded:" + droppedObjectKey;
     private static string DroppedObjectKey(TddExcludedObjectDetail d) => d.FilePath + "|" + d.ObjectDisplayName;
@@ -135,5 +145,40 @@ internal sealed class UnitClaimQueue
     {
         try { return Path.GetFullPath(p).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar); }
         catch { return p.TrimEnd('/', '\\'); }
+    }
+}
+
+/// <summary>
+/// The claim files of test codeunits this process created and has not yet reported (#5326). --tdd's re-run
+/// (#5037) throws a pass's results away and runs the cycle again; a claim that pass made answers "exists" to
+/// the next, so the codeunit it ran was skipped and reported by nobody. <see cref="Release"/> deletes exactly the
+/// files this process made, at the moment it discards a pass: the codeunit is free again, so the re-run (or a
+/// peer that gets there first) claims it once and reports it once, and a claim another worker holds is never
+/// touched. A resumed attempt is another process with an empty ledger. Dropped objects' claims are not here
+/// (their owner keeps them, <see cref="UnitClaimQueue.ClaimDropped(string, IReadOnlyList{TddExcludedObjectDetail}, ISet{string})"/>).
+/// </summary>
+internal sealed class UnitClaimLedger
+{
+    private readonly List<string> _won = new();
+
+    internal void Won(string claimFile) { lock (_won) _won.Add(claimFile); }
+
+    /// <summary>Delete every claim file this process created since the last release; returns how many.
+    /// A file that cannot be deleted throws: leaving it would make the re-run skip a codeunit nobody reports.</summary>
+    internal int Release()
+    {
+        string[] files;
+        lock (_won) { files = _won.ToArray(); _won.Clear(); }
+        foreach (var f in files)
+        {
+            try { File.Delete(f); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                throw new InvalidOperationException(
+                    $"--tdd: could not release the claim file {f} of a test codeunit the discarded pass ran ({ex.Message}); "
+                    + "the re-run would find it claimed and skip the codeunit, which no worker would then report.", ex);
+            }
+        }
+        return files.Length;
     }
 }

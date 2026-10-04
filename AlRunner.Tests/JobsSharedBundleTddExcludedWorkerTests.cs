@@ -19,6 +19,12 @@ public sealed class JobsSharedBundleTddExcludedWorkerTests
     /// <summary>`dependencyOnly` is what the `--jobs` parent hands a worker through AL_RUNNER_JOBS_DEPENDENCY_ONLY
     /// (#5295): always written, empty when none, so a value in this host's environment never reaches the child.</summary>
     internal static (int Exit, string Output) Worker(string claimDir, string bundle, string args, string? dependencyOnly = null, params string[] folders)
+        => Worker(claimDir, bundle, args, dependencyOnly, sequentialBundles: false, folders);
+
+    /// <summary>`sequentialBundles` is AL_RUNNER_SEQUENTIAL_BUNDLES (#4450): always written, so a value in this
+    /// host's environment never reaches the child.</summary>
+    internal static (int Exit, string Output) Worker(string claimDir, string bundle, string args, string? dependencyOnly,
+        bool sequentialBundles, params string[] folders)
     {
         var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
         var cmd = new StringBuilder(TestBuildConfig.RunArgs(Path.Combine(root, "AlRunner")));
@@ -33,6 +39,7 @@ public sealed class JobsSharedBundleTddExcludedWorkerTests
         psi.Environment[AlRunner.Infrastructure.UnitClaimQueue.DirEnvVar] = claimDir;
         psi.Environment[AlRunner.Infrastructure.UnitClaimQueue.BundlesEnvVar] = bundle;
         psi.Environment[AlRunner.Infrastructure.JobsSourceDependencies.DependencyOnlyEnvVar] = dependencyOnly ?? "";
+        psi.Environment["AL_RUNNER_SEQUENTIAL_BUNDLES"] = sequentialBundles ? "1" : "0";
         // A watchdog resume is not a crash, but a dump of this child is what CI would write for one.
         psi.Environment["DOTNET_DbgEnableMiniDump"] = "0";
         var p = Process.Start(psi)!;

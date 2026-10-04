@@ -121,6 +121,83 @@ public sealed class UnitClaimQueueTests : IDisposable
         Assert.Empty(new UnitClaimQueue(_dir, "/b/erm").ClaimDropped("OtherApp", new[] { details[0] }, owned));
     }
 
+    /// <summary>#5326: --tdd's re-run throws a pass's results away, so the claims that pass made on test codeunits
+    /// must be free again. The ledger gives back exactly what THIS process created: the re-run claims each once,
+    /// and a peer's claim, which the ledger never saw, is still taken.</summary>
+    [Fact]
+    public void Release_GivesBackWhatThisProcessClaimed_AndNothingAPeerHolds()
+    {
+        var ledger = new UnitClaimLedger();
+        var peer = new UnitClaimQueue(_dir, "/b/erm");
+        Assert.True(peer.TryClaim("App", "Peer"));
+
+        Assert.True(new UnitClaimQueue(_dir, "/b/erm", ledger).TryClaim("App", "Mine1"));
+        Assert.True(new UnitClaimQueue(_dir, "/b/erm", ledger).TryClaim("App", "Mine2"));
+        Assert.False(new UnitClaimQueue(_dir, "/b/erm", ledger).TryClaim("App", "Peer"));
+
+        Assert.Equal(2, ledger.Release());
+
+        // the second pass: its own claims are free, claimed once each, the peer's still is not
+        var second = new UnitClaimQueue(_dir, "/b/erm", ledger);
+        Assert.True(second.TryClaim("App", "Mine1"));
+        Assert.True(second.TryClaim("App", "Mine2"));
+        Assert.False(second.TryClaim("App", "Mine1"));
+        Assert.False(second.TryClaim("App", "Peer"));
+        Assert.True(peer.IsClaimed("App", "Peer"));
+    }
+
+    /// <summary>A release gives back one pass's claims, not every pass's: the claims of the pass that kept its
+    /// results stay taken, and a second release (a second re-run) gives back only what the pass in between made.</summary>
+    [Fact]
+    public void Release_EmptiesTheLedger_SoALaterReleaseGivesBackOnlyTheLaterClaims()
+    {
+        var ledger = new UnitClaimLedger();
+        var q = new UnitClaimQueue(_dir, "/b/erm", ledger);
+        Assert.True(q.TryClaim("App", "A"));
+        Assert.Equal(1, ledger.Release());
+        Assert.Equal(0, ledger.Release());
+        Assert.False(q.IsClaimed("App", "A"));
+
+        Assert.True(q.TryClaim("App", "A"));
+        Assert.True(q.TryClaim("App", "B"));
+        // nothing releases the final pass: both stay taken
+        Assert.False(new UnitClaimQueue(_dir, "/b/erm").TryClaim("App", "A"));
+        Assert.False(new UnitClaimQueue(_dir, "/b/erm").TryClaim("App", "B"));
+    }
+
+    /// <summary>A dropped object's claim is kept across the re-run by its owner (#5262), so it is not the
+    /// ledger's: releasing it would let a peer claim the object and report its rows a second time.</summary>
+    [Fact]
+    public void Release_LeavesADroppedObjectsClaimWithItsOwner()
+    {
+        var ledger = new UnitClaimLedger();
+        var owned = new HashSet<string>();
+        var details = new[] { Dropped("/b/erm/A.al", "A") };
+        var q = new UnitClaimQueue(_dir, "/b/erm", ledger);
+        Assert.Single(q.ClaimDropped("App", details, owned));
+        Assert.True(q.TryClaim("App", "Codeunit1"));
+
+        Assert.Equal(1, ledger.Release());
+
+        Assert.Empty(new UnitClaimQueue(_dir, "/b/erm").ClaimDropped("App", details));
+        Assert.Single(q.ClaimDropped("App", details, owned));
+    }
+
+    /// <summary>The third state: a claim file that cannot be deleted is refused loudly, because leaving it would
+    /// make the re-run skip a codeunit nobody reports.</summary>
+    [Fact]
+    public void Release_ThatCannotDeleteAClaimFile_Throws()
+    {
+        var ledger = new UnitClaimLedger();
+        var blocker = Path.Combine(_dir, "blocked");
+        Directory.CreateDirectory(blocker);
+        File.WriteAllText(Path.Combine(blocker, "x"), "");
+        ledger.Won(blocker);   // a directory with content: File.Delete refuses it
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ledger.Release());
+        Assert.Contains("could not release the claim file", ex.Message);
+    }
+
     [Fact]
     public void IsClaimed_ReadsWithoutClaiming()
     {
