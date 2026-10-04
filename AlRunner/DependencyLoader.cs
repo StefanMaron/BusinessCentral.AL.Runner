@@ -1225,7 +1225,46 @@ public sealed class DependencyLoader
         AppManifest manifest, string appPath, IReadOnlyList<(AppManifest Manifest, string AppPath)> resolved)
         => ComputeSourceDependencyCacheKeyCore(
                manifest, appPath, static p => RunnerFingerprint.ComputeFileContentHashMemoized(p),
-               suppliedFloorsTerm: SuppliedFloorsCacheTerm(manifest, resolved.Select(r => r.Manifest)));
+               suppliedFloorsTerm: SuppliedFloorsCacheTerm(manifest, resolved.Select(r => r.Manifest)),
+               sourceClosureTerm: SourceClosureCacheTerm(
+                   manifest, resolved, AlRunner.Infrastructure.CacheRoots.SourceBuiltPackageDirs(),
+                   static p => RunnerFingerprint.ComputeFileContentHashMemoized(p)));
+
+    /// <summary>
+    /// #5306: the bytes of the source-built packages this compile references, transitively through the
+    /// package's own dependencies. The compile binds against them (a member --tdd generated into one is
+    /// in its package and nowhere else), but the key has only the package's OWN bytes, so a DLL compiled
+    /// while a neighbour lacked a member answered for a run where it had it, and the reverse. Only
+    /// packages under <paramref name="sourceBuiltRoots"/> (the ones the runner packages itself, from
+    /// source): a packaged .app is a fixed input, and hashing every platform app per key would cost for
+    /// no change in the answer. Null when there is none, which keeps every such key unchanged.
+    /// </summary>
+    internal static string? SourceClosureCacheTerm(
+        AppManifest manifest, IReadOnlyList<(AppManifest Manifest, string AppPath)> resolved,
+        IReadOnlyList<string> sourceBuiltRoots, Func<string, string> contentHashOf)
+    {
+        var byId = new Dictionary<Guid, (AppManifest Manifest, string AppPath)>();
+        foreach (var r in resolved) byId.TryAdd(r.Manifest.AppId, r);
+        var roots = sourceBuiltRoots
+            .Select(d => Path.GetFullPath(d).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar)
+            .ToList();
+        var seen = new HashSet<Guid> { manifest.AppId };
+        var pending = new Queue<AppManifest>();
+        pending.Enqueue(manifest);
+        var parts = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        while (pending.Count > 0)
+        {
+            foreach (var dep in pending.Dequeue().Dependencies)
+            {
+                if (!seen.Add(dep.AppId) || !byId.TryGetValue(dep.AppId, out var found)) continue;
+                pending.Enqueue(found.Manifest);
+                var full = Path.GetFullPath(found.AppPath);
+                if (roots.Any(root => full.StartsWith(root, StringComparison.OrdinalIgnoreCase)))
+                    parts[found.Manifest.AppId.ToString("N")] = AppBytesTerm(found.AppPath, contentHashOf);
+            }
+        }
+        return parts.Count == 0 ? null : "source-closure:" + string.Join(",", parts.Select(kv => $"{kv.Key}={kv.Value}"));
+    }
 
     /// <summary>
     /// #5233: the key line for which of the package's own floors (Platform, Application) this run
@@ -1263,7 +1302,7 @@ public sealed class DependencyLoader
     /// </summary>
     internal static string ComputeSourceDependencyCacheKeyCore(
         AppManifest manifest, string appPath, Func<string, string> contentHashOf,
-        string? refPackTerm = null, string? suppliedFloorsTerm = null)
+        string? refPackTerm = null, string? suppliedFloorsTerm = null, string? sourceClosureTerm = null)
     {
         using var sha = SHA256.Create();
         using var ms = new MemoryStream();
@@ -1292,6 +1331,8 @@ public sealed class DependencyLoader
         WriteLine(refPackTerm ?? AlRunner.BcCompiler.RunningDotNetRefPackCacheTerm);
         // #5233: which of this package's floors the compile could see (SuppliedFloorsCacheTerm).
         if (suppliedFloorsTerm != null) WriteLine(suppliedFloorsTerm);
+        // #5306: the source-built packages this compile references (SourceClosureCacheTerm).
+        if (sourceClosureTerm != null) WriteLine(sourceClosureTerm);
         WriteLine($"app:{manifest.AppId}:{manifest.Publisher}:{manifest.Name}:{manifest.Version}");
         foreach (var dep in manifest.Dependencies.OrderBy(d => $"{d.Publisher}/{d.Name}/{d.Version}/{d.AppId}", StringComparer.OrdinalIgnoreCase))
             WriteLine($"dep:{dep.AppId}:{dep.Publisher}:{dep.Name}:{dep.Version}");

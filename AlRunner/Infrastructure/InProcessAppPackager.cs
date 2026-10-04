@@ -236,6 +236,19 @@ public static class InProcessAppPackager
     // ── internals ─────────────────────────────────────────────────────────────
 
     /// <summary>
+    /// A fixed entry time (the DOS epoch), not the clock: the package's bytes are what
+    /// <c>DependencyLoader.ComputeSourceDependencyCacheKey</c> reads as the dependency's identity, and a
+    /// stamp with two-second resolution made equal sources read as equal or different by when they
+    /// were packaged (#5306). Same sources, same bytes.
+    /// </summary>
+    private static ZipArchiveEntry Entry(ZipArchive zip, string name)
+    {
+        var entry = zip.CreateEntry(name, CompressionLevel.Optimal);
+        entry.LastWriteTime = new DateTimeOffset(1980, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        return entry;
+    }
+
+    /// <summary>
     /// Write the 40-byte NAVX header (see <see cref="NavxZipOffset"/>) followed by the zip
     /// payload to <paramref name="outStream"/>.
     /// </summary>
@@ -261,7 +274,7 @@ public static class InProcessAppPackager
             using (var zip = new ZipArchive(zipMs, ZipArchiveMode.Create, leaveOpen: true))
             {
                 // NavxManifest.xml
-                var manifestEntry = zip.CreateEntry("NavxManifest.xml", CompressionLevel.Optimal);
+                var manifestEntry = Entry(zip, "NavxManifest.xml");
                 using (var mw = manifestEntry.Open())
                 {
                     var xmlBytes = Encoding.UTF8.GetBytes(manifestXml);
@@ -279,7 +292,7 @@ public static class InProcessAppPackager
                     // Use explicit {} blocks so the using-var goes out of scope before
                     // the next CreateEntry.
                     {
-                        var symEntry = zip.CreateEntry("SymbolReference.json", CompressionLevel.Optimal);
+                        var symEntry = Entry(zip, "SymbolReference.json");
                         using var sw = symEntry.Open();
                         sw.Write(symbolReferenceJson, 0, symbolReferenceJson.Length);
                     }
@@ -298,7 +311,7 @@ public static class InProcessAppPackager
                             "<Default Extension=\"al\" ContentType=\"\" />" +
                             "<Default Extension=\"png\" ContentType=\"\" />" +
                             "</Types>";
-                        var ctEntry = zip.CreateEntry("[Content_Types].xml", CompressionLevel.Optimal);
+                        var ctEntry = Entry(zip, "[Content_Types].xml");
                         using var cw = ctEntry.Open();
                         var ctBytes = System.Text.Encoding.UTF8.GetBytes(contentTypesXml);
                         cw.Write(ctBytes, 0, ctBytes.Length);
@@ -309,7 +322,7 @@ public static class InProcessAppPackager
                 foreach (var alPath in alFiles)
                 {
                     var entryName = "src/" + Path.GetFileName(alPath);
-                    var entry = zip.CreateEntry(entryName, CompressionLevel.Optimal);
+                    var entry = Entry(zip, entryName);
                     using var ew = entry.Open();
                     // --tdd (#5037): a member generated into this app lives only in memory.
                     if (AlRunner.TddSourceOverlay.TryGet(alPath, out _))
