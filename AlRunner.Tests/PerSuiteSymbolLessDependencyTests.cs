@@ -120,7 +120,7 @@ public sealed class PerSuiteSymbolLessDependencyTests : IDisposable
 
         var run = Run(fx, perSuite: true);
 
-        Assert.NotEqual(0, run.ExitCode);
+        Assert.Equal(2, run.ExitCode); // a provisioning gap, never 1 (#5315)
         Assert.Contains("A required dependency package is missing", run.Output);
         Assert.Contains($"{DepPublisher}/{DepName}", run.Output);
         Assert.DoesNotMatch(@"passed\s+1\b", run.Output);
@@ -222,7 +222,7 @@ public sealed class PerSuiteSymbolLessDependencyTests : IDisposable
 
         var run = Run(fx, perSuite: false);
 
-        Assert.NotEqual(0, run.ExitCode);
+        Assert.Equal(2, run.ExitCode);
         Assert.Contains(DepName, run.Output);
         Assert.DoesNotMatch(@"passed\s+1\b", run.Output);
     }

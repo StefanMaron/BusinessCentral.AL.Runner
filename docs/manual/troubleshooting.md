@@ -46,7 +46,11 @@ worse than one that fails.
 
 Exit 2 means a bundle could not execute at all, as opposed to running and
 failing. The most common causes are a bundle path that does not exist and an
-unknown flag — both are argument errors, and both print the reason.
+unknown flag — both are argument errors, and both print the reason. A third is a
+declared dependency that no package cache holds: the run stops before any test, prints
+"A required dependency package is missing from your package cache" naming the package, and
+exits 2, not 1 (a failing test). Add the package to a `--package-cache`
+directory.
 
 See [the exit codes](cli-reference.md) for the rest.
 

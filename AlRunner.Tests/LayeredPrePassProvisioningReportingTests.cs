@@ -319,7 +319,7 @@ public class LayeredPrePassProvisioningReportingTests
         var lines = await server.SendRequestStreamingAsync(ServerReq(middleDir, testsDir), TimeSpan.FromSeconds(300));
         var (_, summary) = ProtocolV2Streaming.Split(lines);
 
-        Assert.NotEqual(0, summary.GetProperty("exitCode").GetInt32());
+        Assert.Equal(2, summary.GetProperty("exitCode").GetInt32());
         Assert.True(summary.TryGetProperty("compilationErrors", out var compileErrors),
             $"expected compilationErrors when base app is absent: {string.Join(" | ", lines)}");
         var allErrorText = string.Join(" | ", compileErrors.EnumerateArray()
