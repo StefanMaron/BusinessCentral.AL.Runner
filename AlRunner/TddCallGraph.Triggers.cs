@@ -77,7 +77,8 @@ internal sealed partial class TddCallGraph
     private static string? WildcardOf(string key)
     {
         var bar = key.IndexOf('|');
-        return bar > 0 && (EntryPointNames.Contains(key[(bar + 1)..]) || IsPageEntryPoint(key[(bar + 1)..])) && key[..bar] != AnyObject
+        return bar > 0 && (EntryPointNames.Contains(key[(bar + 1)..]) || IsPageEntryPoint(key[(bar + 1)..])
+                || IsObjectFamilyEntryPoint(key[(bar + 1)..])) && key[..bar] != AnyObject
             ? WildcardKey(key[(bar + 1)..])
             : null;
     }
@@ -99,8 +100,13 @@ internal sealed partial class TddCallGraph
     {
         foreach (var obj in root.DescendantNodesAndSelf().OfType<NavSyntax.ObjectSyntax>())
         {
-            if (obj is NavSyntax.TableExtensionSyntax or NavSyntax.PageExtensionSyntax)
+            if (obj is NavSyntax.TableExtensionSyntax or NavSyntax.PageExtensionSyntax or NavSyntax.ReportExtensionSyntax)
                 _extensionBase[obj] = ExtensionBase(model, obj);
+            if (obj is NavSyntax.ReportSyntax or NavSyntax.ReportExtensionSyntax or NavSyntax.QuerySyntax or NavSyntax.XmlPortSyntax)
+            {
+                CollectObjectTriggers(obj);
+                continue;
+            }
             if (obj is NavSyntax.PageSyntax or NavSyntax.PageExtensionSyntax)
             {
                 CollectPageTriggers(obj);
@@ -129,7 +135,7 @@ internal sealed partial class TddCallGraph
         if (model.GetDeclaredSymbol(ext) is NavCA.IApplicationObjectExtensionTypeSymbol { Target: { } target }
             && target.Name.Length > 0)
             return target.Name;
-        // A page extension has no text fallback: the compiler's symbol resolves every extension that compiles.
+        // A page or report extension has no text fallback: the compiler's symbol resolves every extension that compiles.
         return Unquote((ext as NavSyntax.TableExtensionSyntax)?.BaseObject?.ToString().Trim() ?? "");
     }
 
@@ -142,7 +148,8 @@ internal sealed partial class TddCallGraph
             : Name(inv.Expression as NavSyntax.IdentifierNameSyntax);
         if (name.Length == 0) return;
         if (mae != null && AddTestPageOperation(model, mae, name, inv.ArgumentList.Arguments.Count, caller)) return;
-        if (mae != null && (AddCurrentPageOperation(mae, name, caller) || AddPageRun(model, inv, mae, name, caller))) return;
+        if (mae != null && (AddCurrentPageOperation(mae, name, caller) || AddPageRun(model, inv, mae, name, caller)
+            || AddObjectFamilyOperation(model, inv, mae, name, caller))) return;
         if (name.Equals("Run", StringComparison.OrdinalIgnoreCase))
         {
             if (mae != null) AddCodeunitRun(model, inv, mae, caller);

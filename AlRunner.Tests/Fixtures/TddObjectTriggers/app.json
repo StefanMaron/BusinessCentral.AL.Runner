@@ -1,0 +1,23 @@
+{
+  "id": "5322a0c1-7b3d-4e8f-9a2c-6d4e8f0a1b01",
+  "name": "Runner Tests Fixture - Tdd Object Triggers",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves --tdd (#5322) annotates a test that reaches a generated stub through the triggers of a report, a query or an xmlport.",
+  "description": "Proves --tdd (#5322) annotates a test that reaches a generated stub through the triggers of a report (and its extension and request page), a query or an xmlport, each started by the call that runs it, and leaves a test that runs none of them unannotated.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 73000,
+      "to": 73049
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

@@ -57,7 +57,7 @@ public sealed class TddCrossBundleStateTests
     }
 
     /// <summary>
-    /// #5286, #5309: a table extension or a page extension, a RecordRef or FieldRef, and a Codeunit.Run or Page.Run whose first argument is not a
+    /// #5286, #5309, #5322: a table, page or report extension, a RecordRef or FieldRef, and a Codeunit.Run, Page.Run or static Report, Query or XmlPort call whose first argument is not a
     /// `Codeunit::Name` or `Page::Name` each make the edges of an earlier bundle readable, because each may start something a
     /// LATER bundle declares; a run with none of them does not, and neither does a Codeunit.Run naming its
     /// codeunit. The control is the same bundles with only the last two.
@@ -78,6 +78,18 @@ public sealed class TddCrossBundleStateTests
     // The forms that open a page the compile names or a dependency's need no clause (see KeyGraphProbe).
     [InlineData("codeunit 2 \"B\" { procedure Q() var P: TestPage \"A\"; begin P.OpenEdit(); P.Qty.Lookup(); P.Edit().Invoke(); P.Close(); end; }", false)]
     [InlineData("codeunit 2 \"B\" { procedure Q() begin CurrPage.Update(true); end; }", false)]
+    // #5322: a report extension, and a static call on Report, Query or XmlPort that names its object by an id; the forms
+    // that name it (`Report::"A"`, a variable's type, CurrReport) are dependencies and need no clause.
+    [InlineData("reportextension 2 \"E\" extends \"A\" { trigger OnPreReport() begin end; }", true)]
+    [InlineData("codeunit 2 \"B\" { procedure Q(Id: Integer) begin Report.Run(Id); end; }", true)]
+    [InlineData("codeunit 2 \"B\" { procedure Q(Id: Integer) begin Report.RunModal(Id, true, false); end; }", true)]
+    [InlineData("codeunit 2 \"B\" { procedure Q(Id: Integer; O: OutStream) begin Query.SaveAsCsv(Id, O); end; }", true)]
+    [InlineData("codeunit 2 \"B\" { procedure Q(Id: Integer; O: OutStream) begin XmlPort.Export(Id, O); end; }", true)]
+    [InlineData("codeunit 2 \"B\" { procedure Q() begin Report.Run(Report::\"A\"); end; }", false)]
+    [InlineData("codeunit 2 \"B\" { procedure Q(O: OutStream) begin Query.SaveAsCsv(Query::\"A\", O); end; }", false)]
+    [InlineData("codeunit 2 \"B\" { procedure Q(I: InStream) begin XmlPort.Import(XmlPort::\"A\", I); end; }", false)]
+    [InlineData("codeunit 2 \"B\" { procedure Q() var R: Report \"A\"; Q2: Query \"A\"; X: XmlPort \"A\"; begin R.Run(); Q2.Open(); X.Export(); end; }", false)]
+    [InlineData("report 2 \"B\" { trigger OnAfterGetRecord() begin CurrReport.Skip(); end; }", false)]
     [InlineData("codeunit 2 \"B\" { procedure Q() begin end; }", false)]
     public void KeyGraph_IsWantedWhenALaterBundleCouldBeStartedByAnOperation(string otherBundle, bool wanted)
     {

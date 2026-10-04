@@ -145,16 +145,19 @@ public static class TddCrossBundle
     }
 
     // What makes a bundle's call edges readable by another bundle (#5264, #5286): something in a LATER bundle
-    // that an operation of an earlier one starts. An [EventSubscriber]; a table extension or a page extension
-    // (#5309), whose triggers run for the table or page of another bundle; a RecordRef or FieldRef, which writes to a table by id and so may start
-    // a trigger of a table a later bundle declares; a Codeunit.Run whose first argument is not a
-    // `Codeunit::Name`, which may run an OnRun of a later bundle (a codeunit named by `Codeunit::` or held in
-    // a variable is a dependency of the bundle naming it, so it is never later); and the same for a Page.Run or
-    // Page.RunModal whose first argument is not a `Page::Name` (#5309): a page opened by id may be a page of a later
-    // bundle, whose triggers that call starts. A TestPage operation, a control's Lookup, an Edit or View Invoke and a
-    // CurrPage call open a page the compile names or a page of a dependency, so they need no clause of their own.
+    // that an operation of an earlier one starts. An [EventSubscriber]; a table, page or report extension (#5309,
+    // #5322), whose triggers run for the object of another bundle; a RecordRef or FieldRef, which writes to a table by
+    // id and so may start a trigger of a table a later bundle declares; a Codeunit.Run whose first argument is not a
+    // `Codeunit::Name`, which may run an OnRun of a later bundle (a codeunit named by `Codeunit::` or held in a
+    // variable is a dependency of the bundle naming it, so it is never later); and the same for a Page.Run or
+    // Page.RunModal, and for any static call on Report, Query or XmlPort (Report.Run, Query.SaveAsCsv,
+    // XmlPort.Export ...), whose first argument is not a `Page::`, `Report::`, `Query::` or `XmlPort::` name: an
+    // object opened by id may be one of a later bundle, whose triggers that call starts. A TestPage operation, a
+    // control's Lookup, an Edit or View Invoke, a CurrPage call and an operation on a Report, Query or XmlPort
+    // variable open an object the compile names or one of a dependency, so they need no clause of their own (a
+    // later bundle's addition to it is an extension or a subscriber, matched above). Audit: TddCrossBundleStateTests.
     private static readonly System.Text.RegularExpressions.Regex KeyGraphProbe = new(
-        @"EventSubscriber|tableextension|pageextension|RecordRef|FieldRef|Codeunit\s*\.\s*Run\s*\(\s*(?!Codeunit\s*::)|Page\s*\.\s*(?:Run|RunModal)\s*\(\s*(?!Page\s*::)",
+        @"EventSubscriber|tableextension|pageextension|reportextension|RecordRef|FieldRef|Codeunit\s*\.\s*Run\s*\(\s*(?!Codeunit\s*::)|Page\s*\.\s*(?:Run|RunModal)\s*\(\s*(?!Page\s*::)|\b(?:Report|Query|XmlPort)\s*\.\s*\w+\s*\(\s*(?!(?:Report|Query|XmlPort)\s*::)",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     /// <summary>True when a bundle of this run declares something <see cref="KeyGraphProbe"/> matches: the

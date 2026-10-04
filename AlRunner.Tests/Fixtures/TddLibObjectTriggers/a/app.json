@@ -1,0 +1,23 @@
+{
+  "id": "5322c0c1-1111-4e8f-9a2c-6d4e8f0a1b01",
+  "name": "Runner Tests Fixture - Tdd Lib Object Triggers A",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "#5322 probe: a library runs a report, a query or an xmlport by id, or a report of its own that a later bundle extends.",
+  "description": "#5322: library a runs objects it cannot name, bundle b declares them and a report extension, test bundle c depends on both.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 73050,
+      "to": 73059
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
