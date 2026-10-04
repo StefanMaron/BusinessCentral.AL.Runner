@@ -67,9 +67,14 @@ and the merged JUnit count them once, as a single process does. What each worker
 Tests: `JobsSharedBundleTddExcludedTests` (two workers) and `JobsSharedBundleTddExcludedWorkerTests` (one worker
 at a time over a claim directory, for the cases that depend on who won).
 
-One case is not covered and is its own defect: a worker that runs ONE bundle and only compiles a dependency-only
-folder does not defer its run, so `--tdd`'s re-run discards a pass that already ran and claimed that bundle's test
-codeunits (#5318).
+A re-run discards a whole pass, so a pass that can be followed by one must not run tests: a worker with more
+than one bundle to run loads them all before any runs (#4931), and so does a `--tdd` worker that runs ONE
+bundle and compiles a dependency-only folder (#5318), because the member `--tdd` generates lands in that folder
+and sends the cycle round again. Without it the worker ran its bundle in the first pass, claimed its test
+codeunits, and the second pass found them claimed and skipped them, so nobody reported them
+(`BundleRunDeferral.Defers`; tests `BundleRunDeferralTests`, `JobsTddDependencyOnlyTests`). A run with no
+dependency-only folder, and a run without `--tdd`, keep their one pass. `AL_RUNNER_SEQUENTIAL_BUNDLES=1` keeps one
+pass per bundle for several bundles and has no say over one.
 
 A worker that resumes after a watchdog abort (#2280) compiles the bundle again and finds the same drop. It
 does not report SKIPPED rows its carried attempts already hold (`ResumeCarry.NotYetReported`, #5268), so
