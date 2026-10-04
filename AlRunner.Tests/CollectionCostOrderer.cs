@@ -240,6 +240,11 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // limited plans and an unusable override). CI 96.2s (BC 27.5) and 93.7s (BC 28.5) on main run 37161245486, the
             // lower leg rounded down (#5311).
             ["JobsSharedBundleEndToEndTests"] = 93,
+            // #5262: --tdd --jobs over a shared bundle, nine tests spawning fan-outs and single workers of real runners. NOT a
+            // CI measurement: 29 s and 26 s on a local run (BC 28.5), recorded at twice that; re-record from the first
+            // main run that reports them (#5311).
+            ["JobsSharedBundleTddExcludedTests"] = 58,
+            ["JobsSharedBundleTddExcludedWorkerTests"] = 52,
             // #5238: recorded from Test Matrix run 37080059144 (head 465ed74f), at the lower leg rounded down:
             // CacheCompileLockEndToEndTests 110.1s on 27.5,
             // 123.1s on 28.5. CacheCompileLockWaitersEndToEndTests was recorded from the same run at four rows (107.4s on

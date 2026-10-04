@@ -2381,6 +2381,11 @@ var allTddGeneratedMembers = new List<TddGeneratedMember>();
 // --tdd: [Test] procedures reported FAILED for a missing symbol this run (TDD-EXCLUDED), so the
 // closing line says what was reported rather than assuming it (#5037).
 int tddSyntheticFailedCount = 0;
+// --tdd under --jobs (#5262): [Test] procedures of dropped objects a PEER worker of a shared bundle claimed, so
+// this worker's closing line does not say no test referenced a missing symbol. Reset where the count above is.
+int tddPeerReportedCount = 0;
+// The claim files of dropped objects THIS process won: a --tdd re-run compiles the bundle again and must keep them.
+var tddOwnedDrops = new HashSet<string>(StringComparer.Ordinal);
 // --tdd: objects dropped from a compile this run (TDD-EXCLUDED) that declare no [Test]. They add no
 // FAILED test above, so a closing line that read only tddSyntheticFailedCount said nothing was missing.
 int tddExcludedObjectCount = 0;
@@ -2720,6 +2725,12 @@ List<string> TddClosingLines()
     // that load reports EMIT-EXCLUDED, not TDD-EXCLUDED; it is counted once, whichever compile named it.
     var droppedObjectCount = tddExcludedObjectCount
         + TddCrossBundle.DependencyDroppedNames().Count(n => !tddBundleDroppedNames.Contains(n));
+    // #5262: a worker of a shared --jobs bundle reports only the dropped objects it claimed (the rows of the rest
+    // are the claimant's), and is told so rather than that no test referenced a missing symbol.
+    var peerNote = tddPeerReportedCount > 0
+        ? $" {tddPeerReportedCount} [Test] procedure(s) of dropped objects another worker of this bundle claimed " +
+          "(or an earlier attempt of this one) are reported FAILED there, not here."
+        : "";
     if (generatedMembers.Count == 0 && droppedObjectCount > 0)
     {
         // #5243: an object that declares no [Test] (a test library) was dropped and reports no test.
@@ -2729,14 +2740,20 @@ List<string> TddClosingLines()
             "FAILED test of their own reports it." +
             (tddSyntheticFailedCount > 0
                 ? $" {tddSyntheticFailedCount} [Test] procedure(s) of other dropped objects are reported FAILED above."
-                : ""));
+                : "") + peerNote);
     }
     else if (generatedMembers.Count == 0 && tddSyntheticFailedCount > 0)
     {
         lines.Add(
             "--tdd: no members were generated this run — every missing symbol was reported " +
             "as a failed test instead (see the FAILED test messages above for each missing " +
-            "symbol).");
+            "symbol)." + peerNote);
+    }
+    else if (generatedMembers.Count == 0 && tddPeerReportedCount > 0)
+    {
+        lines.Add(
+            "--tdd: no members were generated this run — every missing symbol was reported " +
+            "as a failed test instead." + peerNote);
     }
     else if (generatedMembers.Count == 0)
     {
@@ -2992,6 +3009,7 @@ if (tddMode && !tddRecompileRerun)
     allTddGeneratedMembers.Clear();
     tddNotCompiledIn.Clear();
     tddSyntheticFailedCount = 0;
+    tddPeerReportedCount = 0;
     tddExcludedObjectCount = 0;
     tddBundleDroppedNames.Clear();
 }
@@ -3024,6 +3042,7 @@ if (tddRecompileRerun)
     tddRecompileRerun = false;
     allTddGeneratedMembers.Clear();
     tddSyntheticFailedCount = 0;
+    tddPeerReportedCount = 0;
     tddExcludedObjectCount = 0;
     tddBundleDroppedNames.Clear();
     if (RunDependencyPrePasses() != null)
@@ -4039,8 +4058,16 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                             // here: any entry there forces exit code 3 at the exit-code ladder
                             // below, and the whole point of --tdd is to report a RED TEST (exit
                             // 1), not a compile failure.
-                            var synthetic = TddSupport.BuildFailedTests(
-                                emitOutput.TddExcludedDetails ?? Array.Empty<TddExcludedObjectDetail>());
+                            var tddDetails = emitOutput.TddExcludedDetails ?? Array.Empty<TddExcludedObjectDetail>();
+                            // #5262: every worker of a shared --jobs bundle compiles it and finds the same drops;
+                            // the same per-object claim as EMIT-EXCLUDED (#5256) makes one of them report each
+                            // object's FAILED rows. Not claimed: the registry below, which every worker needs.
+                            var tddDropClaim = AlRunner.Infrastructure.UnitClaimQueue.ForBundle(bundleAbs);
+                            var ownTddDetails = tddDropClaim == null ? tddDetails
+                                : tddDropClaim.ClaimDropped(moduleName, tddDetails, tddOwnedDrops);
+                            var peerTddDetails = tddDetails.Where(d => !ownTddDetails.Contains(d)).ToList();
+                            var synthetic = TddSupport.BuildFailedTests(ownTddDetails);
+                            var peerReportedCount = peerTddDetails.Count == 0 ? 0 : TddSupport.BuildFailedTests(peerTddDetails).Count;
                             // #2207: same fix as the non-tdd branch below — actually print
                             // them under --verbose. Each synthetic FAILED test already carries
                             // its own object's diagnostic in its failure message, but that
@@ -4053,8 +4080,12 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                             // to describe what will actually happen if it is followed.
                             Console.Error.WriteLine(
                                 $"<bundled>: TDD-EXCLUDED — {moduleName}: {emitOutput.ExcludedObjects.Count} " +
-                                $"object(s) could not be compiled: [{names}]. {synthetic.Count} [Test] " +
-                                $"procedure(s) they declare report as FAILED instead of vanishing from the run." +
+                                $"object(s) could not be compiled: [{names}]. " +
+                                (tddDropClaim == null
+                                    ? $"{synthetic.Count} [Test] procedure(s) they declare report as FAILED instead of vanishing from the run."
+                                    : "The dropped object(s) are shared out between this bundle's workers: this worker claimed " +
+                                      $"{ownTddDetails.Count} of {tddDetails.Count} and its {synthetic.Count} [Test] procedure(s) report as FAILED " +
+                                      "here instead of vanishing from the run; the worker that claimed each other object reports its own.") +
                                 ExclusionDiagnosticAdvice(tddExclDiags, AlRunner.Log.Verbose));
                             if (AlRunner.Log.Verbose && tddExclDiags.Count > 0)
                             {
@@ -4066,11 +4097,12 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                             // #5272: rows an earlier attempt of this resumed run already reported are in the carry.
                             bundleTests.AddRange(carriedResults.Count == 0 ? synthetic
                                 : AlRunner.Infrastructure.ResumeCarry.NotYetReported(carriedResults, bundleAbs, synthetic));
-                            TddSupport.RegisterDroppedCodeunits(moduleName, emitOutput.TddExcludedDetails ?? Array.Empty<TddExcludedObjectDetail>());
+                            TddSupport.RegisterDroppedCodeunits(moduleName, tddDetails);
                             tddSyntheticFailedCount += synthetic.Count;
-                            tddExcludedObjectCount += (emitOutput.TddExcludedDetails ?? Array.Empty<TddExcludedObjectDetail>())
+                            tddPeerReportedCount += peerReportedCount;
+                            tddExcludedObjectCount += tddDetails
                                 .Count(d => TddSupport.BuildFailedTests(new[] { d }).Count == 0);
-                            foreach (var d in emitOutput.TddExcludedDetails ?? Array.Empty<TddExcludedObjectDetail>())
+                            foreach (var d in tddDetails)
                                 tddBundleDroppedNames.Add(d.ObjectDisplayName);
                             tddExcludedCount = emitOutput.ExcludedObjects.Count;
                             // sources stays as BcCompiler returned it (the recovered set) — do

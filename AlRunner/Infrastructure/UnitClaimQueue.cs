@@ -83,14 +83,37 @@ internal sealed class UnitClaimQueue
     /// tests as SKIPPED. The prefix keeps the key apart from a real codeunit's type name.
     /// </summary>
     public bool TryClaimDropped(string moduleName, string droppedObjectKey)
-        => TryClaim(moduleName, "emit-excluded:" + droppedObjectKey);
+        => TryClaim(moduleName, DroppedClaimType(droppedObjectKey));
+
+    private static string DroppedClaimType(string droppedObjectKey) => "emit-excluded:" + droppedObjectKey;
+    private static string DroppedObjectKey(TddExcludedObjectDetail d) => d.FilePath + "|" + d.ObjectDisplayName;
 
     /// <summary>The dropped objects of <paramref name="details"/> this worker claimed and so
     /// reports; the others belong to the worker that claimed them. One claim per object, so
     /// several dropped objects may fall to different workers and are still reported once each.</summary>
     internal IReadOnlyList<TddExcludedObjectDetail> ClaimDropped(
         string moduleName, IReadOnlyList<TddExcludedObjectDetail> details)
-        => details.Where(d => TryClaimDropped(moduleName, d.FilePath + "|" + d.ObjectDisplayName)).ToList();
+        => details.Where(d => TryClaimDropped(moduleName, DroppedObjectKey(d))).ToList();
+
+    /// <summary>
+    /// <see cref="ClaimDropped(string, IReadOnlyList{TddExcludedObjectDetail})"/> for a process that compiles the
+    /// same bundle more than once (--tdd's re-run, #5037, throws a pass's rows away and compiles again): the claim
+    /// file a first pass created answers "exists" to the second, so without <paramref name="ownedByThisProcess"/>
+    /// the worker that won an object would lose it and nobody would report its rows. The set holds the claim
+    /// files this process created and is the caller's, for the life of the process. A resumed attempt is another
+    /// process and does not own them: its carry holds the rows (ResumeCarry).
+    /// </summary>
+    internal IReadOnlyList<TddExcludedObjectDetail> ClaimDropped(
+        string moduleName, IReadOnlyList<TddExcludedObjectDetail> details, ISet<string> ownedByThisProcess)
+        => details.Where(d =>
+        {
+            var key = DroppedObjectKey(d);
+            var file = ClaimFileName(_bundleKey, moduleName, DroppedClaimType(key));
+            if (ownedByThisProcess.Contains(file)) return true;
+            if (!TryClaimDropped(moduleName, key)) return false;
+            ownedByThisProcess.Add(file);
+            return true;
+        }).ToList();
 
     /// <summary>The lock the workers of this shared bundle serialise their compile phase on
     /// (<see cref="CompilePhase"/>). Beside the claim files, so it dies with the run's scratch.</summary>

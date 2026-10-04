@@ -1,0 +1,23 @@
+{
+  "id": "8b1d5c47-2e9a-4f60-b3d1-7a4e6c0f9a21",
+  "name": "Runner Tests Fixture - Jobs Tdd Rerun App",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "The implementing app of the #5262 --tdd re-run under --jobs reproducer.",
+  "description": "Used by AlRunner.Tests/JobsSharedBundleTddRerunTests.cs.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 51100,
+      "to": 51119
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
