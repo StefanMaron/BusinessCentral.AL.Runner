@@ -906,24 +906,13 @@ namespace AlRunnerShim
         // ─── Text function polyfills ──────────────────────────────────────────────────
 
         // CopyStr: both v27 and v28 throw when fromPos < 1.
+        // A null source is treated as '' (the polyfill's long-standing answer); BC's own body then raises
+        // its NavNCLOutsidePermittedRangeException for fromPos < 1 — an AL error. The shim used to raise
+        // an ArgumentOutOfRangeException, which only asserterror's catch-all (#4976) made look like one.
         public static string ALCopyStr(string source, int fromPos1Based)
-        {
-            if (fromPos1Based < 1)
-                throw new global::System.ArgumentOutOfRangeException(
-                    nameof(fromPos1Based),
-                    ""Position is outside of the permitted range of the input string."");
-            if (source == null) return global::System.String.Empty;
-            return Microsoft.Dynamics.Nav.Runtime.ALSystemString.ALCopyStr(source, fromPos1Based);
-        }
+            => Microsoft.Dynamics.Nav.Runtime.ALSystemString.ALCopyStr(source ?? global::System.String.Empty, fromPos1Based);
         public static string ALCopyStr(string source, int fromPos1Based, int length)
-        {
-            if (fromPos1Based < 1)
-                throw new global::System.ArgumentOutOfRangeException(
-                    nameof(fromPos1Based),
-                    ""Position is outside of the permitted range of the input string."");
-            if (source == null) return global::System.String.Empty;
-            return Microsoft.Dynamics.Nav.Runtime.ALSystemString.ALCopyStr(source, fromPos1Based, length);
-        }
+            => Microsoft.Dynamics.Nav.Runtime.ALSystemString.ALCopyStr(source ?? global::System.String.Empty, fromPos1Based, length);
         public static string ALCopyStr(Microsoft.Dynamics.Nav.Runtime.NavList<char> source, int fromPos1Based)
             => ALCopyStr(source == null ? null : source.ToString(), fromPos1Based);
         public static string ALCopyStr(Microsoft.Dynamics.Nav.Runtime.NavList<char> source, int fromPos1Based, int length)

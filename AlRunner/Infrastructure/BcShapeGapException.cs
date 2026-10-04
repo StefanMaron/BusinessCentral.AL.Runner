@@ -205,12 +205,10 @@ internal static class BcShape
     ///
     /// <para>What this is for: <see cref="Type.GetMethod(string, BindingFlags)"/> throws
     /// <see cref="AmbiguousMatchException"/> the moment Microsoft ships a second method of that
-    /// name. That is a bare framework exception carrying no member name, and
-    /// <c>MethodScopePatches.NavMethodScope_AssertError</c> rethrows only the runner's own
-    /// refusal types (this one and <c>BcAppSymbolReadException</c>, #3241) — so under an AL
-    /// <c>asserterror</c> a bare framework exception is ABSORBED and
-    /// the asserterror PASSES, on a call real BC performs fine. Enumerating cannot throw, so
-    /// every outcome here is the method, <c>null</c>, or a refusal that names the member
+    /// name. That is a bare framework exception carrying no member name: before #4976 an AL
+    /// <c>asserterror</c> ABSORBED it and PASSED on a call real BC performs fine, and it still
+    /// surfaces as an unnamed CLR failure rather than a refusal naming the member.
+    /// Enumerating cannot throw, so every outcome here is the method, <c>null</c>, or a refusal that names the member
     /// (#3069, and #3062 for the same repair inside the permission slice).</para>
     ///
     /// <para><b>Absence still answers <c>null</c>, deliberately.</b> A member that MOVED is the
@@ -276,7 +274,7 @@ internal static class BcShape
     /// one, and folding it into the absent/null branch is how #2786's silent skip happened.
     /// A null refuses too, and says so distinguishably: before #3372 it reached
     /// <c>value.GetType()</c> and raised a <see cref="NullReferenceException"/> naming no
-    /// surface, member or remedy — which an AL-entered path's unfiltered catch would swallow.
+    /// surface, member or remedy.
     /// Callers that can legitimately be handed a null still decide that themselves, ahead of
     /// this call; six of the seven call sites do, and their handling is unaffected.
     /// </summary>
@@ -320,10 +318,10 @@ internal static class BcShape
     // `t.GetProperty("X")!` is a COMPILER ANNOTATION. It throws nothing. When Microsoft moves
     // X the lookup hands back a silent null and the NullReferenceException lands at the first
     // USE of it — `.PropertyType`, `.GetValue`, `.Invoke` — on a line that no longer names X.
-    // MethodScopePatches.NavMethodScope_AssertError is an unfiltered catch(Exception), so on
-    // any AL-entered path that NRE is SWALLOWED and `asserterror` PASSES on a read real BC
-    // performs fine. That is an INVERTED result, not merely a hidden gap (#3046 measured it:
-    // every one of its AssertError arms failed pre-fix with "No exception was thrown").
+    // Before #4976 MethodScopePatches.NavMethodScope_AssertError was an unfiltered catch, so on
+    // any AL-entered path that NRE was SWALLOWED and `asserterror` PASSED on a read real BC
+    // performs fine (#3046 measured it). It now escapes as BC's does, but unnamed — which is
+    // still why the helpers below raise a refusal that names the member.
     //
     // The helpers below are the one-line replacement. Each overload resolves EXACTLY what the
     // `!` site resolved — the same BindingFlags, the same overload filter, the same defaults

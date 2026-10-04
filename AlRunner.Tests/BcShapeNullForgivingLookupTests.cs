@@ -181,21 +181,21 @@ public sealed class BcShapeNullForgivingLookupTests
     // ══ 4. The inversion, measured at both AL seams ══════════════════════════════════════
 
     /// <summary>
-    /// The defect, reproduced against the production seam with the exact shape the 73
-    /// converted sites had. `asserterror` sees no error at all: on real BC the read succeeds
-    /// and the asserterror FAILS, so a green here is the opposite of BC's answer.
+    /// The defect's shape, reproduced against the production seam with the exact shape the 73
+    /// converted sites had. It used to be swallowed (the asserterror PASSED where real BC's
+    /// FAILS); since #4976 the seam lets a raw NullReferenceException escape as BC's does, so
+    /// the shape can no longer invert a result — the typed shape gap below remains the contract.
     /// </summary>
     [Fact]
-    public void AssertError_SwallowsTheNre_WhichIsTheDefect()
+    public void AssertError_LetsTheNreEscape_SoTheSameShapeCannotInvertTheResult()
     {
-        var swallowed = false;
-        BcRuntime.NavMethodScope_AssertError(null!, () =>
+        var reached = false;
+        Assert.Throws<NullReferenceException>(() => BcRuntime.NavMethodScope_AssertError(null!, () =>
         {
+            reached = true;
             _ = typeof(MovedShape).GetProperty("GoneAway", PublicInstance)!.PropertyType;
-            swallowed = true;                 // never reached; the NRE happens above
-        });
-        Assert.False(swallowed);              // it threw…
-                                              // …and NavMethodScope_AssertError returned anyway.
+        }));
+        Assert.True(reached, "the body must actually run, else this arm proves nothing");
     }
 
     /// <summary>

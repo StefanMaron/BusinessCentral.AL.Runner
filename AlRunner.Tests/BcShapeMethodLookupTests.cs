@@ -86,20 +86,20 @@ public sealed class BcShapeMethodLookupTests
     }
 
     /// <summary>
-    /// The seam, on the raw expression the production sites used to contain: it returns NORMALLY.
-    /// In AL that is `asserterror` passing over a call real BC performs fine. This arm asserts
-    /// the FRAMEWORK behaviour the fix routes around, so it stays green after the fix.
+    /// The seam, on the raw expression the production sites used to contain. It returned
+    /// NORMALLY — in AL, `asserterror` passing over a call real BC performs fine. Since #4976 a
+    /// raw AmbiguousMatchException is not something BC's asserterror catches, so it escapes.
     /// </summary>
     [Fact]
-    public void AssertError_AbsorbsARawAmbiguousMatch_WhichIsWhatInvertsTheResult()
+    public void AssertError_LetsARawAmbiguousMatchEscape_SoItCannotInvertTheResult()
     {
         var reached = false;
 
-        BcRuntime.NavMethodScope_AssertError(null!, () =>
+        Assert.Throws<AmbiguousMatchException>(() => BcRuntime.NavMethodScope_AssertError(null!, () =>
         {
             reached = true;
             typeof(TwoEvaluates).GetMethod("Evaluate", PublicInstance);
-        });
+        }));
 
         Assert.True(reached, "the body must actually run, else this arm proves nothing");
     }
