@@ -24,7 +24,13 @@ public sealed class ExplicitEngineMinorWarningOncePerInvocationTests
 
     private const int SpawnTimeoutMs = 180_000;
 
-    private static (int ExitCode, string Output) Run(string artifactsRoot, string cacheDir, params string[] args)
+    /// <summary>
+    /// The start info of one runner child. The corrupt-Ncl case aborts the child on purpose
+    /// (BadImageFormatException out of the Cecil rewrite), so it is the child #5283 measured writing a
+    /// heap dump into the CI crash-dumps artifact; the clean case shares the builder, which is harmless.
+    /// </summary>
+    [ExpectedRunnerAbort]
+    internal static ProcessStartInfo BuildStartInfo(string artifactsRoot, string cacheDir, string[] args)
     {
         var sb = new StringBuilder(TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner")));
         foreach (var a in args) sb.Append(' ').Append(a);
@@ -42,6 +48,12 @@ public sealed class ExplicitEngineMinorWarningOncePerInvocationTests
         };
         psi.Environment["AL_RUNNER_ARTIFACTS_ROOT"] = artifactsRoot;
         psi.Environment.Remove("AL_RUNNER_VERBOSE");
+        return psi.SwitchOff();
+    }
+
+    private static (int ExitCode, string Output) Run(string artifactsRoot, string cacheDir, params string[] args)
+    {
+        var psi = BuildStartInfo(artifactsRoot, cacheDir, args);
 
         var output = new StringBuilder();
         using var proc = Process.Start(psi)!;

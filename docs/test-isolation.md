@@ -170,3 +170,30 @@ input that really contains it.
 **Not caught:** a call through a function pointer (`calli`), a mutation inside `AlRunner` that a
 test triggers, and `Directory.SetCurrentDirectory`, which a child inherits the same way but which
 is not an environment variable.
+
+## Runner children that abort on purpose
+
+`.github/workflows/bc-tests.yml` exports `DOTNET_DbgEnableMiniDump` for the whole C# job and uploads
+`crash-dumps/` as the artifact a real crash is diagnosed from. A child inherits it, so a runner that a
+test deliberately aborts (exit 134/139: a missing Win32 shim file, a random-bytes `Ncl.dll`) writes a heap
+dump of hundreds of MB into that artifact, where it sits beside the real one (#5283; #5201's crash was
+found next to such a dump).
+
+**The rule:** the builder of that child's `ProcessStartInfo` is a static method marked
+`[ExpectedRunnerAbort]` and ends in `.SwitchOff()` (`ExpectedRunnerAbort.cs`), which sets the variable
+to `0` in the CHILD's own environment. Never in the host's: that is the previous section's rule.
+
+`ExpectedRunnerAbortGuardTests` reads the start info without running an abort. It calls every marked
+builder and refuses one whose environment does not hold `0`; it fails if reflection and a source count
+disagree on how many builders carry the marker (a spelling reflection cannot see would otherwise drop
+out of the set), if a test source asserts exit 134/139 and marks no builder, and if one of the three
+classes named in `MeasuredAbortChildren` loses its marker.
+
+**Not caught:** a child that aborts while its test asserts something looser (`exit != 0`) and is not
+named in `MeasuredAbortChildren`. The census reads `== 134`, `Equal(134`, `is 134`, `or 139` and
+`InlineData(139)` and nothing else. Finding such a child is a measurement: run the class with
+`DOTNET_DbgEnableMiniDump=1`, `DOTNET_DbgMiniDumpType=1` (a small dump is enough to see one) and
+`DOTNET_DbgMiniDumpName=<scratch>/coredump.%p` in the host's shell environment, and look for a file.
+A watchdog `--test-timeout` abort and a server killed by `CliServer.DisposeAsync` write no dump
+(neither is a fault); the `ExplicitEngineMinorWarningOncePerInvocationTests` corrupt-Ncl child is the
+one that did.

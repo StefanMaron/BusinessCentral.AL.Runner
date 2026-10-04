@@ -30,6 +30,7 @@ public class Win32StubsEnvVarChildTests
     /// each abort would then write a heap dump of several hundred MB into the artifact that real crashes
     /// are diagnosed from (#5201 itself was). The child's own copy turns it off.
     /// </summary>
+    [ExpectedRunnerAbort]
     internal static ProcessStartInfo BuildChildStartInfo(string bundle, string? soValue)
     {
         var psi = new ProcessStartInfo
@@ -40,7 +41,7 @@ public class Win32StubsEnvVarChildTests
             RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
         };
-        psi.Environment["DOTNET_DbgEnableMiniDump"] = "0";
+        psi.SwitchOff();
         if (soValue is null) psi.Environment.Remove(Var); else psi.Environment[Var] = soValue;
         return psi;
     }
@@ -73,7 +74,7 @@ public class Win32StubsEnvVarChildTests
     public void ChildrenAreStartedWithTheCrashDumpSwitchOff(string? soValue)
     {
         var psi = BuildChildStartInfo("/unused", soValue);
-        Assert.Equal("0", psi.Environment["DOTNET_DbgEnableMiniDump"]);
+        Assert.Equal("0", psi.Environment[CrashDump.SwitchVariable]);
         // The variable under test is still handed over, or removed, exactly as asked.
         if (soValue is null) Assert.False(psi.Environment.ContainsKey(Var));
         else Assert.Equal(soValue, psi.Environment[Var]);
