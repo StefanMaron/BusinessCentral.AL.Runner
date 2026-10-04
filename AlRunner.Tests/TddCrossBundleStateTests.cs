@@ -57,8 +57,8 @@ public sealed class TddCrossBundleStateTests
     }
 
     /// <summary>
-    /// #5286, #5309: a table extension or a page extension, a RecordRef or FieldRef, and a Codeunit.Run whose first argument is not a
-    /// `Codeunit::Name` each make the edges of an earlier bundle readable, because each may start something a
+    /// #5286, #5309: a table extension or a page extension, a RecordRef or FieldRef, and a Codeunit.Run or Page.Run whose first argument is not a
+    /// `Codeunit::Name` or `Page::Name` each make the edges of an earlier bundle readable, because each may start something a
     /// LATER bundle declares; a run with none of them does not, and neither does a Codeunit.Run naming its
     /// codeunit. The control is the same bundles with only the last two.
     /// </summary>
@@ -70,6 +70,14 @@ public sealed class TddCrossBundleStateTests
     [InlineData("codeunit 2 \"B\" { procedure Q(Id: Integer) begin Codeunit.Run(Id); end; }", true)]
     [InlineData("codeunit 2 \"B\" { procedure Q() begin Codeunit.Run(Codeunit::\"A\"); end; }", false)]
     [InlineData("codeunit 2 \"B\" { procedure Q() var A: Codeunit \"A\"; begin A.Run(); end; }", false)]
+    [InlineData("codeunit 2 \"B\" { procedure Q(Id: Integer) begin Page.Run(Id); end; }", true)]
+    [InlineData("codeunit 2 \"B\" { procedure Q(Id: Integer) begin Page.RunModal(Id); end; }", true)]
+    [InlineData("codeunit 2 \"B\" { procedure Q() begin Page.Run(Page::\"A\"); end; }", false)]
+    [InlineData("codeunit 2 \"B\" { procedure Q() begin Page.RunModal(Page::\"A\"); end; }", false)]
+    [InlineData("codeunit 2 \"B\" { procedure Q() var P: Page \"A\"; begin P.RunModal(); end; }", false)]
+    // The forms that open a page the compile names or a dependency's need no clause (see KeyGraphProbe).
+    [InlineData("codeunit 2 \"B\" { procedure Q() var P: TestPage \"A\"; begin P.OpenEdit(); P.Qty.Lookup(); P.Edit().Invoke(); P.Close(); end; }", false)]
+    [InlineData("codeunit 2 \"B\" { procedure Q() begin CurrPage.Update(true); end; }", false)]
     [InlineData("codeunit 2 \"B\" { procedure Q() begin end; }", false)]
     public void KeyGraph_IsWantedWhenALaterBundleCouldBeStartedByAnOperation(string otherBundle, bool wanted)
     {

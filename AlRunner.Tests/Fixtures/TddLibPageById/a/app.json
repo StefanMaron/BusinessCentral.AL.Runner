@@ -1,0 +1,23 @@
+{
+  "id": "5309c0c1-1111-4e8f-9a2c-6d4e8f0a1b01",
+  "name": "Runner Tests Fixture - Tdd Lib Page By Id A",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "#5309 probe: a page opened by id in a library.",
+  "description": "#5309: a library opens a page by id, the page is in a bundle compiled after the library, and the test bundle depends on both.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 72850,
+      "to": 72859
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
