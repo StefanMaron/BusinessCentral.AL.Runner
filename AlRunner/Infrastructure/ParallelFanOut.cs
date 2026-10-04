@@ -600,21 +600,19 @@ internal static class ParallelFanOut
         }
 
         // #5129: BuildChildArgs hands every worker its own files, so the paths the caller named are
-        // written here from those files or not at all. A write that fails raises a run that would
-        // have exited 0 to 2, as the single-process run does (docs/cli-output-paths.md).
+        // written here from those files or not at all.
         var lostOutputs = new List<string>();
+        var lostShardCount = 0;
         List<BucketResult>? runBuckets = null;
         if (callerOut != null || callerJson)
         {
             var (buckets, lostShards) = JobsReports.Merge(shardResultFiles,
                 shards.Select(s => (IReadOnlyList<string>)s.Select(x => x.Name).ToList()).ToList(), bundles, shardEnded);
             runBuckets = buckets;
-            // A shard's results are not here, so the report omits them: ranked with a lost carried
-            // attempt (Program.cs `carryIncomplete`), above a plain test failure.
+            lostShardCount = lostShards.Count;
             foreach (var i in lostShards)
                 Console.Error.WriteLine($"jobs: shard {i} ended ({shardEnded[i]}) without handing back its "
                     + "results; its bundles are listed as failed to execute in the report");
-            if (lostShards.Count > 0 && worst < 2) worst = 2;
         }
         if (callerOut != null)
         {
@@ -630,12 +628,9 @@ internal static class ParallelFanOut
             if (problem != null) { Console.Error.WriteLine(problem); lostOutputs.Add("--output-junit"); }
             else Console.WriteLine($"JUnit XML -> {callerJunit} (merged from {procs.Count} worker(s))");
         }
-        if (lostOutputs.Count > 0 && worst == 0)
-        {
-            Console.Error.WriteLine($"al-runner ran to completion but could not write {string.Join(", ", lostOutputs)} "
-                + "(see the message above); exiting 2 because the file you asked for is not on disk.");
-            worst = 2;
-        }
+        if (lostOutputs.Count > 0)
+            Console.Error.WriteLine($"jobs: could not write {string.Join(", ", lostOutputs)} (see the message above)");
+        worst = JobsReports.Escalate(worst, lostShardCount, lostOutputs.Count);
         if (callerJson)
         {
             // After every escalation above: the document's `exitCode` is the run's, as in a plain run.

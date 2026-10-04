@@ -138,6 +138,20 @@ public sealed class JobsReportsMergeTests : IDisposable
         Assert.Empty(buckets.Skip(1).SelectMany(b => b.Tests));
     }
 
+    /// <summary>A lost worker makes the report short, so the run is at least 2; a report that could not be written
+    /// raises only a clean run. Neither lowers a more specific code (3: a bundle did not compile).</summary>
+    [Theory]
+    [InlineData(0, 0, 0, 0)]
+    [InlineData(1, 0, 0, 1)]
+    [InlineData(0, 1, 0, 2)]
+    [InlineData(1, 1, 0, 2)]
+    [InlineData(3, 1, 0, 3)]
+    [InlineData(0, 0, 1, 2)]
+    [InlineData(1, 0, 1, 1)]
+    [InlineData(3, 0, 1, 3)]
+    public void Escalate_RaisesOnlyWhatTheLossEarns(int worst, int lostShards, int lostOutputs, int expected)
+        => Assert.Equal(expected, JobsReports.Escalate(worst, lostShards, lostOutputs));
+
     /// <summary>--output-json's `generatedStubs` crosses the process boundary with the rest of the result: without
     /// it a `--tdd --jobs` document silently loses which generated members each test reached.</summary>
     [Fact]

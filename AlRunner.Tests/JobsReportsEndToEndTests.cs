@@ -65,7 +65,11 @@ public sealed class JobsReportsEndToEndTests
 
     // ── the report files, parsed ────────────────────────────────────────────────────────────
 
-    private static JsonDocument Doc(string text) => JsonDocument.Parse(text);
+    private static JsonDocument Doc(string text)
+    {
+        Assert.False(string.IsNullOrWhiteSpace(text), "the report was empty: it is missing, or it went somewhere else");
+        return JsonDocument.Parse(text);
+    }
 
     private static List<string> TestNames(Run r)
     {

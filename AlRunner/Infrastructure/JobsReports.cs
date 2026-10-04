@@ -55,4 +55,14 @@ internal static class JobsReports
         // OrderBy is stable: a bundle's own buckets, and bundles the caller did not name, keep their order.
         return (merged.OrderBy(At).ToList(), lost);
     }
+
+    /// <summary>The run's exit code once the reports are written. A worker whose results are missing leaves
+    /// the report short, so the run is at least 2, ranked with a lost carried attempt (Program.cs
+    /// `carryIncomplete`): a statement about the report, above a plain test failure and below a compile
+    /// failure. A report that could not be written raises only a run that would have exited 0, as the
+    /// single-process run does (docs/cli-output-paths.md), never one that already failed more specifically.</summary>
+    public static int Escalate(int worst, int lostShards, int lostOutputs)
+        => lostShards > 0 && worst < 2 ? 2
+         : lostOutputs > 0 && worst == 0 ? 2
+         : worst;
 }
