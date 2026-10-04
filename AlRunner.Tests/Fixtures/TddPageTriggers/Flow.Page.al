@@ -23,6 +23,16 @@ codeunit 72811 "PT Runner"
         Page.RunModal(Page::"PT Card");
     end;
 
+    procedure RunNonModal()
+    begin
+        Page.Run(Page::"PT Card");
+    end;
+
+    procedure RunModalById(PageId: Integer)
+    begin
+        Page.RunModal(PageId);
+    end;
+
     procedure RunCard()
     var P: Page "PT Card";
     begin

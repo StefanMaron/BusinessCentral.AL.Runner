@@ -99,65 +99,76 @@ internal sealed partial class TddCallGraph
         {
             if (node is NavSyntax.MethodDeclarationSyntax) continue;
             var page = KeyObjectName(obj, node);
-            if (PageTriggerName(Name(node.Name)) is not { } trigger)
-            {
-                _triggers.Add((node, ProcKey(page, PageCode)));
-                continue;
-            }
-            if (!ControlTriggers.Contains(trigger, StringComparer.OrdinalIgnoreCase))
-            {
-                _triggers.Add((node, ProcKey(page, trigger)));
-                continue;
-            }
-            // A control trigger answers a raise keyed by its control, and every coarse one (a control or page the
-            // call did not resolve); a control the graph could not read answers every control's raise.
-            _triggers.Add((node, ProcKey(page, trigger)));
-            _triggers.Add((node, ProcKey(page, trigger + (ControlNameOf(node) is { } control ? "@" + control : UnknownControl))));
+            foreach (var key in TriggerKeys(page, Name(node.Name), ControlNameOf(node)))
+                _triggers.Add((node, key));
         }
     }
 
-    /// <summary>The field or action a trigger sits in. Only the two syntaxes whose name is the control's name the
-    /// TestPage call uses are read; a trigger in anything else (a modify block, a part) is not attributed, which
-    /// reads as reached by every control raise.</summary>
+    /// <summary>The keys that start a trigger of <paramref name="page"/> named <paramref name="name"/>, sitting in the
+    /// control <paramref name="control"/> (null: not in one the graph could read). A trigger no operation is known to
+    /// start answers only the key every page operation raises. A control trigger answers a raise keyed by its control,
+    /// and the coarse raise a call that names no control makes; one in no readable control answers every control's
+    /// raise, so a control the graph misattributes can only over-annotate.</summary>
+    internal static IReadOnlyList<string> TriggerKeys(string page, string name, string? control)
+    {
+        if (PageTriggerName(name) is not { } trigger) return new[] { ProcKey(page, PageCode) };
+        if (!ControlTriggers.Contains(trigger, StringComparer.OrdinalIgnoreCase)) return new[] { ProcKey(page, trigger) };
+        return new[] { ProcKey(page, trigger), ProcKey(page, trigger + (control is { Length: > 0 } ? "@" + control : UnknownControl)) };
+    }
+
+    /// <summary>The keys a call raises for <paramref name="trigger"/> of the control <paramref name="control"/> on
+    /// <paramref name="page"/>: that control's, and the ones in no readable control; without a page or a control name,
+    /// the coarse key of every control of every page (<see cref="WildcardOf"/>); and the one every page operation
+    /// raises.</summary>
+    internal static IReadOnlyList<string> ControlRaiseKeys(string? page, string? control, string trigger)
+    {
+        var owner = page ?? AnyObject;
+        return page != null && !string.IsNullOrEmpty(control)
+            ? new[] { ProcKey(owner, trigger + "@" + control), ProcKey(owner, trigger + UnknownControl), ProcKey(owner, PageCode) }
+            : new[] { ProcKey(owner, trigger), ProcKey(owner, PageCode) };
+    }
+
+    /// <summary>The keys a page operation raises for the page triggers <paramref name="triggers"/> of
+    /// <paramref name="page"/> (every page when it is null): each trigger, the platform event around it, and the one
+    /// key every page operation raises.</summary>
+    internal static IReadOnlyList<string> PageRaiseKeys(string? page, IEnumerable<string> triggers)
+    {
+        var owner = page ?? AnyObject;
+        var keys = new List<string>();
+        foreach (var trigger in triggers)
+        {
+            keys.Add(ProcKey(owner, trigger));
+            if (PageEvents.TryGetValue(trigger, out var ev)) keys.Add(ProcKey(owner, ev));
+        }
+        keys.Add(ProcKey(owner, PageCode));
+        return keys;
+    }
+
+    /// <summary>The field or action a trigger sits in, or the control a page extension's modify block names. Only
+    /// these syntaxes are read; a trigger in anything else is not attributed, which reads as reached by every
+    /// control raise (over-annotating, never missing). The modify block's class is read by name: a BC that
+    /// renames it degrades to that, and the precision tests see it.</summary>
     private static string? ControlNameOf(Node trigger)
     {
         for (NavCA.SyntaxNode? n = trigger.Parent; n != null && n is not NavSyntax.ObjectSyntax; n = n.Parent)
         {
             if (n is NavSyntax.PageFieldSyntax field) return Name(field.Name as NavSyntax.IdentifierNameSyntax) is { Length: > 0 } f ? f : null;
             if (n is NavSyntax.PageActionSyntax action) return Name(action.Name as NavSyntax.IdentifierNameSyntax) is { Length: > 0 } a ? a : null;
+            if (n.GetType().Name.EndsWith("ModifyChangeSyntax", StringComparison.Ordinal)
+                && n.GetType().GetProperty("Name")?.GetValue(n) is NavSyntax.IdentifierNameSyntax modified)
+                return Name(modified) is { Length: > 0 } m ? m : null;
         }
         return null;
     }
 
-    /// <summary>Raises the page triggers <paramref name="triggers"/> of <paramref name="page"/> (every page when it
-    /// is null), and the platform event around each, and the key of the triggers no operation is known to start.</summary>
     private void RaisePage(Node caller, string? page, IEnumerable<string> triggers)
     {
-        var owner = page ?? AnyObject;
-        foreach (var trigger in triggers)
-        {
-            Raise(caller, ProcKey(owner, trigger));
-            if (PageEvents.TryGetValue(trigger, out var ev)) Raise(caller, ProcKey(owner, ev));
-        }
-        Raise(caller, ProcKey(owner, PageCode));
+        foreach (var key in PageRaiseKeys(page, triggers)) Raise(caller, key);
     }
 
-    /// <summary>Raises a control trigger (<c>OnValidate</c>, <c>OnAction</c> ...) for the control
-    /// <paramref name="control"/> of <paramref name="page"/>: that control's, and the ones the graph did not
-    /// attribute to a control. Without a page or a control name, every control's.</summary>
     private void RaiseControlTrigger(Node caller, string? page, string? control, string trigger)
     {
-        var owner = page ?? AnyObject;
-        if (page != null && !string.IsNullOrEmpty(control))
-        {
-            Raise(caller, ProcKey(owner, trigger + "@" + control));
-            Raise(caller, ProcKey(owner, trigger + UnknownControl));
-        }
-        else
-        {
-            Raise(caller, ProcKey(owner, trigger));
-        }
-        Raise(caller, ProcKey(owner, PageCode));
+        foreach (var key in ControlRaiseKeys(page, control, trigger)) Raise(caller, key);
     }
 
     /// <summary>The page a control or an action sits on: the one it is declared on, or the page a page extension
@@ -176,7 +187,8 @@ internal sealed partial class TddCallGraph
     /// <summary>What a call on a control starts on its page, and on the table of its field. SetValue, Value with an
     /// argument and an assignment type a value (the field's validate, and the row saved when the focus leaves it),
     /// Lookup also validates the selected value (not measured; counted), Drilldown and AssistEdit run their own
-    /// trigger only, and Invoke on a field is any of the three.</summary>
+    /// trigger only, and Invoke on a field is any of its triggers (a probe saw it run none: counted, an
+    /// over-approximation).</summary>
     private void AddControlPageOperation(NavCA.IControlSymbol control, string name, bool typesValue, Node caller)
     {
         var page = PageOfSymbol(control);
@@ -197,11 +209,8 @@ internal sealed partial class TddCallGraph
         else if (name.Equals("Drilldown", StringComparison.OrdinalIgnoreCase)) RaiseControlTrigger(caller, page, field, "OnDrillDown");
         else if (name.Equals("AssistEdit", StringComparison.OrdinalIgnoreCase)) RaiseControlTrigger(caller, page, field, "OnAssistEdit");
         else if (name.Equals("Invoke", StringComparison.OrdinalIgnoreCase))
-        {
             foreach (var trigger in new[] { "OnLookup", "OnDrillDown", "OnAssistEdit", "OnAction" })
                 RaiseControlTrigger(caller, page, field, trigger);
-            RaisePage(caller, null, AllOps);
-        }
     }
 
     /// <summary>Invoke on an action starts its OnAction, whatever else it does: a page opened by its
@@ -212,24 +221,18 @@ internal sealed partial class TddCallGraph
             RaiseControlTrigger(caller, PageOfSymbol(action), action.Name, "OnAction");
     }
 
-    /// <summary>Every page a page hosts as a part, itself first: opening or moving a page runs the open and row
-    /// triggers of its parts' pages as well (a part's OnOpenPage runs with its parent's, corpus
-    /// testpart/TestPartOnOpenPageError.al). Bounded by the pages already seen.</summary>
-    private static List<NavCA.ITypeSymbol> WithParts(NavCA.ITypeSymbol? page)
+    /// <summary>The page itself and every page it hosts as a part, in a group or not: opening or moving a page runs
+    /// the open and row triggers of its parts' pages as well (a part's OnOpenPage runs with its parent's, corpus
+    /// testpart/TestPartOnOpenPageError.al). A part page cannot host a part (AL0215), so there is no deeper level.</summary>
+    private static List<NavCA.ITypeSymbol> WithParts(NavCA.ITypeSymbol page)
     {
-        var pages = new List<NavCA.ITypeSymbol>();
-        void Walk(NavCA.ITypeSymbol p)
+        var pages = new List<NavCA.ITypeSymbol> { page };
+        void Walk(NavCA.IControlSymbol c)
         {
-            if (pages.Any(x => x.Name == p.Name && x.GetType() == p.GetType())) return;
-            pages.Add(p);
-            foreach (var control in p.GetMembers().OfType<NavCA.IControlSymbol>()) WalkControl(control);
+            if (c.RelatedPartSymbol is { } part && !pages.Any(x => x.Name == part.Name)) pages.Add(part);
+            foreach (var child in c.Controls) Walk(child);
         }
-        void WalkControl(NavCA.IControlSymbol c)
-        {
-            if (c.RelatedPartSymbol is { } part) Walk(part);
-            foreach (var child in c.Controls) WalkControl(child);
-        }
-        if (page != null) Walk(page);
+        foreach (var control in page.GetMembers().OfType<NavCA.IControlSymbol>()) Walk(control);
         return pages;
     }
 
@@ -325,7 +328,6 @@ internal sealed partial class TddCallGraph
         }
         var page = pageType.NavTypeKind == NavCA.NavTypeKind.TestPart ? PageOfTestPart(pageType) : TestPageTarget(pageType);
         AddTestPagePageOperation(page, "Close", caller);
-        RaiseControlTrigger(caller, page?.Name is { Length: > 0 } n ? n : null, null, "OnAction");
         return true;
     }
 }

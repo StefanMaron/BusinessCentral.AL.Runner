@@ -18,13 +18,13 @@ internal sealed partial class TddCallGraph
     private static readonly string[] SetValueOperations = { "Validate", "Insert", "Modify", "Rename" };
     private static readonly string[] NewRecordOperations = { "Insert" };
 
-    /// <summary>Records what a TestPage call starts, and says whether the call was one: a call on a TestPage
-    /// or on one of its controls or actions is never a record operation or a Codeunit.Run, so the caller stops
-    /// there. Of a control's members a write starts table code: SetValue, Value with an argument (the same
-    /// setter), and Activate, which moves the focus and may insert a draft row; Lookup validates the selected
-    /// value too (not measured, counted); Lookup, Drilldown, AssistEdit and Invoke start the field's own
-    /// triggers, on the table and on the page; the reads (Value with none, AsInteger, AssertEquals, Caption,
-    /// Editable, ...) start none. A page's own code is TddCallGraph.PageTriggers.cs (#5309).</summary>
+    /// <summary>Records what a TestPage call starts, and says whether the call was one: a call on a TestPage or on
+    /// one of its controls or actions is never a record operation or a Codeunit.Run, so the caller stops there. Of
+    /// a control's members a write starts table code: SetValue, Value with an argument (the same setter), and
+    /// Activate, which moves the focus and may insert a draft row; Lookup validates the selected value too (not
+    /// measured, counted) and starts the table field's OnLookup; the reads (Value with none, AsInteger,
+    /// AssertEquals, Caption, Editable, ...) start none. A page's own code, which the same calls start, is
+    /// TddCallGraph.PageTriggers.cs (#5309).</summary>
     private bool AddTestPageOperation(NavCA.SemanticModel model, NavSyntax.MemberAccessExpressionSyntax mae,
         string name, int argumentCount, Node caller)
     {
@@ -45,11 +45,7 @@ internal sealed partial class TddCallGraph
                 RaiseTableTrigger(caller, table, "OnLookup");
                 return true;
             }
-            else
-            {
-                foreach (var trigger in FieldPageTriggers(name)) RaiseTableTrigger(caller, table, trigger);
-                return true;
-            }
+            else return true;
         }
         else if (symbol is NavCA.IActionSymbol action)
         {
@@ -70,16 +66,6 @@ internal sealed partial class TddCallGraph
 
         RaiseOperations(caller, operations, table);
         return true;
-    }
-
-    /// <summary>The table-field triggers a page control's call starts: Drilldown and AssistEdit their own, Invoke
-    /// any of the three; every other member of a control reads.</summary>
-    private static IEnumerable<string> FieldPageTriggers(string name)
-    {
-        if (name.Equals("Drilldown", StringComparison.OrdinalIgnoreCase)) return new[] { "OnDrillDown" };
-        if (name.Equals("AssistEdit", StringComparison.OrdinalIgnoreCase)) return new[] { "OnAssistEdit" };
-        if (name.Equals("Invoke", StringComparison.OrdinalIgnoreCase)) return new[] { "OnLookup", "OnDrillDown", "OnAssistEdit" };
-        return Array.Empty<string>();
     }
 
     private void RaiseTableTrigger(Node caller, string? table, string trigger)

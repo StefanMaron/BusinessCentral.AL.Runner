@@ -84,7 +84,7 @@ internal sealed partial class TddCallGraph
 
     /// <summary>The keys whose raisers reach something keyed by <paramref name="key"/>: the key itself and,
     /// for an entry point, the wildcard.</summary>
-    private static IEnumerable<string> RaiseKeys(string key)
+    internal static IEnumerable<string> RaiseKeys(string key)
     {
         yield return key;
         if (WildcardOf(key) is { } wildcard) yield return wildcard;

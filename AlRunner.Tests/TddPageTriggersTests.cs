@@ -44,13 +44,16 @@ public sealed class TddPageTriggersTests : IClassFixture<TddPageTriggersRun>
     private static readonly string[] Open =
     {
         "MInit", "MOpen", "MFind", "MNext", "MAfterGet", "MAfterGetCurr", "MNew", "MBackground",
-        "MEvtOpen", "MEvtAfterGet", "MExtOpen", "MExtAfterGet",
+        "MEvtOpen", "MEvtAfterGet", "MEvtAfterGetCurr", "MEvtNew", "MExtOpen", "MExtAfterGet",
     };
 
     // The row saved when a move, a close or a typed value leaves it: the page's insert and modify triggers.
-    private static readonly string[] Save = { "MInsert", "MModify", "MEvtModify" };
+    private static readonly string[] Save = { "MInsert", "MModify", "MEvtInsert", "MEvtModify" };
 
-    private static readonly string[] Close = { "MQueryClose", "MClose", "MEvtClose" };
+    private static readonly string[] Close = { "MQueryClose", "MClose", "MEvtClose", "MEvtQuery" };
+
+    // Every trigger and event of the page, as Page.RunModal and a built-in action that opens a page start them.
+    private static readonly string[] Every = Open.Concat(Close).Concat(Save).Concat(new[] { "MDelete", "MEvtDelete" }).ToArray();
 
     /// <summary>What a TestPage operation starts on its page, each against what opening alone starts.</summary>
     [SkippableFact]
@@ -73,9 +76,12 @@ public sealed class TddPageTriggersTests : IClassFixture<TddPageTriggersRun>
     {
         TestArtifacts.SkipIfMissing();
 
-        AssertStubs("SetValue_OnAFieldWithAPageTrigger_StartsThatFieldsTriggerAndTheSave", Open.Concat(Save).Append("MQtyValidate").ToArray());
+        // The Qty control has a trigger of its own and one a page extension's modify block adds: both are Qty's.
+        AssertStubs("SetValue_OnAFieldWithAPageTrigger_StartsThatFieldsTriggerAndTheSave", Open.Concat(Save).Concat(new[] { "MQtyValidate", "MExtModifyQty" }).ToArray());
         AssertStubs("ValueAssigned_OnAFieldWithAPageTrigger_StartsThatFieldsTrigger", Open.Concat(Save).Append("MNoteValidate").ToArray());
         AssertStubs("SetValue_OnAFieldAPageExtensionAdds_StartsTheExtensionsFieldTrigger", Open.Concat(Save).Append("MExtValidate").ToArray());
+        AssertStubs("Activate_OnAControl_StartsTheRowTriggersAndTheInsert", Open.Append("MInsert").Append("MEvtInsert").ToArray());
+        AssertStubs("New_OnAnOpenPage_AddsTheSaveOfTheRow", Open.Concat(Save).ToArray());
         AssertStubs("Reading_AnOpenPage_StartsNoMoreThanTheOpen", Open);
     }
 
@@ -91,6 +97,8 @@ public sealed class TddPageTriggersTests : IClassFixture<TddPageTriggersRun>
 
         AssertStubs("Drilldown_StartsTheFieldsDrillDownOnly", Open.Append("MQtyDrill").ToArray());
         AssertStubs("AssistEdit_StartsTheFieldsAssistEditOnly", Open.Append("MQtyAssist").ToArray());
+        // Invoke on a field is any of its triggers; a probe saw it run none, so this is an over-approximation.
+        AssertStubs("Invoke_OnAField_StartsEachTriggerOfThatControl", Open.Concat(new[] { "MQtyLookup", "MQtyDrill", "MQtyAssist" }).ToArray());
         foreach (var test in new[] { "Lookup_OnAFieldWithAPageLookup_StartsTheLookupAndValidates", "Lookup_OnAFieldWithOnlyATableLookup_StartsTheTablesLookup" })
         {
             var stubs = _run.StubsOf(test);
@@ -117,6 +125,7 @@ public sealed class TddPageTriggersTests : IClassFixture<TddPageTriggersRun>
         AssertStubs("Invoke_OnAnotherAction_StartsThatActionsOnActionOnly", Open.Append("MOther").ToArray());
         AssertStubs("Invoke_OnAnActionAPageExtensionAdds_StartsItsOnAction", Open.Append("MExtAction").ToArray());
         AssertStubs("Invoke_InAHelperTheTestCalls_StartsTheOnAction", Open.Append("MGo").ToArray());
+        AssertStubs("Invoke_OnAnActionOfATestPartsPage_StartsThatPagesOnAction", "MPartOpen", "MLeafOpen", "MPartGo");
     }
 
     /// <summary>
@@ -133,6 +142,9 @@ public sealed class TddPageTriggersTests : IClassFixture<TddPageTriggersRun>
         AssertStubs("Invoke_OnAnActionThatUpdatesThroughCurrPage_StartsTheModifyTrigger", Open.Concat(Save).ToArray());
         AssertStubs("Invoke_OnAnActionThatClosesThroughCurrPage_StartsTheCloseTriggers", Open.Concat(Close).Concat(Save).ToArray());
         AssertStubs("Invoke_OnAnActionThatModifiesTheRecord_StartsNoPageSave", Open);
+        // A page extension's code asks the page it extends; a close of a RecordRef is not a close of the page.
+        AssertStubs("Invoke_OnAnActionOfAPageExtensionThatSavesThroughCurrPage_StartsTheModifyTrigger", Open.Concat(Save).ToArray());
+        AssertStubs("Invoke_OnAnActionThatClosesARecordRef_StartsNoCloseTrigger", Open);
     }
 
     /// <summary>
@@ -145,13 +157,17 @@ public sealed class TddPageTriggersTests : IClassFixture<TddPageTriggersRun>
     {
         TestArtifacts.SkipIfMissing();
 
-        var every = Open.Concat(Close).Concat(Save).Append("MDelete").ToArray();
-        AssertStubs("RunModalOfAPage_StartsEveryTriggerOfThePage", every);
-        AssertStubs("RunModalOnAPageVariable_StartsEveryTriggerOfThePage", every);
+        AssertStubs("RunModalOfAPage_StartsEveryTriggerOfThePage", Every);
+        AssertStubs("RunModalOnAPageVariable_StartsEveryTriggerOfThePage", Every);
+        AssertStubs("Run_OfAPageWithATrap_StartsEveryTriggerOfThePage", Every);
         AssertStubs("OK_OnAModalPage_StartsTheCloseTriggers", "MDlgQuery", "MDlgClose");
-        var edit = _run.StubsOf("Edit_OnAListPage_StartsTheTriggersOfAPageTheCallCannotName");
-        foreach (var member in every.Concat(new[] { "MPartOpen", "MEvtQuietOpen", "MDlgQuery" }))
-            Assert.Contains(Stub(member), edit);
+        // A page named by an id, a lookup page and an Edit of a list page cannot be named: every page counts.
+        foreach (var test in new[] { "Edit_OnAListPage_StartsTheTriggersOfAPageTheCallCannotName", "RunModalOfAPageNamedById_StartsEveryTriggerOfEveryPage" })
+        {
+            var stubs = _run.StubsOf(test);
+            foreach (var member in Every.Concat(new[] { "MPartOpen", "MLeafOpen", "MEvtQuietOpen", "MDlgQuery" }))
+                Assert.Contains(Stub(member), stubs);
+        }
     }
 
     /// <summary>
@@ -163,12 +179,12 @@ public sealed class TddPageTriggersTests : IClassFixture<TddPageTriggersRun>
     {
         TestArtifacts.SkipIfMissing();
 
-        AssertStubs("OpenView_OnAParentPage_StartsThePartsOpenTriggers", "MPartOpen");
-        AssertStubs("First_OnAPart_AddsThePartsSaveOfTheRow", "MPartOpen", "MPartModify");
+        AssertStubs("OpenView_OnAParentPage_StartsThePartsOpenTriggers", "MPartOpen", "MLeafOpen");
+        AssertStubs("First_OnAPart_AddsThePartsSaveOfTheRow", "MPartOpen", "MLeafOpen", "MPartModify");
         AssertStubs("QuietPage_StartsOnlyItsOwnOpenEvent", "MEvtQuietOpen");
         AssertStubs("NoPage_IsNotAnnotated");
         // Every stub is generated, and the tests naming one are counted: only the test with no page is not.
-        Assert.Equal(28, _run.Tests.Count);
-        Assert.Equal(27, _run.Tests.Count(t => t.TryGetProperty("generatedStubs", out _)));
+        Assert.Equal(36, _run.Tests.Count);
+        Assert.Equal(35, _run.Tests.Count(t => t.TryGetProperty("generatedStubs", out _)));
     }
 }

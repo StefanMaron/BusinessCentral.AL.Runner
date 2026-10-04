@@ -29,6 +29,8 @@ page 72803 "PT Card"
             // What a page's code asks of its own page: a save runs the page's modify trigger, a close its close triggers.
             action(SaveRow) { trigger OnAction() begin Rec.Qty := 9; CurrPage.SaveRecord(); end; }
             action(UpdateRow) { trigger OnAction() begin Rec.Qty := 9; CurrPage.Update(true); end; }
+            // A close of a RecordRef is not a close of the page.
+            action(CloseRecRef) { trigger OnAction() var RR: RecordRef; begin RR.Open(Database::"PT Rec"); RR.Close(); end; }
             action(CloseIt) { trigger OnAction() begin CurrPage.Close(); end; }
             action(RecModify) { trigger OnAction() begin Rec.Qty := 9; Rec.Modify(true); end; }
             action(Other) { trigger OnAction() var T: Codeunit "PT Target"; R: Integer; begin R := T.MOther(1); end; }
@@ -54,6 +56,11 @@ pageextension 72804 "PT Card Ext" extends "PT Card"
 {
     layout
     {
+        // A trigger in a modify block: the control it belongs to is not read, so every control's validate starts it.
+        modify(Qty)
+        {
+            trigger OnAfterValidate() var T: Codeunit "PT Target"; R: Integer; begin R := T.MExtModifyQty(1); end;
+        }
         addlast(Content)
         {
             field(Extra; Rec.Extra)
@@ -67,6 +74,8 @@ pageextension 72804 "PT Card Ext" extends "PT Card"
         addlast(Processing)
         {
             action(ExtGo) { trigger OnAction() var T: Codeunit "PT Target"; R: Integer; begin R := T.MExtAction(1); end; }
+            // A page extension's code asks the page it extends to save.
+            action(ExtSave) { trigger OnAction() begin Rec.Qty := 9; CurrPage.SaveRecord(); end; }
         }
     }
     trigger OnOpenPage() var T: Codeunit "PT Target"; R: Integer; begin R := T.MExtOpen(1); end;
