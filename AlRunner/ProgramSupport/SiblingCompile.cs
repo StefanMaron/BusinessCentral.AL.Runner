@@ -160,7 +160,29 @@ internal static partial class ProgramSupport
         // → Application) and the resolver throws on cycles. Mirrors the app.json path.
         var resolver = new DependencyResolver(packageCacheDirs);
         var rootDeps = manifest.Dependencies.Concat(AppLoader.ImplicitRoots(manifest)).ToList();
-        var transitive = resolver.Resolve(rootDeps);
+        IReadOnlyList<(AppManifest Manifest, string AppPath)> transitive;
+        try
+        {
+            transitive = resolver.Resolve(rootDeps);
+        }
+        // #5302: a declared dependency no cache holds (or holds only below the minimum) is a refusal,
+        // not an abort. Same report and exit code as the pre-pass handlers in Program.cs (#2095): a
+        // provisioning gap is "the run could not execute" (README, Exit Codes), never 3, which says
+        // this app's AL did not compile.
+        catch (Exception ex) when (ex is AlRunner.Infrastructure.IDependencyProvisioningDiagnostic diag)
+        {
+            Console.Error.WriteLine();
+            Console.Error.WriteLine(diag.ToDetailedMessage(AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString()));
+            Console.Error.WriteLine();
+            return 2;
+        }
+        // Anything else the resolver throws (a dependency cycle, two packages claiming one app id)
+        // reached Main unhandled the same way.
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"--precompile: DEP-RESOLVE-FAIL for {manifest.Publisher}_{manifest.Name} v{manifest.Version}: {ex.GetType().Name}: {ex.Message}");
+            return 2;
+        }
         // For apps with empty <Dependencies/> (e.g. Customizations.app), the explicit
         // dep list is empty but the AL source may still use BaseApp/System Application
         // symbols via `using` statements. Enable the all-packages fallback so the compiler
