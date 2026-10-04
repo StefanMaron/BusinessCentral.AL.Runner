@@ -48,15 +48,22 @@ public sealed class BundleRunDeferralTests
         Assert.False(Defers(run: 1, listed: 1, tdd: true));
     }
 
+    private static readonly (int Run, int Listed)[] Shapes = { (1, 1), (1, 2), (2, 2), (3, 4) };
+
     [Fact]
-    public void PerSuite_And_Affected_NeverDefer()
+    public void PerSuite_NeverDefers()
     {
         foreach (var tdd in new[] { false, true })
-        foreach (var (run, listed) in new[] { (1, 1), (1, 2), (2, 2), (3, 4) })
-        {
+        foreach (var (run, listed) in Shapes)
             Assert.False(Defers(run, listed, tdd, bundled: false));
+    }
+
+    [Fact]
+    public void Affected_NeverDefers()
+    {
+        foreach (var tdd in new[] { false, true })
+        foreach (var (run, listed) in Shapes)
             Assert.False(Defers(run, listed, tdd, affected: true));
-        }
     }
 
     /// <summary>AL_RUNNER_SEQUENTIAL_BUNDLES=1 keeps one pass per bundle for several bundles, as before; it
