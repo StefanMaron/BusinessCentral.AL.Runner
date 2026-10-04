@@ -42,6 +42,7 @@ internal sealed partial class TddCallGraph
         var g = new TddCallGraph();
         int invocations = 0, edges = 0, handlerEdges = 0, subscriberEdges = 0, failed = 0;
         var objects = trees.SelectMany(t => t.GetRoot().DescendantNodes().OfType<NavSyntax.ObjectSyntax>()).ToList();
+        g.CollectXmlPortTables(trees);
         foreach (var tree in trees)
         {
             NavCA.SemanticModel model;

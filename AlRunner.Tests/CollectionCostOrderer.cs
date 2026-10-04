@@ -492,6 +492,14 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // that (TddLibTestPageTests ran at 75s on CI against 32s locally, #5321; the sibling above ran at 43.2s on CI
             // against 44s locally), to be replaced by the first CI leg's figure.
             ["TddLibPageByIdTests"] = 119,
+            // #5322: a library that runs a report, a query and an xmlport by id: six listing orders of one run each and
+            // four runs on one cache root for each of two orders. 57s on a local Release run; the figure is that local
+            // one, an ESTIMATE (the TddLib* classes read about the same on CI, #5316), to be replaced by the first CI
+            // leg's figure.
+            ["TddLibObjectTriggersTests"] = 57,
+            // #5322: a library report that a later bundle extends: the same six orders and two cache sequences. 56s on a
+            // local Release run, recorded the same way.
+            ["TddLibReportExtensionTests"] = 56,
             // #5027/#5035/#5050: --watch processes, one of them through nine cycles. CI 81.9s (BC 27.5) and 80.2s (BC
             // 28.5) on main run 37161245486, the lower leg rounded down (#5311).
             ["WatchAffectedSelectionTests"] = 80,

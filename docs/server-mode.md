@@ -1313,10 +1313,34 @@ It runs the same generation as the CLI and `--watch --tdd` (`--guide`, "TDD MODE
   Page code that calls `CurrPage.Update`, `SaveRecord` or `Close` starts the row, save or close triggers of its page.
   `Page.Run` and `Page.RunModal` of a named page, and `Run` or `RunModal` on a `Page` variable, start every trigger of
   that page (a handler that replaces the page counts anyway), and of every page when it is named by an id or an
-  expression. A trigger name this list does not know is started by every one of these. Not followed, so a test that
-  reaches a stub only that way carries no `generatedStubs`: the triggers and events of a report, query or xmlport (#5322), a
-  `TestRequestPage`, the page an action's `RunObject` opens, and a table operation, `Codeunit.Run` or page operation
-  inside a precompiled `.app` that the test only calls.
+  expression. A trigger name this list does not know is started by every one of these.
+  A report, a query and an xmlport run their own triggers too (#5322), with the same mechanism: the call is a raise of a
+  key under the object's name (`TddCallGraph.ObjectTriggers.cs`). `Run`, `RunModal`, `Execute`, `Print` and `SaveAs...` on a
+  `Report` variable or on `Report::"X"` (and any `Report` member this list does not know) start `OnInitReport`, the report's
+  triggers (`OnPreReport`, `OnPostReport` and its data items' `OnPreDataItem`, `OnAfterGetRecord`, `OnPostDataItem`) with
+  those of its report extensions (the corpus runs them in `handlers/TestReportRunExecution.al` and
+  `reportextensiontrigger/TestReportExtensionTriggers.al`), and its request page's triggers (`OnOpenPage`,
+  `OnQueryClosePage`, `OnClosePage`, whether or not a handler opens it: an over-approximation); `RunRequestPage` only
+  `OnInitReport` and the request page's; `UseRequestPage` and `SetTableView` only `OnInitReport`, which a report variable
+  runs at its first use. A request page control's trigger (`OnValidate`, `OnLookup`, `OnAction`) counts through a
+  `TestRequestPage` control call in a handler, for every page's controls (the call names no page the graph can read). A
+  report named by an id or an expression counts as every report. A query's `Open`, `SaveAsCsv`, `SaveAsXml` and
+  `SaveAsJson` (and any member this list does not know) start `OnBeforeOpen`; `Read`, `Close`, `SetFilter`, `ColumnName`
+  and the like start nothing (measured: `Read` before `Open` ran no trigger). An xmlport's `Export` starts
+  `OnInitXmlPort`, `OnPreXmlPort`, `OnPostXmlPort` and its element triggers `OnPreXmlItem`, `OnAfterGetRecord` and
+  `OnBeforePassVariable` / `OnBeforePassField`; `Import` the first three of those and `OnAfterInitRecord`, the
+  `OnBefore` and `OnAfter` of `InsertRecord` and `ModifyRecord`, and `OnAfterAssignVariable` / `OnAfterAssignField`, and
+  writes each of its table elements' tables (`Validate`, `Insert` and `Modify`, with their triggers and events; measured: an
+  import ran the field's `OnValidate`, and the `OnInsert` of a new key or the `OnModify` of an existing one with
+  `AutoReplace`, no delete and no rename); `Run` (and any member this list does not know) all of them;
+  `SetDestination`, `SetSource` and the like only `OnInitXmlPort`. A trigger of one of the three that this list does not
+  know is started by every operation of its kind. The platform publishes no event around these triggers (the compiler
+  answers AL0280 for a subscriber of every trigger-shaped name tried), so there is no subscriber to follow. A request page trigger
+  is keyed as a page trigger of the same name, so a report and a page of one name, and a request page's `OnAfterGetRecord`
+  and a data item's, count as one: an over-approximation. Not followed, so a test that reaches a stub only that way
+  carries no `generatedStubs`: the methods of a `TestRequestPage` itself (the report is counted at its `Run`), the page,
+  report or query an action's `RunObject` opens, and a table operation, `Codeunit.Run`, or page, report, query or xmlport
+  operation inside a precompiled `.app` that the test only calls.
   A procedure of another `sourcePaths` bundle
   is (a test library app compiled separately, #5161): when the member's call sits in a library, a
   test that calls a procedure of it that reaches the call, directly or through further libraries,
