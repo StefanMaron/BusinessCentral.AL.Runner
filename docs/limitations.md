@@ -1797,6 +1797,24 @@ must therefore BE one (`NavCSideException` etc.), and a runner limit must be a t
 it escapes `asserterror` as a CLR exception. A corpus test cannot express this: a test reaching
 it always fails on BC.
 
+#### A missing object: BC's AL error when the run is complete, a loud refusal when it is not
+
+`Codeunit.Run(<id>)` and `RecordRef.Open(<id>)` of an id no installed app declares raise BC's own
+"You tried to invoke the CodeUnit/Table object with the ID ... An object with that ID does not
+exist" AL error (`NavMetadataNotFoundException`, remapped by `NavMethodScope`), so a bare
+`asserterror` passes; a guarded `Ok := Codeunit.Run(<missing>)` raises it too instead of returning
+false, because BC resolves the target before the run begins. Measured on the service tier by corpus
+codeunits `Test RecordRef Open Missing` and `Test Codeunit Run Missing`.
+
+The runner raises that error only when `ProvisionGapLog.CanEstablishAbsence` holds: no provisioning
+gap, no app without an implementation and no unsupplied platform floor was recorded for the run
+(#5339). With one recorded, the id may be declared by a package the run could not load, and a clean
+AL error would let `asserterror` swallow the provisioning gap, so the refusal stays a CLR exception
+that escapes it: `MissingDependencyCodeunitException` for a codeunit, an `InvalidOperationException`
+naming the gap for a table. Codeunit ids in the system (1-9999) and test-toolkit (130000-139999)
+ranges keep the older contract of running as a silent no-op when missing, which is not BC's
+behaviour and is not changed here.
+
 ### The `!` sweep — 73 more member lookups that used to fail as a silent null
 
 [#3051](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3051) closed the other

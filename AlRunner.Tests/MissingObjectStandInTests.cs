@@ -14,6 +14,7 @@
 // (a CLR exception asserterror cannot swallow) instead of the clean AL error. Each gap source
 // below has its own arm, so one of them cannot stand in for the others.
 using System;
+using System.IO;
 using AlRunner;
 using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
@@ -147,6 +148,70 @@ public sealed class MissingObjectStandInTests
             Assert.False(ProvisionGapLog.CanEstablishAbsence, "a restored bundle keeps the gap it had");
         }
         finally { ProvisionGapLog.Reset(); }
+    }
+
+    // ── the resolver is where a gap is found: it must tell the log, or the refusal above never fires ──
+
+    private static DependencyResolver ResolveInto(string dirName, byte[] app, string appId, string name, string publisher)
+    {
+        var dir = Path.Combine(TestScratch.Dir("al-runner-missing-object-tests"), dirName);
+        Directory.CreateDirectory(dir);
+        File.WriteAllBytes(Path.Combine(dir, $"{publisher}_{name}.app"), app);
+        var resolver = new DependencyResolver(new[] { dir });
+        resolver.Resolve(new[] { new DependencyRef(Guid.Parse(appId), name, publisher, new Version(1, 0, 0, 0)) });
+        return resolver;
+    }
+
+    [SkippableFact]
+    public void AnUnsuppliedPlatformFloor_IsAGap_SoAMissingObjectKeepsTheRefusal()
+    {
+        RequireEngine();
+        WithGap(ProvisionGapLog.Reset, () =>
+        {
+            // The dependent ships AL source and no payload, and declares a floor (System >= 28.0) that no
+            // searched directory supplies: DependencyResolverTests pins the report; this pins what it does.
+            const string id = "00000000-0000-0000-0000-0000005339a1";
+            var resolver = ResolveInto("floor-gap",
+                DependencyResolverTests.MakeMinimalApp(id, "Floored", "Contoso", "1.0.0.0",
+                    r2r: false, alSource: true, platform: "28.0.0.0"), id, "Floored", "Contoso");
+
+            Assert.NotEmpty(resolver.ProvisioningGaps);
+            Assert.False(ProvisionGapLog.CanEstablishAbsence);
+            Assert.IsType<InvalidOperationException>(BcRuntime.MissingTable(MissingId));
+        });
+    }
+
+    [SkippableFact]
+    public void ADependencyNoLoaderTierCanServe_IsAGap_SoAMissingObjectKeepsTheRefusal()
+    {
+        RequireEngine();
+        WithGap(ProvisionGapLog.Reset, () =>
+        {
+            const string id = "00000000-0000-0000-0000-0000005339a2";
+            var resolver = ResolveInto("unservable",
+                DependencyResolverTests.MakeMinimalApp(id, "SymbolsOnly", "Contoso", "1.0.0.0",
+                    r2r: false, alSource: false, platform: null), id, "SymbolsOnly", "Contoso");
+
+            Assert.NotEmpty(resolver.UnservableDependencies);
+            Assert.False(ProvisionGapLog.CanEstablishAbsence);
+        });
+    }
+
+    [SkippableFact]
+    public void ACompleteDependency_IsNotAGap_SoAMissingObjectStaysAbsent()
+    {
+        RequireEngine();
+        WithGap(ProvisionGapLog.Reset, () =>
+        {
+            const string id = "00000000-0000-0000-0000-0000005339a3";
+            var resolver = ResolveInto("complete",
+                DependencyResolverTests.MakeMinimalApp(id, "Precompiled", "Contoso", "1.0.0.0",
+                    r2r: true, alSource: false, platform: "28.0.0.0"), id, "Precompiled", "Contoso");
+
+            Assert.Empty(resolver.ProvisioningGaps);
+            Assert.Empty(resolver.UnservableDependencies);
+            Assert.True(ProvisionGapLog.CanEstablishAbsence);
+        });
     }
 
     // ── Codeunit.Run: BC resolves the target before the run, outside the guarded run's try ──

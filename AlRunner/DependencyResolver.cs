@@ -306,6 +306,9 @@ public sealed class DependencyResolver
             + $"\n      it — rather than serving it from the compiled-dependency cache, the service-tier"
             + $"\n      DLLs or an already-loaded assembly — the compile has no {floor.Name} symbols and"
             + $"\n      ends in \"EMIT-ZERO — 0 sources emitted\" naming nothing (#3719).");
+        // #5339: this list never passes through ProvisionGapLog.Report, so say so here, or a missing-object
+        // refusal would read this run as complete and call an object of the unsupplied floor "absent".
+        AlRunner.Infrastructure.ProvisionGapLog.NoteDependencyGap();
     }
 
     /// <summary>
@@ -520,6 +523,7 @@ public sealed class DependencyResolver
             {
                 _unservable.Add(BuildUnservableReport(dep, best, candidates, Tier));
                 _unservableApps.Add(($"{best.Manifest.Publisher}/{best.Manifest.Name}", best.Path));
+                AlRunner.Infrastructure.ProvisionGapLog.NoteDependencyGap(); // #5339, as ReportUnsuppliableFloor
             }
 
             found = best;
