@@ -21,6 +21,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **cli:** a missing dependency package exits 2 on every in-process path, as on the pre-passes
 - **jobs:** --tdd re-run re-owns the test codeunit claims a discarded pass made
 - **tdd:** --tdd --per-suite reports a dropped test codeunit as FAILED like --tdd
 - **tdd:** follow a report's, a query's and an xmlport's triggers so a stub reached through them is annotated
