@@ -42,6 +42,17 @@ codeunit 72712 "TPLT Tests"
     end;
 
     [Test]
+    procedure SetValue_OnAControlOfALibrarysPageExtension_StartsTheBaseTablesTriggersOnly()
+    var R: Record "TPL Rec"; P: TestPage "TPL Card";
+    begin
+        R.PK := 'X';
+        R.Insert(false);
+        P.OpenEdit();
+        P.GoToKey('X');
+        P.ExtQty.SetValue(4);
+    end;
+
+    [Test]
     procedure LibraryHelperOpeningANewRecord_StartsTheInsertOfTheTableExtensionInThisBundle()
     var Helper: Codeunit "TPL Helper";
     begin

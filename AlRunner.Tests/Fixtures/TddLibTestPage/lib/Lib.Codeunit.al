@@ -46,3 +46,38 @@ codeunit 72703 "TPL Helper"
         P.Close();
     end;
 }
+
+/// <summary>A field the library adds to its own table, with a trigger, and a page control for it: the control
+/// reaches the test bundle as a symbol of a dependency.</summary>
+tableextension 72704 "TPL Rec Ext" extends "TPL Rec"
+{
+    fields
+    {
+        field(72704; ExtQty; Integer)
+        {
+            trigger OnValidate()
+            var T: Codeunit "TPL Lib Target"; R: Integer;
+            begin
+                R := T.MLibExtValidate(1);
+            end;
+        }
+    }
+}
+
+pageextension 72705 "TPL Card Ext" extends "TPL Card"
+{
+    layout { addlast(Content) { field(ExtQty; Rec.ExtQty) { } } }
+}
+
+/// <summary>A table the TestPages below never touch: its trigger must not be named.</summary>
+table 72706 "TPL Other"
+{
+    fields { field(1; K; Code[20]) { } }
+    keys { key(K; K) { Clustered = true; } }
+
+    trigger OnInsert()
+    var T: Codeunit "TPL Lib Target"; R: Integer;
+    begin
+        R := T.MLibOtherInsert(1);
+    end;
+}

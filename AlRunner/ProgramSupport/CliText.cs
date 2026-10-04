@@ -389,9 +389,13 @@ internal static partial class ProgramSupport
         w.WriteLine("  given an id or an expression. A TestPage writes records from the page runtime, so");
         w.WriteLine("  its calls count as table operations too (#5301): OpenNew and New as an Insert (an");
         w.WriteLine("  over-approximation: Close saves a new record, OpenNew alone is not known to insert),");
-        w.WriteLine("  and a field's SetValue as a Validate, Insert, Modify and Rename, always running the");
+        w.WriteLine("  and typing into a field as a Validate, Insert, Modify and Rename, always running the");
         w.WriteLine("  triggers and raising the events (the OnValidate of any field of the table, not only");
-        w.WriteLine("  the one typed into).");
+        w.WriteLine("  the one typed into): a control's SetValue, its Value with an argument, and an");
+        w.WriteLine("  assignment to its Value (P.Qty.Value := x). A control's Activate counts as an Insert");
+        w.WriteLine("  (the focus move may insert a draft row). Reading a control (Value with no argument,");
+        w.WriteLine("  AsInteger, AssertEquals, Caption, Editable, ...) starts nothing, and Lookup,");
+        w.WriteLine("  Drilldown, AssistEdit and Invoke of a control run page code, which is not followed.");
         w.WriteLine("  The table is the one the control's field belongs to, else the one the control's");
         w.WriteLine("  page is bound to (a table extension's field counts for its base table); a page or");
         w.WriteLine("  control with no table the compiler can read counts for every table. Close and the");
@@ -399,8 +403,9 @@ internal static partial class ProgramSupport
         w.WriteLine("  they save was made dirty by a SetValue or an OpenNew, already counted. Procedures,");
         w.WriteLine("  tables and codeunits of one name count as one. Not followed, so a test that");
         w.WriteLine("  reaches a stub only that way carries no line: the triggers and events of a page,");
-        w.WriteLine("  report, query or xmlport and a TestPage's actions (#5309; so a record that page");
-        w.WriteLine("  code writes), and a table operation or Codeunit.Run inside a precompiled .app that");
+        w.WriteLine("  report, query or xmlport, a TestPage's actions and a control's Lookup, Drilldown,");
+        w.WriteLine("  AssistEdit and Invoke (#5309; so a record that page code writes), and a table");
+        w.WriteLine("  operation or Codeunit.Run inside a precompiled .app that");
         w.WriteLine("  the test only calls.");
         w.WriteLine();
         w.WriteLine("  Where nothing anchors a confident guess (a bare-statement call — no way to");

@@ -1283,15 +1283,19 @@ It runs the same generation as the CLI and `--watch --tdd` (`--guide`, "TDD MODE
   is given an id or an expression. A `TestPage` writes records from the page runtime, so its calls count as
   table operations too (#5301): `OpenNew` and `New` as an `Insert` (an over-approximation: the corpus shows
   `Close` saving a new record and a non-key control inserting one, `TestPageRecordTriggers.al` and
-  `TestPageBlankKeyInsert.al`, not that `OpenNew` alone inserts), and a field's `SetValue` as a `Validate`, `Insert`, `Modify` and `Rename`, which
-  always run the triggers and raise the events. The `OnValidate` of every field of the table counts, not only the
+  `TestPageBlankKeyInsert.al`, not that `OpenNew` alone inserts), and typing into a field as a `Validate`, `Insert`, `Modify` and `Rename`, which
+  always run the triggers and raise the events: a control's `SetValue`, its `Value` with an argument and an
+  assignment to its `Value` (`P.Qty.Value := x`). A control's `Activate` counts as an `Insert`, because the
+  focus move may insert a draft row. Reading a control (`Value` with no argument, `AsInteger`, `AssertEquals`,
+  `Caption`, `Editable` and the like) starts nothing, and `Lookup`, `Drilldown`, `AssistEdit` and `Invoke` of a
+  control run page code, which is not followed. The `OnValidate` of every field of the table counts, not only the
   field typed into, as for `Validate` above. The table is the one the control's field belongs to, else the one
   the control's page is bound to (a table extension's field counts for its base table); a page or control with
   no table the compiler can read counts for every table. `Close` and the moves (`GoToKey`, `GoToRecord`,
   `Next`, `First` and the like) start nothing of their own: the record they save was made dirty by a `SetValue`
   or an `OpenNew`, which is already counted. Not followed, so a test that reaches a stub only that way carries no
-  `generatedStubs`: the triggers and events of a page, report, query or xmlport and a `TestPage`'s actions (#5309;
-  so a record that page code writes), and a table operation or `Codeunit.Run` inside a precompiled `.app` that the
+  `generatedStubs`: the triggers and events of a page, report, query or xmlport, a `TestPage`'s actions and a control's
+  `Lookup`, `Drilldown`, `AssistEdit` and `Invoke` (#5309; so a record that page code writes), and a table operation or `Codeunit.Run` inside a precompiled `.app` that the
   test only calls.
   A procedure of another `sourcePaths` bundle
   is (a test library app compiled separately, #5161): when the member's call sits in a library, a

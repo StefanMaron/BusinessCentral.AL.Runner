@@ -49,6 +49,7 @@ internal sealed partial class TddCallGraph
             catch { failed++; continue; }
             var root = tree.GetRoot();
             g.CollectTriggers(model, root);
+            failed += g.CollectTestPageAssignments(model, root);
             foreach (var inv in root.DescendantNodes().OfType<NavSyntax.InvocationExpressionSyntax>())
             {
                 invocations++;

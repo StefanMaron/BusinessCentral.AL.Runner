@@ -182,9 +182,12 @@ public sealed class TddResultAnnotationTests
         Assert.Contains("only when their RunTrigger argument is not omitted or false", guideText);
         Assert.Contains("a RecordRef, a FieldRef or a record that is not a variable (a procedure's return value) names none, so its operation counts for every table", guideText);
         Assert.Contains("Codeunit.Run reaches the OnRun of the codeunit named by Codeunit::Name", guideText);
-        Assert.Contains("the triggers and events of a page, report, query or xmlport and a TestPage's actions (#5309; so a record that page code writes), and a table operation or Codeunit.Run inside a precompiled .app that the test only calls", guideText);
+        Assert.Contains("the triggers and events of a page, report, query or xmlport, a TestPage's actions and a control's Lookup, Drilldown, AssistEdit and Invoke (#5309; so a record that page code writes), and a table operation or Codeunit.Run inside a precompiled .app that the test only calls", guideText);
         Assert.Contains("A TestPage writes records from the page runtime, so its calls count as table operations too (#5301): OpenNew and New as an Insert", guideText); // #5301
-        Assert.Contains("a field's SetValue as a Validate, Insert, Modify and Rename, always running the triggers and raising the events", guideText);
+        Assert.Contains("typing into a field as a Validate, Insert, Modify and Rename, always running the triggers and raising the events", guideText);
+        Assert.Contains("a control's SetValue, its Value with an argument, and an assignment to its Value (P.Qty.Value := x)", guideText);
+        Assert.Contains("A control's Activate counts as an Insert", guideText);
+        Assert.Contains("Reading a control (Value with no argument, AsInteger, AssertEquals, Caption, Editable, ...) starts nothing", guideText);
         Assert.Contains("a page or control with no table the compiler can read counts for every table", guideText);
         Assert.Contains("Close and the moves (GoToKey, GoToRecord, Next, First, ...) start nothing of their own", guideText);
         Assert.DoesNotContain("Inserting a record that a subscriber reacts to is such a path", guideText);
@@ -215,9 +218,12 @@ public sealed class TddResultAnnotationTests
         Assert.Contains("A table operation starts what the table declares (#5286)", serverText); // #5286
         Assert.Contains("only when their `RunTrigger` argument is not omitted or `false`", serverText);
         Assert.Contains("a `RecordRef`, a `FieldRef` or a record that is not a variable (a procedure's return value) names none, so its operation counts for every table", serverText);
-        Assert.Contains("the triggers and events of a page, report, query or xmlport and a `TestPage`'s actions (#5309; so a record that page code writes), and a table operation or `Codeunit.Run` inside a precompiled `.app` that the test only calls", serverText);
+        Assert.Contains("the triggers and events of a page, report, query or xmlport, a `TestPage`'s actions and a control's `Lookup`, `Drilldown`, `AssistEdit` and `Invoke` (#5309; so a record that page code writes), and a table operation or `Codeunit.Run` inside a precompiled `.app` that the test only calls", serverText);
         Assert.Contains("A `TestPage` writes records from the page runtime, so its calls count as table operations too (#5301): `OpenNew` and `New` as an `Insert`", serverText); // #5301
-        Assert.Contains("a field's `SetValue` as a `Validate`, `Insert`, `Modify` and `Rename`, which always run the triggers and raise the events", serverText);
+        Assert.Contains("typing into a field as a `Validate`, `Insert`, `Modify` and `Rename`, which always run the triggers and raise the events", serverText);
+        Assert.Contains("a control's `SetValue`, its `Value` with an argument and an assignment to its `Value` (`P.Qty.Value := x`)", serverText);
+        Assert.Contains("A control's `Activate` counts as an `Insert`", serverText);
+        Assert.Contains("Reading a control (`Value` with no argument, `AsInteger`, `AssertEquals`, `Caption`, `Editable` and the like) starts nothing", serverText);
         Assert.Contains("a page or control with no table the compiler can read counts for every table", serverText);
         Assert.Contains("`Close` and the moves (`GoToKey`, `GoToRecord`, `Next`, `First` and the like) start nothing of their own", serverText);
         Assert.DoesNotContain("carries no `generatedStubs` (#5286)", serverText);

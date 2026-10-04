@@ -34,14 +34,18 @@ public sealed class TddLibTestPageTests
     internal static void AssertAnnotated(TddRunResult run, string which)
     {
         Assert.True(run.Exit == 0, $"{which}: exit {run.Exit}\n{run.StdErr}");
-        Assert.Equal(4, run.Tests.Count);
+        Assert.Equal(5, run.Tests.Count);
         Assert.All(run.Tests, t => Assert.Equal("pass", t.GetProperty("status").GetString()));
 
         // The trigger and its stub are the library's, the page too: the test bundle's TestPage names both
         // the library's trigger and the one its own table extension adds.
         AssertStubs(run, "OpenNew_StartsTheInsertOfTheLibrarysTable", LibStub("MLibInsert"), TestStub("MTestExtInsert"));
         AssertStubs(run, "SetValue_StartsTheValidateAndInsertOfTheLibrarysTable",
-            LibStub("MLibValidate"), LibStub("MLibInsert"), TestStub("MTestExtInsert"));
+            LibStub("MLibValidate"), LibStub("MLibExtValidate"), LibStub("MLibInsert"), TestStub("MTestExtInsert"));
+        // The control is a page extension's, bound to a table extension's field, both in the library: the table is
+        // the extension's base table, so the library's other table is not named.
+        AssertStubs(run, "SetValue_OnAControlOfALibrarysPageExtension_StartsTheBaseTablesTriggersOnly",
+            LibStub("MLibValidate"), LibStub("MLibExtValidate"), LibStub("MLibInsert"), TestStub("MTestExtInsert"));
         // The TestPage call is in a procedure of the library, compiled before the test bundle's table extension:
         // the edge it leaves is what connects the test calling that procedure to the extension's stub.
         AssertStubs(run, "LibraryHelperOpeningANewRecord_StartsTheInsertOfTheTableExtensionInThisBundle",
@@ -56,7 +60,7 @@ public sealed class TddLibTestPageTests
         TestArtifacts.SkipIfMissing();
         using var run = new TddRunResult(InOrder);
         AssertAnnotated(run, "lib test");
-        Assert.Contains("--tdd: generated 3 member(s) this run:", run.StdErr);
+        Assert.Contains("--tdd: generated 5 member(s) this run:", run.StdErr);
     }
 
     /// <summary>

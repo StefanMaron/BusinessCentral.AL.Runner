@@ -115,6 +115,41 @@ codeunit 72620 "TP Tests"
         P.Close();
     end;
 
+    // --- The other ways to type into a field: Value with an argument, and an assignment to Value.
+
+    [Test]
+    procedure ValueWithAnArgument_StartsTheTablesTriggers()
+    var R: Record "TP Rec"; P: TestPage "TP Rec Card";
+    begin
+        R.PK := 'VALARG';
+        R.Insert(false);
+        P.OpenEdit();
+        P.GoToKey('VALARG');
+        P.Qty.Value('5');
+    end;
+
+    [Test]
+    procedure ValueAssigned_StartsTheTablesTriggers()
+    var R: Record "TP Rec"; P: TestPage "TP Rec Card";
+    begin
+        R.PK := 'VALASSIGN';
+        R.Insert(false);
+        P.OpenEdit();
+        P.GoToKey('VALASSIGN');
+        P.Qty.Value := '5';
+    end;
+
+    [Test]
+    procedure Activate_OnAControl_StartsAnInsert()
+    var R: Record "TP Rec"; P: TestPage "TP Rec Card";
+    begin
+        R.PK := 'ACTIVATE';
+        R.Insert(false);
+        P.OpenEdit();
+        P.GoToKey('ACTIVATE');
+        P.Qty.Activate();
+    end;
+
     // --- A part shows another page: its table is the part page's, not the parent's.
 
     [Test]
@@ -151,6 +186,11 @@ codeunit 72620 "TP Tests"
         P.GoToKey('R');
         P.GoToRecord(R);
         Seen := P.Note.Value;
+        Seen := P.Note.Value();
+        Seen := P.Note.Caption;
+        Seen := Format(P.Qty.AsInteger());
+        Seen := Format(P.Qty.Editable());
+        Seen := Format(P.Qty.Visible());
         P.Note.AssertEquals('');
         P.Close();
     end;

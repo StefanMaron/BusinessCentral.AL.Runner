@@ -68,6 +68,21 @@ public sealed class TddTestPageTriggersTests : IClassFixture<TddTestPageTriggers
     }
 
     /// <summary>
+    /// A value is typed into a field by SetValue, by Value with an argument and by an assignment to Value (not an
+    /// invocation, so it is read from the assignment statement); Activate
+    /// moves the focus, which may insert a draft row.
+    /// </summary>
+    [SkippableFact]
+    public void ValueWithAnArgumentAndAnAssignmentToValue_TypeLikeSetValue()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        AssertStubs("ValueWithAnArgument_StartsTheTablesTriggers", RecWrite);
+        AssertStubs("ValueAssigned_StartsTheTablesTriggers", RecWrite);
+        AssertStubs("Activate_OnAControl_StartsAnInsert", "MRecInsert");
+    }
+
+    /// <summary>
     /// The table is the page's: a page of another table starts that table's triggers only, and a table with
     /// subscribers and no trigger raises its database events (the delete subscriber is never reached).
     /// </summary>
@@ -124,7 +139,7 @@ public sealed class TddTestPageTriggersTests : IClassFixture<TddTestPageTriggers
         AssertStubs("OpenViewAndMoves_StartNothing_IsNotAnnotated");
         AssertStubs("Quiet_IsNotAnnotated");
         // Every stub is generated, and the tests naming one are counted: the controls are not among them.
-        Assert.Equal(17, _run.Tests.Count);
-        Assert.Equal(13, _run.Tests.Count(t => t.TryGetProperty("generatedStubs", out _)));
+        Assert.Equal(20, _run.Tests.Count);
+        Assert.Equal(16, _run.Tests.Count(t => t.TryGetProperty("generatedStubs", out _)));
     }
 }
