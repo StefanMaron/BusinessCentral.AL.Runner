@@ -143,18 +143,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // that. That is also the real reason the two 60.9s entries below carry their
             // observed maximum: their LOW end across legs approaches 30, not 60.
             ["AlOutputCacheDoNotCacheTests"] = 64,
-            // #4096: added by PR #4132, which introduces this collection. Its first CI run
-            // measured 83.4s on the BC 27.5 leg, where it was absent from this table and the
-            // freshness gate failed the leg for exactly that -- so the guard is right and this
-            // is the one-line answer it asks for.
-            //
-            // Recorded at 83, rounded down, from ONE leg: the ceiling of that claim rather
-            // than a settled figure. What the value has to be right about is dispatch order
-            // (#2175), not precision -- it needs to sit well above UnmeasuredWeightSeconds
-            // (30) so the collection is scheduled early instead of becoming the #1887 tail.
-            // #5107 added three --server facts and one CLI fact: 136s locally (twelve facts),
-            // not yet on CI. Raised to that local measurement until a leg reports one.
-            ["TransitiveDependencyVisibilityTests"] = 136,
+            // #4096: added by PR #4132. #5107 added three --server facts and one CLI fact. CI 129.7s (BC 27.5) and 125.8s
+            // (BC 28.5) on main run 37161245486, the lower leg rounded down (#5311).
+            ["TransitiveDependencyVisibilityTests"] = 125,
             // #4562: added by PR #4574. Run 36148859018 measured 131.3s (BC 27.5) and 77.2s
             // (BC 28.5) with nine runner spawns; the class now shares identical invocations and
             // spawns six. Recorded at 131, the observed maximum rounded down: an overstatement
@@ -162,25 +153,37 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             ["RunSummaryOutputTests"] = 131,
             // Runs 36297442575 and 36296544176: observed maximum, rounded down (#2498 convention).
             ["NoCacheLastWinsIntegrationTests"] = 66,
-            // #4990: nine runner spawns on one cache root; 39-43s locally, not yet on CI.
-            ["DefineSymbolsDependencyCacheTests"] = 43,
-            // #5039: nine runner spawns on one cache root; 36-43s locally, not yet on CI.
-            ["DependencyMetadataCacheKeyTests"] = 43,
-            // #5132, grown by #5303 (the keep side at four emit sites, each loading the System Application):
-            // runner spawns on one scratch tree; 82s locally, not yet on CI.
-            ["PerSuiteSymbolLessDependencyTests"] = 80,
-            // #5118: four runner spawns (the CLI oracle) and one shared --server; 45-54s locally,
-            // not yet on CI.
-            ["ServerEmitExcludedSurvivorsTests"] = 50,
-            // #5233: one runner spawn that compiles Test Runner against the closure. LOCAL figure: 46s
-            // (load average about 6); a reviewer saw 67-69s under heavier load. Re-record from the
-            // first CI leg that reports it.
-            ["DeferredAttemptDependencyFloorTests"] = 46,
-            // #5259/#5260: runner spawns on one cache root (the CLI layout cold and warm, `tests`
-            // alone cold and warm) and two --server processes of three requests. LOCAL figures:
-            // 67s and 36s, not yet on CI.
-            ["CodeCoverageLogSiblingSourceTests"] = 67,
-            ["CodeCoverageLogServerRequestTests"] = 36,
+            // #4990: nine runner spawns on one cache root. CI 64.1s (BC 27.5) and 62.9s (BC 28.5) on main run 37161245486,
+            // the lower leg rounded down (#5311).
+            ["DefineSymbolsDependencyCacheTests"] = 62,
+            // #5039: nine runner spawns on one cache root. CI 75.5s (BC 27.5) and 74.2s (BC 28.5) on main run 37161245486,
+            // the lower leg rounded down (#5311).
+            ["DependencyMetadataCacheKeyTests"] = 74,
+            // #5305: absent from this table. CI 59.1s (BC 27.5) and 57.5s (BC 28.5) on main run 37161245486, the lower leg
+            // rounded down; the only main run that carries the class (#5311).
+            ["PerSuiteEmitExcludedTests"] = 57,
+            // #5132, grown by #5303 (the keep side at four emit sites, each loading the System Application): runner spawns
+            // on one scratch tree. CI 143.9s (BC 27.5) and 144.3s (BC 28.5) on main run 37161245486, the lower leg rounded
+            // down (#5311).
+            ["PerSuiteSymbolLessDependencyTests"] = 143,
+            // #5118: four runner spawns (the CLI oracle) and one shared --server. CI 43.34s (BC 27.5) and 39.99s (BC 28.5)
+            // on main run 37161245486, the lower leg rounded down (#5311).
+            ["ServerEmitExcludedSurvivorsTests"] = 39,
+            // #5233: one runner spawn that compiles Test Runner against the closure. CI 75.0s (BC 27.5) and 72.7s (BC
+            // 28.5) on main run 37161245486, the lower leg rounded down (#5311).
+            ["DeferredAttemptDependencyFloorTests"] = 72,
+            // #5259/#5260: runner spawns on one cache root (the CLI layout cold and warm, `tests` alone cold and warm) and
+            // two --server
+            // processes of three requests. CodeCoverageLogSiblingSourceTests: 55.6s (BC 27.5), 55.4s (BC 28.5);
+            // CodeCoverageLogServerRequestTests:
+            // 33.2s (BC 27.5), 34.0s (BC 28.5), both on main run 37161245486. The first is the lower leg rounded down; the
+            // second sits within 5s of
+            // UnmeasuredWeightSeconds, so its upper leg is rounded down (#2175, #5311).
+            ["CodeCoverageLogSiblingSourceTests"] = 55,
+            ["CodeCoverageLogServerRequestTests"] = 34,
+            // Absent from this table. CI 55.6s (BC 27.5) and 57.0s (BC 28.5) on main run 37161245486, the lower leg
+            // rounded down; 59.2s and 59.4s on main run 37150623105 (#5311).
+            ["CoveragePackagedSiblingSourceTests"] = 55,
             // #4204: five collections absent from this table on run 35017043142's BC 28.4
             // leg. FloorOnlyBundleEnumFieldTests at 76.4s crossed the >= 75s band and failed
             // the leg; the other four sat in the >= 60s advisory band, and
@@ -200,42 +203,36 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // leg of the same run, 76.4s on 28.4 -- a 17% spread on one collection in one run,
             // which is why it straddles the band at all). The other four are single-leg
             // observations: a ceiling for that leg, not a settled figure.
-            // #5182: now three requests on the suite server, so the 76 above is stale; 53s
-            // locally, not yet on CI.
-            ["FloorOnlyBundleEnumFieldTests"] = 53,
+            // #5182: three requests on the suite server. CI 56.3s (BC 27.5) and 55.9s (BC 28.5) on main run 37161245486,
+            // the lower leg rounded down (#5311).
+            ["FloorOnlyBundleEnumFieldTests"] = 55,
             ["ServerCrossBundleReuseRegistryReplayTests"] = 73,
             ["SuiteRootAlFilesTests"] = 71,
             ["CacheGateProbeScopeTests"] = 60,
             ["SiblingSymbolsAppRootManifestTests"] = 60,
-            // perf/boot-overhead: added with the on-disk install-baseline tier. Measured
-            // 125.6s on the first CI run of that branch (BC 28.4 leg), where it was absent
-            // from this table, fell back to UnmeasuredWeightSeconds and was dispatched at
-            // t=181s of a 309s run — a 77s single-threaded tail, the #1887 pattern again.
-            // #3380 added a fifth case (an entry from the previous schema version, three more
-            // runner spawns). Locally 3m13s for the class against the 5 cases; recorded as
-            // 165 rather than re-measured on a CI leg, which is the number this table wants.
-            ["InstallBaselineDiskCacheTests"] = 165,
+            // perf/boot-overhead: on-disk install-baseline tier; #3380 added a fifth case. First CI run: 125.6s (BC 28.4),
+            // absent from this
+            // table, dispatched at t=181s of a 309s run, the #1887 tail. 165 was recorded from a local run; CI 95.2s (BC
+            // 27.5) and 92.3s (BC 28.5) on main run 37161245486, the lower leg rounded down (#5311).
+            ["InstallBaselineDiskCacheTests"] = 92,
             // #5130: --jobs workers sharing one bundle; most of its 11 test cases (9 methods) spawn a fan-out of real
             // runners, and the fixture's tests sleep so two workers both get a share. Absent on PR
             // #5214's run 36991272377: 222.4s (BC 28.5) and 224.9s (BC 27.5), recorded at the lower
             // leg rounded down. Kept as one class on purpose: dispatched first it is not the tail
             // (the suite is ~1700s of work over four threads), and each fact pins its own mutation.
             ["JobsUnitClaimEndToEndTests"] = 222,
-            // #5215, #5216: five tests spawning fan-outs of real runners (a hang and its resume,
-            // --per-suite, two memory-limited plans and an unusable override). 68s locally for the
-            // class, rounded down; a LOCAL value, to be re-recorded from the first CI leg's weight step.
-            ["JobsSharedBundleEndToEndTests"] = 68,
-            // #5267: a plain run and a cold and a warm `--jobs 2` run of six folders in one class, and two more fan-outs
-            // in the other. 56s and 52s locally, rounded down, LOCAL values: re-record from the first CI leg's weight step.
-            ["JobsSourceDependencyEndToEndTests"] = 56,
-            ["JobsSourceDependencySameParentTests"] = 52,
-            // #5238: recorded from Test Matrix run 37080059144 (head 465ed74f), at the lower leg rounded
-            // down. CacheCompileLockEndToEndTests: 110.1s on 27.5, 123.1s on 28.5.
-            // CacheCompileLockWaitersEndToEndTests: 107.4s on 27.5, 123.8s on 28.5, for FOUR rows; it
-            // has six since, so this is the value from BEFORE those two were added: re-record it from
-            // the next first CI leg.
+            // #5215, #5216: five tests spawning fan-outs of real runners (a hang and its resume, --per-suite, two memory-
+            // limited plans and an unusable override). CI 96.2s (BC 27.5) and 93.7s (BC 28.5) on main run 37161245486, the
+            // lower leg rounded down (#5311).
+            ["JobsSharedBundleEndToEndTests"] = 93,
+            // #5238: recorded from Test Matrix run 37080059144 (head 465ed74f), at the lower leg rounded down:
+            // CacheCompileLockEndToEndTests 110.1s on 27.5,
+            // 123.1s on 28.5. CacheCompileLockWaitersEndToEndTests was recorded from the same run at four rows (107.4s on
+            // 27.5); it has six rows since, and
+            // is re-recorded from main run 37161245486: 171.0s (BC 27.5), 167.3s (BC 28.5), the lower leg rounded down
+            // (#5311).
             ["CacheCompileLockEndToEndTests"] = 110,
-            ["CacheCompileLockWaitersEndToEndTests"] = 107,
+            ["CacheCompileLockWaitersEndToEndTests"] = 167,
             // #4813: 8 tests, each spawning a runner subprocess on a bundle that source-compiles
             // Microsoft's Test Runner app or stand-ins for it. Absent from this table on its
             // first CI run (36294813041): 180.2s on both the BC 27.5 and 28.5 legs, rounded down.
@@ -273,9 +270,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // perf/boot-overhead: 37.8s measured on the same run; below the 60s freshness
             // threshold, listed so it is dispatched by measured cost, not by the fallback.
             ["EventSubscriberScanEquivalenceTests"] = 37,
-            // #4273: four runner spawns (cold + warm coverage, --precompile, a Tier-1 run);
-            // 38.9s measured locally on the class alone.
-            ["CoveragePackagedDependencyTests"] = 38,
+            // #4273: four runner spawns (cold + warm coverage, --precompile, a Tier-1 run). CI 43.8s (BC 27.5) and 43.7s
+            // (BC 28.5) on main run 37161245486, the lower leg rounded down (#5311).
+            ["CoveragePackagedDependencyTests"] = 43,
             // #1851/#1857 cut this from 292s to 196s (--print-cache-key skips the four cold
             // AL compiles the class used to pay for). #1887 caught the table still saying
             // 292 — harmless for ordering (it already ranked at the top either way), but it
@@ -287,8 +284,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // producing a 73s single-threaded tail (it is 3rd-heaviest at ~196s of serial
             // work; see the file header and issue #1887 for the measured timeline).
             ["InstallSeedDepCompanyCacheTests"] = 196,
-            // #5068: six runner spawns on one cache root; 33-35s locally, not yet on CI.
-            ["InstallBaselineSubscriberScopeTests"] = 35,
+            // #5068: six runner spawns on one cache root. CI 47.8s (BC 27.5) and 48.3s (BC 28.5) on main run 37161245486,
+            // the lower leg rounded down (#5311).
+            ["InstallBaselineSubscriberScopeTests"] = 47,
             // #3538: every arm spawns the runner, and two of them spawn it twice to get a
             // cold-then-warm pair out of one private --cache. Measured 113.5 s on PR #3554's
             // BC 27.5 / 28.4 legs (run 34230660996) and recorded rounded DOWN per the header —
@@ -309,19 +307,6 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // the 113.5s its own line records from a leg). Recording the local figure would rank
             // this class alongside genuinely 190s ones and displace them.
             ["PartialCompanyInitAcceptanceTests"] = 71,
-            // #3561: the two escalation arms are their own collection precisely so the entry
-            // above does not grow — a collection is strictly serial, so a longer one is a longer
-            // tail. 58.2s local, no leg figure yet (the class is new); by the ~2.6x local/leg
-            // ratio measured directly above, the leg figure is likely nearer 25, so this entry
-            // is an over-estimate carried until a leg measures it rather than a scaled guess.
-            ["PartialCompanyInitAcceptanceEscalationTests"] = 58,
-            // #3561: 2 arms, each driving its own CliServer subprocess (the abort is a
-            // startup-time env var, so this class cannot share SharedCliServer), and each now
-            // forcing a dependency-company-baseline MISS so codeunit 2 is genuinely attempted —
-            // see that file's header. 80.6s local after that change, against 52.6s local and
-            // 58.3s before it; the forced MISS is most of the difference and it is permanent, so
-            // the post-change figure is the one recorded.
-            ["ServerCompanyInitDrainTests"] = 80,
             // #2348: EmptySetupTable_Get/EmptySetupTable_TestField now call DeleteAll() on
             // "Source Code Setup" before asserting it's empty (fixing IncludeSender's
             // sender-position dispatch also fixed a latent install-time bug that used to
@@ -374,17 +359,10 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // next collection that lands near 60s, and that is tracked separately rather
             // than papered over here.
             ["SuiteAbortOnTimeoutTests"] = 63,
-            // #2178: 3 tests, each spawning a real runner subprocess over a three-app source
-            // chain (two of them compile all three apps cold). Measured 53.3s (28.3) to
-            // 90.5s (27.5) across the eight legs of its first CI run, where it was absent
-            // from this table, fell back to UnmeasuredWeightSeconds and was dispatched at
-            // t=354s of a 441s run — the #1887 tail again. Carries the observed maximum,
-            // for the same reason StartupOutputReexecDedupTests above does: its low end is
-            // already near enough to the 60s freshness threshold that a rounded-down low
-            // value would satisfy the gate while leaving the tail in place.
-            // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (89.1s) scaled by the
-            // local after/before ratio (37s/48.3s). An estimate until a CI leg measures it.
-            ["LayeredSourceChainTests"] = 68,
+            // #2178/#5110: three-app source chain, one shared server per class (first CI run 53.3s to 90.5s, absent from
+            // this table). CI 33.9s (BC 27.5) and 31.6s (BC 28.5) on main run 37161245486; the lower leg is within 5s of
+            // UnmeasuredWeightSeconds, so the upper leg rounded down (#2175, #5311).
+            ["LayeredSourceChainTests"] = 33,
             // #2237: added by PR #4083, which introduces the layered pre-pass. Measured 78.6s
             // on the BC 28.4 leg of run 34898586907, where it was absent from this table, fell
             // back to UnmeasuredWeightSeconds and tripped the >= 75s staleness gate. ONE leg,
@@ -447,101 +425,55 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             ["CrossMajorNoteTests"] = 76,
             ["PrecompileNclShadowHopTests"] = 70,
             ["ServerPackagedDependencyReplacementTests"] = 62,
-            // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (66.5s) scaled by the
-            // local after/before ratio (21.7s/38.3s). An estimate until a CI leg measures it.
-            ["ServerAffectedSelectionMultiSourcePathsTests"] = 38,
-            // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (41.4s) scaled by the
-            // local after/before ratio (9s/24.6s). An estimate until a CI leg measures it.
-            ["ServerDuplicateSourcePathTests"] = 15,
-            // #2653-adjacent: tripped check-collection-weights.py on PR 2659, absent from
-            // this table while costing over 60s. Measured across all six legs of that run:
-            // 61.3s (27.3), 67.3s (27.5), 69.4s (28.0), 71.2s (28.1), 61.4s (28.2),
-            // 63.0s (28.3). Carries the observed MAXIMUM, not the minimum, for the reason
-            // InstallBaselineVirtualTableExclusionTests above spells out: a value at the low
-            // end of an observed range sits on the 60s freshness threshold, which satisfies
-            // the gate while leaving dispatch order at the fallback and the tail in place.
-            // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (169.7s) scaled by the
-            // local after/before ratio (24.5s/95.8s). An estimate until a CI leg measures it.
-            ["ServerAffectedSelectionTests"] = 43,
-            // #5089: three server processes; 23s locally, not yet measured on CI.
-            ["ServerIncrementalInterfaceExtendsTests"] = 45,
             // #4993: added by #4981 and absent from this table; tripped
             // check-collection-weights.py on main at 90.6s (BC 27.5, run 36622416591).
             // Raised to the observed maximum, 96.2s on PR #4986's BC 27.5 leg (run 36632347509).
             ["ServerAffectedSelectionCacheHitTests"] = 96,
-            // #4973: added by PR #4986. Observed maximum after PR #5007: 154.6s on BC 28.5 and
-            // 153.9s on BC 27.5 (run 36658745839), rounded down.
-            // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (172.5s) scaled by the
-            // local after/before ratio (71.5s/102.5s). An estimate until a CI leg measures it.
-            ["ServerAffectedSelectionPackagedDependencyTests"] = 120,
+            // #4973: added by PR #4986. CI 85.1s (BC 27.5) and 87.5s (BC 28.5) on main run 37161245486, the lower leg
+            // rounded down (#5311).
+            ["ServerAffectedSelectionPackagedDependencyTests"] = 85,
             // #4979: added by PR #5007; 116.6s on BC 28.5, 118.8s on BC 27.5 (run 36658745839).
             ["ServerAffectedSelectionPersistedBaselineTests"] = 118,
-            // #5008: added by its PR, one server with eleven requests plus four server starts; 36s
-            // locally. An estimate until a CI leg measures it: replace with the observed maximum.
-            ["ServerAffectedSelectionTableChangeTests"] = 90,
-            // #5011: added by its PR, one server with ten requests plus three more server starts; 32s
-            // locally. An estimate until a CI leg measures it: replace with the observed maximum.
-            ["ServerAffectedSelectionEnteredScopeTests"] = 85,
-            // #5025: added by its PR, one server with nine requests plus two more server starts. An
-            // estimate until a CI leg measures it: replace with the observed maximum.
-            ["ServerAffectedSelectionPageExtensionTests"] = 85,
-            // #5083: added by its PR, one server with twelve requests plus five more server starts. An
-            // estimate until a CI leg measures it: replace with the observed maximum.
-            ["ServerAffectedSelectionObjectKindTests"] = 90,
-            // #5034: added by its PR, eight server starts and seventeen requests; 75s locally. An
-            // estimate until a CI leg measures it: replace with the observed maximum.
-            // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (161.3s) scaled by the
-            // local after/before ratio (37.8s/83.2s). An estimate until a CI leg measures it.
-            ["ServerTddTests"] = 73,
-            // #5243/#5263: added by its PR, four tests that each run the runner twice on one cache root;
-            // about 34s locally (38s for the dotnet test call). An estimate until a CI leg measures it:
-            // replace with the observed maximum.
-            ["TddLibBundleWarmCacheTests"] = 70,
-            // #5271: added by its PR, four runner runs on one cache root across two tests; 20-39s locally over
-            // three calls. An estimate until a CI leg measures it: replace with the observed maximum.
-            ["TddLibOwnMemberTests"] = 80,
-            // #5079: added by its PR, three server starts and six requests; 27s locally. An
-            // estimate until a CI leg measures it: replace with the observed maximum.
-            // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (63.2s) scaled by the
-            // local after/before ratio (9.6s/32.2s). An estimate until a CI leg measures it.
-            ["ServerModuleReuseSourceTests"] = 19,
-            // #5183: added by its PR, one shared server with fifteen requests plus one more server start;
-            // 17s locally. An estimate until a CI leg measures it: replace with the observed maximum.
-            ["ServerTestSelectionFieldTests"] = 25,
-            // #5027: added by its PR, five --watch processes, one of them through nine cycles; 51s
-            // locally. #5035 added two more processes (60s locally). An estimate until a CI leg
-            // measures it: replace with the observed maximum.
-            // #5050 added one more process through two cycles.
-            ["WatchAffectedSelectionTests"] = 160,
-            // #5035: added by its PR, five server starts and nine requests; 41s locally. An
-            // estimate until a CI leg measures it: replace with the observed maximum.
-            // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (102.2s) scaled by the
-            // local after/before ratio (30.8s/61.4s). An estimate until a CI leg measures it.
-            ["ServerAffectedSelectionSharedSetupTests"] = 51,
-            // #5050: added by its PR, five server starts and eleven requests; 33s locally. An
-            // estimate until a CI leg measures it: replace with the observed maximum.
-            // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (141.4s) scaled by the
-            // local after/before ratio (31.5s/87.4s). An estimate until a CI leg measures it.
-            ["ServerAffectedSelectionSessionStateTests"] = 51,
-            // #5060: measured 84.9s on the BC 28.5.54151.55486 leg of run 36765227063.
-            // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (92.4s) scaled by the
-            // local after/before ratio (18.2s/64.2s). An estimate until a CI leg measures it.
-            ["ServerBundleInstallBaselineReuseTests"] = 26,
+            // #5008: one server with eleven requests plus four server starts. CI 52.0s (BC 27.5) and 47.9s (BC 28.5) on
+            // main run 37161245486, the lower leg rounded down (#5311).
+            ["ServerAffectedSelectionTableChangeTests"] = 47,
+            // #5011: one server with ten requests plus three more server starts. CI 45.6s (BC 27.5) and 43.4s (BC 28.5) on
+            // main run 37161245486, the lower leg rounded down (#5311).
+            ["ServerAffectedSelectionEnteredScopeTests"] = 43,
+            // #5083: one server with twelve requests plus five more server starts. CI 69.85s (BC 27.5) and 68.97s (BC
+            // 28.5) on main run 37161245486, the lower leg rounded down (#5311).
+            ["ServerAffectedSelectionObjectKindTests"] = 68,
+            // #5034: eight server starts and seventeen requests. CI 45.3s (BC 27.5) and 42.9s (BC 28.5) on main run
+            // 37161245486, the lower leg rounded down (#5311).
+            ["ServerTddTests"] = 42,
+            // #5243/#5263: four tests that each run the runner twice on one cache root. CI 65.3s (BC 27.5) and 64.3s (BC
+            // 28.5) on main run 37161245486, the lower leg rounded down (#5311).
+            ["TddLibBundleWarmCacheTests"] = 64,
+            // #5271: four runner runs on one cache root across two tests. CI 32.9s (BC 27.5) and 31.0s (BC 28.5) on main
+            // run 37161245486; the lower leg is within 5s of UnmeasuredWeightSeconds, so the upper leg rounded down
+            // (#2175, #5311).
+            ["TddLibOwnMemberTests"] = 32,
+            // #5027/#5035/#5050: --watch processes, one of them through nine cycles. CI 81.9s (BC 27.5) and 80.2s (BC
+            // 28.5) on main run 37161245486, the lower leg rounded down (#5311).
+            ["WatchAffectedSelectionTests"] = 80,
+            // #5035: five server starts and nine requests. CI 34.4s (BC 27.5) and 36.7s (BC 28.5) on main run 37161245486;
+            // the lower leg is within 5s of UnmeasuredWeightSeconds, so the upper leg rounded down (#2175, #5311).
+            ["ServerAffectedSelectionSharedSetupTests"] = 36,
+            // #5050: five server starts and eleven requests. CI 33.2s (BC 27.5) and 34.6s (BC 28.5) on main run
+            // 37161245486; the lower leg is within 5s of UnmeasuredWeightSeconds, so the upper leg rounded down (#2175,
+            // #5311).
+            ["ServerAffectedSelectionSessionStateTests"] = 34,
             // #5119: measured 76.0s on the BC 28.5.54151.55580 leg of run 36915465977.
             ["ServerMixedContainerSplitTests"] = 76,
-            // #5059/#5069: added by PR #5066, six server starts and fourteen requests; 59s locally.
-            // An estimate until a CI leg measures it: replace with the observed maximum.
-            // #5110: one shared server per class; its BC 28.5 leg of run 36801846027 (140.7s) scaled by the
-            // local after/before ratio (52.3s/81.5s). An estimate until a CI leg measures it.
-            ["ServerAffectedSelectionUnknownRecordTests"] = 90,
-            // #5028: added by its PR, twelve server starts and thirteen requests; 100s locally. An
-            // estimate until a CI leg measures it: replace with the observed maximum.
-            ["ServerAffectedSelectionEnvironmentDriftTests"] = 230,
-            // #5057: added by its PR, thirteen server starts and thirty-one requests; 122s locally.
-            // An estimate until a CI leg measures it: replace with the observed maximum.
-            // #5110: one shared server per class; the value recorded before it (260s) scaled by the
-            // local after/before ratio (74.9s/187s). An estimate until a CI leg measures it.
-            ["ServerAffectedSelectionUnrecordedStateTests"] = 104,
+            // #5059/#5069: six server starts and fourteen requests. CI 53.7s (BC 27.5) and 51.5s (BC 28.5) on main run
+            // 37161245486, the lower leg rounded down (#5311).
+            ["ServerAffectedSelectionUnknownRecordTests"] = 51,
+            // #5028: twelve server starts and thirteen requests. CI 156.3s (BC 27.5) and 151.8s (BC 28.5) on main run
+            // 37161245486, the lower leg rounded down (#5311).
+            ["ServerAffectedSelectionEnvironmentDriftTests"] = 151,
+            // #5057: thirteen server starts and thirty-one requests. CI 90.7s (BC 27.5) and 88.9s (BC 28.5) on main run
+            // 37161245486, the lower leg rounded down (#5311).
+            ["ServerAffectedSelectionUnrecordedStateTests"] = 88,
             // #2223: added by PR #4478, which introduces this collection. 4 tests, each
             // spawning a real runner subprocess against a bundle declaring an `application`
             // floor, and one of them spawning a second: the warm-skip path runs the bundle
@@ -581,8 +513,10 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             ["SourceDepCacheEnumMetadataTests"] = 41,
             ["DefineFlagIntegrationTests"] = 41,
             ["SuiteEnumerationTests"] = 36,
-            // #5273: three attempts of one bundle, each a fresh process that boots BC (about 30s locally).
-            ["ResumeThreeAttemptsTests"] = 35,
+            // #5273: three attempts of one bundle, each a fresh process that boots BC. CI 32.6s (BC 27.5) and 33.8s (BC
+            // 28.5) on main run 37161245486; the lower leg is within 5s of UnmeasuredWeightSeconds, so the upper leg
+            // rounded down (#2175, #5311).
+            ["ResumeThreeAttemptsTests"] = 33,
             ["EmitExclusionLoudnessTests"] = 33,
             ["BundleSuiteErrorLoudnessTests"] = 32,
             ["BcVersionFloorSkipTests"] = 32,
