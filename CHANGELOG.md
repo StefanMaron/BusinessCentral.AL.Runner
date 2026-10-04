@@ -21,6 +21,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **asserterror:** let a raw CLR exception escape asserterror as BC does
 - **tests:** neutralise the CI crash-dump env on runner children that abort on purpose
 - **cli:** a missing dependency package exits 2 on every in-process path, as on the pre-passes
 - **jobs:** --tdd re-run re-owns the test codeunit claims a discarded pass made
