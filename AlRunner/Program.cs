@@ -2914,6 +2914,62 @@ static string DescribeRefusals(
     return (allProfiles, everyDropSafe, skippedNotYetReported, reportedByPeer);
 }
 
+// #5307: --tdd's answer to a module that lost objects to the emit-retry loop, which the bundled loop and the
+// --per-suite loop both ask (the non-tdd answer is ReportNonTddEmitDrops). The survivors always run and the
+// dropped test codeunits' [Test] procedures are FAILED rows, because a red test is the point of --tdd
+// (docs/emit-exclusion-triage.md); it adds no suite error, which would turn the run into exit 3. `tag`/`subject`
+// are the caller's console prefix as in ReportNonTddEmitDrops, `claimModule` keys the --jobs claim (#5262) and
+// `appLabel` is how a test that later reaches a dropped codeunit by id names where it was declared (#5266).
+// Returns the rows to report; the caller owns `sources` and the census count.
+IReadOnlyList<TestResult> ReportTddEmitDrops(
+    BcEmitOutput emitOutput, string tag, string? subject, string claimModule, string appLabel, string bundleAbs)
+{
+    var names = string.Join(", ", emitOutput.ExcludedObjects);
+    var tddDetails = emitOutput.TddExcludedDetails ?? Array.Empty<TddExcludedObjectDetail>();
+    // #5262: every worker of a shared --jobs bundle compiles it and finds the same drops; the same per-object claim as
+    // EMIT-EXCLUDED (#5256) makes one of them report each object's FAILED rows. Not claimed: the registry below,
+    // which every worker needs.
+    var tddDropClaim = AlRunner.Infrastructure.UnitClaimQueue.ForBundle(bundleAbs);
+    var ownTddDetails = tddDropClaim == null ? tddDetails
+        : tddDropClaim.ClaimDropped(claimModule, tddDetails, tddOwnedDrops);
+    var peerTddDetails = tddDetails.Where(d => !ownTddDetails.Contains(d)).ToList();
+    var synthetic = TddSupport.BuildFailedTests(ownTddDetails);
+    var peerReportedCount = peerTddDetails.Count == 0 ? 0 : TddSupport.BuildFailedTests(peerTddDetails).Count;
+    // #2207: same fix as the non-tdd branch — actually print them under --verbose. Each synthetic FAILED test already
+    // carries its own object's diagnostic in its failure message, but that requires reading the per-test result; this
+    // gives the same information right at the summary line the message above points at.
+    var tddExclDiags = emitOutput.ExcludedObjectDiagnostics ?? Array.Empty<string>();
+    // #2949: --tdd keeps the run alive and reports the excluded objects' tests as RED, so the diagnostics stay behind
+    // --verbose here (they are also on each synthetic failure). The advice sentence still has to describe what will
+    // actually happen if it is followed.
+    var head = subject != null ? $"{tag}: TDD-EXCLUDED — {subject}:" : $"{tag}: TDD-EXCLUDED —";
+    Console.Error.WriteLine(
+        $"{head} {emitOutput.ExcludedObjects.Count} " +
+        $"object(s) could not be compiled: [{names}]. " +
+        (tddDropClaim == null
+            ? $"{synthetic.Count} [Test] procedure(s) they declare report as FAILED instead of vanishing from the run."
+            : "The dropped object(s) are shared out between this bundle's workers: this worker claimed " +
+              $"{ownTddDetails.Count} of {tddDetails.Count} and its {synthetic.Count} [Test] procedure(s) report as FAILED " +
+              "here instead of vanishing from the run; the worker that claimed each other object reports its own.") +
+        ExclusionDiagnosticAdvice(tddExclDiags, AlRunner.Log.Verbose));
+    if (AlRunner.Log.Verbose && tddExclDiags.Count > 0)
+    {
+        Console.Error.WriteLine($"{tag}: AL diagnostics that identified the excluded object(s):");
+        foreach (var d in tddExclDiags)
+            Console.Error.WriteLine($"  {d}");
+    }
+    TddSupport.RegisterDroppedCodeunits(appLabel, tddDetails);
+    tddSyntheticFailedCount += synthetic.Count;
+    tddPeerReportedCount += peerReportedCount;
+    tddExcludedObjectCount += tddDetails
+        .Count(d => TddSupport.BuildFailedTests(new[] { d }).Count == 0);
+    foreach (var d in tddDetails)
+        tddBundleDroppedNames.Add(d.ObjectDisplayName);
+    // #5272: rows an earlier attempt of this resumed run already reported are in the carry.
+    return carriedResults.Count == 0 ? synthetic
+        : AlRunner.Infrastructure.ResumeCarry.NotYetReported(carriedResults, bundleAbs, synthetic);
+}
+
 // Console.KeyAvailable can still throw on some terminals even when stdin isn't
 // flagged redirected; treat any failure as "no key" so the watch loop never crashes.
 static bool SafeKeyAvailable()
@@ -4046,7 +4102,6 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                     // inferring a count from a regex over the sources.
                     if (emitOutput.ExcludedObjects.Count > 0)
                     {
-                        var names = string.Join(", ", emitOutput.ExcludedObjects);
                         if (tddMode)
                         {
                             // --tdd (issue #1997): the default path above (else branch) is
@@ -4059,52 +4114,9 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                             // here: any entry there forces exit code 3 at the exit-code ladder
                             // below, and the whole point of --tdd is to report a RED TEST (exit
                             // 1), not a compile failure.
-                            var tddDetails = emitOutput.TddExcludedDetails ?? Array.Empty<TddExcludedObjectDetail>();
-                            // #5262: every worker of a shared --jobs bundle compiles it and finds the same drops;
-                            // the same per-object claim as EMIT-EXCLUDED (#5256) makes one of them report each
-                            // object's FAILED rows. Not claimed: the registry below, which every worker needs.
-                            var tddDropClaim = AlRunner.Infrastructure.UnitClaimQueue.ForBundle(bundleAbs);
-                            var ownTddDetails = tddDropClaim == null ? tddDetails
-                                : tddDropClaim.ClaimDropped(moduleName, tddDetails, tddOwnedDrops);
-                            var peerTddDetails = tddDetails.Where(d => !ownTddDetails.Contains(d)).ToList();
-                            var synthetic = TddSupport.BuildFailedTests(ownTddDetails);
-                            var peerReportedCount = peerTddDetails.Count == 0 ? 0 : TddSupport.BuildFailedTests(peerTddDetails).Count;
-                            // #2207: same fix as the non-tdd branch below — actually print
-                            // them under --verbose. Each synthetic FAILED test already carries
-                            // its own object's diagnostic in its failure message, but that
-                            // requires reading the per-test result; this gives the same
-                            // information right at the summary line the message above points at.
-                            var tddExclDiags = emitOutput.ExcludedObjectDiagnostics ?? Array.Empty<string>();
-                            // #2949: --tdd keeps the run alive and reports the excluded objects'
-                            // tests as RED, so the diagnostics stay behind --verbose here (they
-                            // are also on each synthetic failure). The advice sentence still has
-                            // to describe what will actually happen if it is followed.
-                            Console.Error.WriteLine(
-                                $"<bundled>: TDD-EXCLUDED — {moduleName}: {emitOutput.ExcludedObjects.Count} " +
-                                $"object(s) could not be compiled: [{names}]. " +
-                                (tddDropClaim == null
-                                    ? $"{synthetic.Count} [Test] procedure(s) they declare report as FAILED instead of vanishing from the run."
-                                    : "The dropped object(s) are shared out between this bundle's workers: this worker claimed " +
-                                      $"{ownTddDetails.Count} of {tddDetails.Count} and its {synthetic.Count} [Test] procedure(s) report as FAILED " +
-                                      "here instead of vanishing from the run; the worker that claimed each other object reports its own.") +
-                                ExclusionDiagnosticAdvice(tddExclDiags, AlRunner.Log.Verbose));
-                            if (AlRunner.Log.Verbose && tddExclDiags.Count > 0)
-                            {
-                                Console.Error.WriteLine(
-                                    $"<bundled>: AL diagnostics that identified the excluded object(s):");
-                                foreach (var d in tddExclDiags)
-                                    Console.Error.WriteLine($"  {d}");
-                            }
-                            // #5272: rows an earlier attempt of this resumed run already reported are in the carry.
-                            bundleTests.AddRange(carriedResults.Count == 0 ? synthetic
-                                : AlRunner.Infrastructure.ResumeCarry.NotYetReported(carriedResults, bundleAbs, synthetic));
-                            TddSupport.RegisterDroppedCodeunits(moduleName, tddDetails);
-                            tddSyntheticFailedCount += synthetic.Count;
-                            tddPeerReportedCount += peerReportedCount;
-                            tddExcludedObjectCount += tddDetails
-                                .Count(d => TddSupport.BuildFailedTests(new[] { d }).Count == 0);
-                            foreach (var d in tddDetails)
-                                tddBundleDroppedNames.Add(d.ObjectDisplayName);
+                            // The same answer --per-suite gives (#5307): ReportTddEmitDrops.
+                            bundleTests.AddRange(ReportTddEmitDrops(
+                                emitOutput, "<bundled>", moduleName, moduleName, moduleName, bundleAbs));
                             tddExcludedCount = emitOutput.ExcludedObjects.Count;
                             // sources stays as BcCompiler returned it (the recovered set) — do
                             // NOT clear it, unlike the non-tdd branch below.
@@ -4589,6 +4601,22 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
             et.Stop(); bundleEmit += et.Elapsed;
             AlRunner.Infrastructure.PhaseLog.AddAppEmit(et.Elapsed);
 
+            // --tdd, as the bundled loop does after its emit. #5329: the members this suite's compile generated, which
+            // the closing block lists and AnnotateTddDependentResults reads off the rows; both stayed empty here.
+            // #5307: a dropped object is FAILED rows and the survivors run (no suite error, which would make the run
+            // exit 3); the non-tdd answer is the block below the guards.
+            var suiteModule = $"V2_{Path.GetFileName(suite)}";
+            if (tddMode)
+            {
+                var suiteGenerated = TddSupport.MembersFor(emitOutput, suiteModule);
+                allTddGeneratedMembers.AddRange(suiteGenerated);
+                bundleTddDependents.Add(suiteGenerated);
+                bundleTddDependents.Add(TddSupport.ReachedFor(emitOutput));
+            }
+            var tddDropped = tddMode && emitOutput.ExcludedObjects.Count > 0;
+            if (tddDropped)
+                bundleTests.AddRange(ReportTddEmitDrops(emitOutput, suiteName, null, suiteModule, suiteName, bundleAbs));
+
             // AL-diagnostic compile-failure guard (#2150), extended to --per-suite (#2152).
             // Bundled mode got this gate first because it's the only path CI's corpus/
             // runner-extras legs actually exercise (see #2154) — but --per-suite compiles
@@ -4613,7 +4641,8 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
             // #5299: the bundled loop's EMIT-ZERO. Every object of the suite failed to emit, so
             // there is nothing to compile; running it would report "0 tests, PASSED" for a suite
             // that did not compile.
-            if (sources.Count == 0 && suiteAlDiagnostics.Count > 0)
+            // Not under --tdd when its drops are reported above: they are the zero (bundled loop, #5037).
+            if (sources.Count == 0 && suiteAlDiagnostics.Count > 0 && !tddDropped)
             {
                 Console.Error.WriteLine($"{suiteName}: EMIT-ZERO — 0 sources emitted, {suiteAlDiagnostics.Count} AL error(s):");
                 foreach (var line in DependencyResolveFailureOutput.AlDiagnosticListing(suiteAlDiagnostics, bundleDependencyUnresolved, AlRunner.Log.Verbose))
@@ -4625,10 +4654,10 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
             // non-empty and the final round reports nothing. The suite is the unit here: the same question
             // and the same report as the bundled loop's (#3476), and what is dropped or refused in this
             // suite changes nothing about the next one. A refusal runs nothing of THIS suite.
-            if (emitOutput.ExcludedObjects.Count > 0)
+            if (!tddMode && emitOutput.ExcludedObjects.Count > 0)
             {
                 var drop = ReportNonTddEmitDrops(
-                    emitOutput, suiteName, null, $"V2_{Path.GetFileName(suite)}", bundleAbs,
+                    emitOutput, suiteName, null, suiteModule, bundleAbs,
                     suitePaths, sources.Count, bundleDependencyUnresolved, bundleErrors);
                 if (drop.ReportedByPeer) droppedReportedByPeer = true;
                 if (!drop.AllProfiles)
@@ -4637,6 +4666,8 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                     bundleTests.AddRange(drop.Rows);
                 }
             }
+            // Nothing survived to compile: every object of the suite was dropped and reported above.
+            if (tddDropped && sources.Count == 0) continue;
 
             var ct = System.Diagnostics.Stopwatch.StartNew();
             var compile = assembler.Compile($"V2_{Path.GetFileName(suite)}", sources);
