@@ -248,10 +248,10 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // main run that reports them (#5311).
             ["JobsSharedBundleTddExcludedTests"] = 58,
             ["JobsSharedBundleTddExcludedWorkerTests"] = 52,
-            // #5318: five runner subprocesses over --tdd's re-run (a plain run, a worker, and three controls). NOT a CI
-            // measurement: 47 s on a local run (BC 28.5), recorded at 2.3 times that; re-record from the first main run
-            // that reports it.
-            ["JobsTddDependencyOnlyTests"] = 108,
+            // #5318, #5326: ten tests over runner subprocesses on --tdd's re-run (plain runs, workers, a peer and controls).
+            // NOT a CI measurement: 62 s on a local run (BC 28.5), recorded at 2.3 times that; re-record from the first
+            // main run that reports it.
+            ["JobsTddDependencyOnlyTests"] = 143,
             // #5238: recorded from Test Matrix run 37080059144 (head 465ed74f), at the lower leg rounded down:
             // CacheCompileLockEndToEndTests 110.1s on 27.5,
             // 123.1s on 28.5. CacheCompileLockWaitersEndToEndTests was recorded from the same run at four rows (107.4s on

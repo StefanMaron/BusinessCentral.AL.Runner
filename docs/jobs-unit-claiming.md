@@ -76,6 +76,16 @@ codeunits, and the second pass found them claimed and skipped them, so nobody re
 dependency-only folder, and a run without `--tdd`, keep their one pass. `AL_RUNNER_SEQUENTIAL_BUNDLES=1` keeps one
 pass per bundle for several bundles and has no say over one.
 
+The runs that keep one pass per bundle on purpose cannot defer: `AL_RUNNER_SEQUENTIAL_BUNDLES=1` with several run
+bundles (it orders them, #4450) and `--per-suite`. They run their bundle in the pass the re-run discards, so the
+re-run gives that pass's claims back (`UnitClaimLedger`, #5326): the ledger holds the claim files this process created
+for test codeunits, and when `--tdd` discards a pass it deletes exactly those, printing `--tdd: gave back N test
+codeunit claim(s)`. The re-run claims each again, or a peer that gets there first does, so each codeunit is reported
+once. A claim another worker holds was never in the ledger and stays taken, and a dropped object's claim is not in it
+either (its owner keeps it, above). The re-run runs again the tests the discarded pass ran, which is what a re-run is;
+a worker whose cycle never re-runs gives nothing back. Tests: `JobsTddDependencyOnlyTests` (the knob,
+`--per-suite`, a peer's claim, a knob run with no re-run) and `UnitClaimQueueTests`.
+
 A worker that resumes after a watchdog abort (#2280) compiles the bundle again and finds the same drop. It
 does not report SKIPPED rows its carried attempts already hold (`ResumeCarry.NotYetReported`, #5268), so
 the summary, the JUnit and `--output-json` count each once, and the aggregate counts a bundle once however
