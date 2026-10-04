@@ -64,26 +64,29 @@ public sealed class TddLibTestPageTests
     }
 
     /// <summary>
-    /// The test bundle listed first, on ONE cache: a plain run compiles the library clean and caches it with no
-    /// edges, so a --tdd run on the same cache must compile it again to leave them (a source dependency with none
-    /// is never served from the cache under --tdd); a second --tdd run does the same, and a plain run after them
-    /// still refuses the library's missing members instead of being served a stub.
+    /// ONE cache, a plain run first: it compiles the library clean and caches it with no edges, so a --tdd run on
+    /// the same cache must compile it again to leave them (a source dependency with none is never served from the
+    /// cache under --tdd); a second --tdd run does the same, and a plain run after them still refuses the
+    /// library's missing members instead of being served a stub. Either listing order.
     /// </summary>
-    [SkippableFact]
-    public void PlainThenTddThenTddThenPlainOnOneCache_AnnotatesEveryTddRunAndNeverServesAStubToAPlainOne()
+    [SkippableTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void PlainThenTddThenTddThenPlainOnOneCache_AnnotatesEveryTddRunAndNeverServesAStubToAPlainOne(bool testBundleFirst)
     {
         TestArtifacts.SkipIfMissing();
-        var cache = TestScratch.Dir("al-runner-tdd-testpage-cache");
+        var folders = testBundleFirst ? Reversed : InOrder;
+        var cache = TestScratch.Dir("al-runner-tdd-testpage-cache-" + (testBundleFirst ? "rev" : "ord"));
         Directory.CreateDirectory(cache);
         try
         {
-            using var plain = new TddRunResult(Reversed) { CacheRoot = cache, Plain = true };
+            using var plain = new TddRunResult(folders) { CacheRoot = cache, Plain = true };
             Assert.NotEqual(0, plain.Exit);
-            using var first = new TddRunResult(Reversed) { CacheRoot = cache };
+            using var first = new TddRunResult(folders) { CacheRoot = cache };
             AssertAnnotated(first, "tdd after a plain run");
-            using var second = new TddRunResult(Reversed) { CacheRoot = cache };
+            using var second = new TddRunResult(folders) { CacheRoot = cache };
             AssertAnnotated(second, "tdd after a tdd run");
-            using var after = new TddRunResult(Reversed) { CacheRoot = cache, Plain = true };
+            using var after = new TddRunResult(folders) { CacheRoot = cache, Plain = true };
             Assert.NotEqual(0, after.Exit);
             Assert.DoesNotContain(after.Tests, t => t.GetProperty("status").GetString() == "pass");
         }
