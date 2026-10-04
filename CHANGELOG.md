@@ -21,6 +21,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **tdd:** count a TDD-EXCLUDED object's synthetic FAILED tests once under --jobs on a shared bundle
 - **precompile:** refuse a declared-but-absent dependency by name with exit 2 instead of aborting
 - **tdd:** follow TestPage OpenNew, SetValue and Close to table triggers' generated stubs
 - **tdd:** a warm run of a chain at the re-run limit agrees with the cold run
