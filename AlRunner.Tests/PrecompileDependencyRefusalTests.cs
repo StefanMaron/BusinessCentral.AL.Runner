@@ -212,6 +212,7 @@ public sealed class PrecompileDependencyRefusalTests : IDisposable
     /// inherit: a regression to the abort would write a heap dump of several hundred MB into the artifact
     /// real crashes are diagnosed from. The child's own copy turns it off.
     /// </summary>
+    [ExpectedRunnerAbort]
     internal static ProcessStartInfo BuildChildStartInfo(string app, string outDll, string pkgDir, string cacheDir)
     {
         var psi = new ProcessStartInfo
@@ -225,8 +226,7 @@ public sealed class PrecompileDependencyRefusalTests : IDisposable
             RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
         };
-        psi.Environment["DOTNET_DbgEnableMiniDump"] = "0";
-        return psi;
+        return psi.SwitchOff();
     }
 
     /// <summary>
@@ -237,7 +237,7 @@ public sealed class PrecompileDependencyRefusalTests : IDisposable
     public void Children_AreStartedWithTheCrashDumpSwitchOff()
     {
         var psi = BuildChildStartInfo("/unused.app", "/unused.dll", "/unused-pkg", "/unused-cache");
-        Assert.Equal("0", psi.Environment["DOTNET_DbgEnableMiniDump"]);
+        Assert.Equal("0", psi.Environment[CrashDump.SwitchVariable]);
     }
 
     private static (int ExitCode, string Output) RunPrecompile(Fixture fx, string app)
