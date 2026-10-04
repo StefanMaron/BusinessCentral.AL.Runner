@@ -118,6 +118,7 @@ All notable changes to this project are documented here. Format based on
 - **testpage:** New() on an empty linked part raises the part's OnNewRecord
 
 ### Changed
+- **ci:** re-read CollectionCostOrderer weight entries from CI runs
 - **jmphook:** isolate the hook-audit sets so the indirect-install guard stops flaking
 - **platform-floor:** measure the remaining System-table fixtures by stripped run
 - **fixtures:** drop the platform floor from more C# fixtures (#5112 batch 3)
