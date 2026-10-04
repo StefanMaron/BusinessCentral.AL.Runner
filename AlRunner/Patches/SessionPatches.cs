@@ -633,8 +633,14 @@ public static partial class BcRuntime
             if (cuType == null)
             {
                 if (trap) return false;
-                throw new InvalidOperationException(
-                    $"ALStartSession: codeunit {objectId} is not present in the loaded test assembly.");
+                // A typed refusal, not a bare InvalidOperationException (#4976): asserterror now lets a
+                // raw CLR exception escape as BC's does, and this is a runner limit, not a BC error.
+                // BC's ALStartSession starts the session first and resolves the object in it, so no
+                // synchronous AL error is the answer here and none is claimed.
+                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    "ALStartSession",
+                    $"not-yet-implemented — codeunit {objectId} is not present in the loaded test assembly",
+                    "docs/scope.md");
             }
 
             // Allocate a fresh session id BEFORE we dispatch so the contract
@@ -655,8 +661,10 @@ public static partial class BcRuntime
             if (ctor == null)
             {
                 if (trap) return false;
-                throw new InvalidOperationException(
-                    $"ALStartSession: codeunit {objectId} has no single-arg ITreeObject constructor.");
+                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    "ALStartSession",
+                    $"not-yet-implemented — codeunit {objectId} has no single-arg ITreeObject constructor",
+                    "docs/scope.md");
             }
             var instance = ctor.Invoke(new object[] { parent! });
 

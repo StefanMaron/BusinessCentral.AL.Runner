@@ -1782,6 +1782,21 @@ because four readers of one private BC structure raised three different exceptio
 them. `AlRunner/Infrastructure/BcShapeGapException.cs` carries the full derivation, including
 why it is a separate type rather than a third reason anchor.
 
+### `asserterror` and raw CLR exceptions
+
+Real BC's `NavMethodScope.AssertError` catches a `NavBaseException` (an AL runtime error), after
+remapping `DivideByZeroException`, `IndexOutOfRangeException`, `FormatException`,
+`OverflowException` and `NavMetadataNotFoundException` into one, or any exception with a
+`NavBaseException` on its `InnerException` chain. It rethrows everything else, so a raw
+`NullReferenceException` from inside the platform fails the test with `Unexpected CLR exception
+thrown` (measured: corpus PR 505, run `36603980438`, and the Windows nightly run `36603989739`;
+decompiled body identical in Ncl 27.5.46862.53931 and 28.4.53241.54346). The runner's replacement
+(`MethodScopePatches.IsCatchableByAssertError`) applies the same rule and additionally keeps
+catching a runner out-of-scope signal (#2871). Since #4976, a runner stand-in for an AL error
+must therefore BE one (`NavCSideException` etc.), and a runner limit must be a typed refusal, or
+it escapes `asserterror` as a CLR exception. A corpus test cannot express this: a test reaching
+it always fails on BC.
+
 ### The `!` sweep — 73 more member lookups that used to fail as a silent null
 
 [#3051](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3051) closed the other
