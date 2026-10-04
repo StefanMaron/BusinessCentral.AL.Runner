@@ -72,9 +72,9 @@ internal sealed partial class TddCallGraph
         var failed = 0;
         foreach (var statement in root.DescendantNodes().OfType<NavSyntax.AssignmentStatementSyntax>())
         {
-            // A compound assignment (+=) to Value is not valid AL (AL0129), so only := is read.
-            if (statement.Target is not NavSyntax.MemberAccessExpressionSyntax mae
-                || !Name(mae.Name as NavSyntax.IdentifierNameSyntax).Equals("Value", StringComparison.OrdinalIgnoreCase)) continue;
+            // Value is the one member of a control AL lets you assign to, and only with := (a compound assignment
+            // is AL0129), so any assignment whose target is a member of a control is a typed value.
+            if (statement.Target is not NavSyntax.MemberAccessExpressionSyntax mae) continue;
             try
             {
                 var caller = EnclosingMethod(statement);
