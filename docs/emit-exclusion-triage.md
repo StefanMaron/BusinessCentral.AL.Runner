@@ -115,3 +115,8 @@ rather than a wrong verdict, and it is left alone here rather than changed in pa
   as SKIPPED rows, a refused drop runs nothing of that suite, and either way the suite error and exit 3
   stand. A drop in one suite changes nothing about the next. A suite whose objects ALL fail to emit is
   not this path: it stays EMIT-ZERO (#5299).
+- `--tdd --per-suite` answers a drop as `--tdd` does (#5307), through the one helper both loops call
+  (`ReportTddEmitDrops` in Program.cs): TDD-EXCLUDED, the dropped test codeunit's tests as **FAILED** rows, the
+  survivors run, exit 1, and no suite error. A suite whose objects ALL drop is that answer too, not EMIT-ZERO. The
+  same loop lists the members `--tdd` generated and annotates the rows that reach them (#5329), as the bundled loop
+  does; `--per-suite` without `--tdd` keeps the SKIPPED answer above.
