@@ -21,6 +21,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **tdd:** follow a report's, a query's and an xmlport's triggers so a stub reached through them is annotated
 - **tdd:** --tdd --jobs worker with a dependency-only folder keeps the test codeunits it ran
 - **tdd:** follow page triggers, TestAction.Invoke and page events to generated stubs
 - **tdd:** count a TDD-EXCLUDED object's synthetic FAILED tests once under --jobs on a shared bundle
