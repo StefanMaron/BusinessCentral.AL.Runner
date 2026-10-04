@@ -173,29 +173,26 @@ public sealed class JobsUnitClaimEndToEndTests
         Assert.Contains($"Tests: {ClaimFixtureTests}   passed {ClaimFixtureTests}", output);
     }
 
-    /// <summary>One bundle never fanned out before, so it must not start losing a report (`--out`,
-    /// `--output-json` are written by each worker and not merged) or refusing a flag (`--count-out`
-    /// is refused under a fan-out). With any of them the bundle stays in one process.</summary>
-    [SkippableTheory]
-    [InlineData("--out")]
-    [InlineData("--count-out")]
-    [InlineData("--output-json")]
-    public void AFlagAFanOutCannotHonour_KeepsOneBundleInOneProcess(string flag)
+    /// <summary>One bundle never fanned out before, so it must not start refusing a flag a fan-out refuses
+    /// (`--count-out`) or losing a report one cannot write: with `--count-out` the bundle stays in one process.
+    /// `--out` and `--output-json` are written by the parent from the workers' results (#5129), so a shared
+    /// bundle is fanned out with them (JobsReportsEndToEndTests).</summary>
+    [SkippableFact]
+    public void AFlagAFanOutCannotHonour_KeepsOneBundleInOneProcess()
     {
         TestArtifacts.SkipIfMissing();
-        var scratch = TestScratch.Dir("al-runner-jobs-unit-claim-flag" + flag.TrimStart('-').Replace("-", ""));
+        const string flag = "--count-out";
+        var scratch = TestScratch.Dir("al-runner-jobs-unit-claim-flagcountout");
         var target = Path.Combine(scratch, "report.json");
-        var flagArgs = flag == "--output-json" ? flag : $"{flag} \"{target}\"";
 
         var (exit, output) = RunRunner(
-            $"--cache \"{Path.Combine(scratch, "cache")}\" --jobs 2 {flagArgs} \"{Path.Combine(Fixtures, "JobsUnitClaim")}\"",
+            $"--cache \"{Path.Combine(scratch, "cache")}\" --jobs 2 {flag} \"{target}\" \"{Path.Combine(Fixtures, "JobsUnitClaim")}\"",
             lowSplitFloor: true);
 
         Assert.True(exit == 0, $"expected exit 0, got {exit}.\n{output}");
         Assert.DoesNotContain("is shared by", output);
         Assert.DoesNotContain("worker process(es)", output);
-        if (flag != "--output-json") Assert.True(File.Exists(target), $"{flag} wrote nothing.\n{output}");
-        else Assert.Matches($"\"total\":\\s*{ClaimFixtureTests}\\b", output);
+        Assert.True(File.Exists(target), $"{flag} wrote nothing.\n{output}");
     }
 
     /// <summary>#5129 item 1: with several bundles the parent used to hand each worker a private

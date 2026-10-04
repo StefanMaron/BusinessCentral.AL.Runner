@@ -98,6 +98,10 @@ internal static class ParallelFanOut
                 continue;
             }
             if (a == "--output-json") continue;
+            // The same reason: a worker forced to exit 0 hides the shard's verdict from the parent,
+            // whose `Result:` line and `--output-json` exitCode would then say a failing run passed.
+            // The parent applies it to the run's own code (StrictExit).
+            if (a == "--no-strict-exit") continue;
 
             // Carried totals belong to the RUN, not to each worker. The parent aggregates every
             // shard's JUnit itself, so handing --merge-counts to all six workers would add the
@@ -640,10 +644,24 @@ internal static class ParallelFanOut
         }
 
         // The run's one `Result:` line, after every escalation above; the shards label theirs.
+        var strictExit = StrictExit(originalArgs);
         Console.WriteLine();
-        Console.WriteLine(Reporter.ResultLine(worst));
+        Console.WriteLine(Reporter.ResultLine(strictExit ? worst : 0, strictExit ? null : worst));
         ScratchDirs.Release(tempDir);
-        return worst;
+        return strictExit ? worst : 0;
+    }
+
+    /// <summary>False when the caller's last word on exit codes is `--no-strict-exit`: Program.cs
+    /// lets `--strict` and `--no-strict-exit` override each other in argument order.</summary>
+    internal static bool StrictExit(IReadOnlyList<string> args)
+    {
+        var strict = true;
+        foreach (var a in args)
+        {
+            if (a == "--strict") strict = true;
+            else if (a == "--no-strict-exit") strict = false;
+        }
+        return strict;
     }
 
     private static string? LastValueOf(IReadOnlyList<string> args, params string[] flags)

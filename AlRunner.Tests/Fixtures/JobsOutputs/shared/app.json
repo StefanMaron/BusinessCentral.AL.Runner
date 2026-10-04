@@ -1,0 +1,23 @@
+{
+  "id": "7a1e5c10-3b2d-4f60-9a11-5d0e8c4b7a23",
+  "name": "Runner Tests Fixture - Jobs Outputs Shared",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Four test codeunits that each take a moment, two of them failing, so two --jobs workers sharing the bundle both get some and both have a failure to report.",
+  "description": "Four test codeunits that each take a moment, two of them failing, so two --jobs workers sharing the bundle both get some and both have a failure to report.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65780,
+      "to": 65789
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
