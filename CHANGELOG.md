@@ -21,6 +21,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **tdd:** follow TestPage OpenNew, SetValue and Close to table triggers' generated stubs
 - **tdd:** a warm run of a chain at the re-run limit agrees with the cold run
 - **per-suite:** route a suite's compile-time drops through ExcludedObjectTriage
 - **tdd:** a chain one link past the re-run limit reports the limit instead of a dependency-load FATAL
