@@ -32,8 +32,3 @@ xmlport 73064 "TOT B XmlPort"
     schema { textelement(Root) { tableelement(Row; "TOT B Rec") { fieldelement(PK; Row.PK) { } } } }
     trigger OnPreXmlPort() var T: Codeunit "TOT B Target"; R: Integer; begin R := T.MBXmlPre(1); end;
 }
-
-reportextension 73065 "TOT B Report Ext" extends "TOT A Report"
-{
-    trigger OnPreReport() var T: Codeunit "TOT B Target"; R: Integer; begin R := T.MBExtPre(1); end;
-}

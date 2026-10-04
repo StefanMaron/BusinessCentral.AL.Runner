@@ -1,0 +1,30 @@
+{
+  "id": "5322d0c1-2222-4e8f-9a2c-6d4e8f0a1b01",
+  "name": "Runner Tests Fixture - Tdd Lib Report Extension B",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "#5322 probe: a library runs a report of its own that a later bundle extends.",
+  "description": "#5322: library a runs its own report by name, bundle b extends it with a report extension, test bundle c depends on both.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "5322d0c1-1111-4e8f-9a2c-6d4e8f0a1b01",
+      "name": "Runner Tests Fixture - Tdd Lib Report Extension A",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 73090,
+      "to": 73099
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

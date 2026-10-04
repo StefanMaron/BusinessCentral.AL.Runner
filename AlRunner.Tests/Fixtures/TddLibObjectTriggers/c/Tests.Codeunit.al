@@ -24,13 +24,6 @@ codeunit 73070 "TOTC Tests"
     end;
 
     [Test]
-    procedure ReportOfALibrary_ExtendedByAnotherBundle_StartsTheExtensionsTrigger()
-    var O: Codeunit "TOT Opener";
-    begin
-        O.RunOwnReport();
-    end;
-
-    [Test]
     procedure NoObject_IsNotAnnotated()
     var R: Record "TOT B Rec";
     begin

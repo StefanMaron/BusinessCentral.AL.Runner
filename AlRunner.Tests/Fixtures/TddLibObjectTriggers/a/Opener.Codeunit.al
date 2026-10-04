@@ -1,6 +1,6 @@
 // #5322: a library that runs objects it does not depend on. It cannot name a report, a query or an xmlport of the
-// bundle declared after it, so the call by id is the only thing that connects a test to those triggers; and its
-// own report is extended by a bundle compiled after it, so running it reaches code that bundle declares.
+// bundle declared after it, so the call by id is the only thing that connects a test to those triggers (no other form
+// KeyGraphProbe knows is in any of the three bundles).
 codeunit 73050 "TOT Opener"
 {
     procedure RunReportById(ReportId: Integer)
@@ -22,21 +22,10 @@ codeunit 73050 "TOT Opener"
         XmlPort.Export(XmlPortId, O);
     end;
 
-    procedure RunOwnReport()
-    begin
-        Report.Run(Report::"TOT A Report");
-    end;
 }
 
 table 73051 "TOT A Store"
 {
     fields { field(1; PK; Code[20]) { } field(2; Data; Blob) { } }
     keys { key(PK; PK) { Clustered = true; } }
-}
-
-report 73052 "TOT A Report"
-{
-    ProcessingOnly = true;
-    UseRequestPage = false;
-    trigger OnPreReport() begin end;
 }
