@@ -4665,8 +4665,6 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                     bundleTests.AddRange(drop.Rows);
                 }
             }
-            // Nothing survived to compile: every object of the suite was dropped and reported above.
-            if (tddDropped && sources.Count == 0) continue;
 
             var ct = System.Diagnostics.Stopwatch.StartNew();
             var compile = assembler.Compile($"V2_{Path.GetFileName(suite)}", sources);
