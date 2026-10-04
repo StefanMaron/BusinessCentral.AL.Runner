@@ -275,6 +275,13 @@ public static partial class BcRuntime
         if (testTarget != null)
             return testTarget.RunAsync(errorLevel, record).AsTask().GetAwaiter().GetResult();
 
+        // BC's RunCodeunit takes `handle.Target` BEFORE RunAsync, so a codeunit that cannot be resolved
+        // raises even when the Boolean result is consumed: the guarded form never traps it (measured:
+        // corpus PR 542, `Ok := Codeunit.Run(<missing id>)` raises the "object does not exist" error
+        // on the service tier). Before #5339 the resolution sat inside the `catch when (trap)` below,
+        // so a guarded run of a codeunit the runner could not load returned false silently.
+        var target = NavCodeunitHandle_CreateTarget(CreateCodeunitHandle(objectId));
+
         // Deliberately OUTSIDE the `catch when (trap)` below, exactly as BC places
         // BeginTransactionWorldAndTransaction outside the try whose catch suppresses the
         // codeunit's own errors: a refusal must reach the AL caller as an error, never be
@@ -293,8 +300,6 @@ public static partial class BcRuntime
         bool ran = false;
         try
         {
-            var handle = CreateCodeunitHandle(objectId);
-            var target = NavCodeunitHandle_CreateTarget(handle);
             InvokeOnRun(target, record);
             ran = true;
             return true;
@@ -527,6 +532,13 @@ public static partial class BcRuntime
             // those ranges we still throw with a helpful diagnostic.
             if ((id >= 1 && id <= 9999) || (id >= 130000 && id <= 139999))
                 return new NoOpCodeunit(self, id);
+            // BC's own CreateTarget raises NavMetadataNotFoundException here (GetMetaCodeunitById), which
+            // NavMethodScope turns into the "object does not exist" AL error. Only when the run is
+            // complete: otherwise the id may live in a package this run could not load, and a clean AL
+            // error would let asserterror swallow a provisioning gap (#5339; loud-failures.md).
+            if (AlRunner.Infrastructure.ProvisionGapLog.CanEstablishAbsence)
+                throw new Microsoft.Dynamics.Nav.Types.NavMetadataNotFoundException(
+                    Microsoft.Dynamics.Nav.Types.ObjectType.CodeUnit, id);
             throw AlRunner.Infrastructure.MissingDependencyCodeunitException.For(id, "", BuildMissingCodeunitMessage(id));
         }
         var ctor = _codeunitTreeCtorCache.GetOrAdd(codeunitType, t => t.GetConstructors()

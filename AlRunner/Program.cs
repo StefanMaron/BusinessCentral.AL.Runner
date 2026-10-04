@@ -3330,6 +3330,10 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                     if (AlRunner.Infrastructure.ProvisionGapLog.WriteAtDiscovery) Console.Error.WriteLine(g);
                     bundleProvisionGaps.Add(g);
                 }
+                // #5339: both lists above bypass ProvisionGapLog.Report, so say so, or a missing-object
+                // refusal would read this run as complete and call a package it could not load "absent".
+                if (resolver.UnservableDependencies.Any() || resolver.ProvisioningGaps.Any())
+                    AlRunner.Infrastructure.ProvisionGapLog.NoteDependencyGap();
                 // #5233: the deferral attempt asks whether the BUNDLE passes without the platform
                 // apps. A loaded dependency that source-compiles against a withheld floor (Test
                 // Runner, by default) answers a different question: its compile drops objects and
