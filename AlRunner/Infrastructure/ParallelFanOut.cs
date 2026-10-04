@@ -49,8 +49,9 @@ internal static class ParallelFanOut
 
     /// <summary>
     /// The command line for one worker: the parent's own arguments, with the bundle positionals
-    /// replaced by <paramref name="shardBundles"/>, `--jobs` removed, and `--output-junit`
-    /// forced to <paramref name="junitPath"/> so the parent can aggregate.
+    /// replaced by <paramref name="shardBundles"/>, `--jobs` removed, `--output-junit`
+    /// forced to <paramref name="junitPath"/> so the parent can aggregate, and `--out` /
+    /// `--output-json` removed (the parent writes those, #5129).
     /// </summary>
     /// <param name="originalArgs">The parent's argv.</param>
     /// <param name="shardBundles">This worker's bundle dirs.</param>
@@ -65,6 +66,7 @@ internal static class ParallelFanOut
     {
         var roots = new HashSet<string>(bundleRoots.Select(Normalize), StringComparer.OrdinalIgnoreCase);
         var child = new List<string>();
+        var sawOut = false;
 
         for (var i = 0; i < originalArgs.Count; i++)
         {
@@ -84,6 +86,22 @@ internal static class ParallelFanOut
                 if (i + 1 < originalArgs.Count) i++;
                 continue;
             }
+
+            // #5129: the caller's --out and --output-json describe the RUN, so the parent writes them
+            // from the workers' results (JobsReports). Left on a worker, every one would write the
+            // one --out path (the last to finish wins) and print its own document. --out still turns
+            // the worker's FAILURE CLASSIFICATION block on, as --classify does without a path.
+            if (a == "--out")
+            {
+                if (i + 1 < originalArgs.Count) i++;
+                sawOut = true;
+                continue;
+            }
+            if (a == "--output-json") continue;
+            // The same reason: a worker forced to exit 0 hides the shard's verdict from the parent,
+            // whose `Result:` line and `--output-json` exitCode would then say a failing run passed.
+            // The parent applies it to the run's own code (StrictExit).
+            if (a == "--no-strict-exit") continue;
 
             // Carried totals belong to the RUN, not to each worker. The parent aggregates every
             // shard's JUnit itself, so handing --merge-counts to all six workers would add the
@@ -117,6 +135,7 @@ internal static class ParallelFanOut
             child.Add(a);
         }
 
+        if (sawOut) child.Add("--classify");
         child.AddRange(shardBundles);
         child.Add("--output-junit");
         child.Add(junitPath);
@@ -386,10 +405,11 @@ internal static class ParallelFanOut
     /// <summary>
     /// Run <paramref name="bundles"/> across <paramref name="jobs"/> worker processes and print
     /// one aggregate summary. Returns the exit code: the worst any worker returned, so a green
-    /// aggregate cannot hide a shard that failed.
+    /// aggregate cannot hide a shard that failed. <paramref name="jsonStdout"/> is the real stdout
+    /// when Program.cs redirected it for --output-json: the one document goes there.
     /// </summary>
     public static int Run(IReadOnlyList<string> bundles, IReadOnlyList<string> originalArgs, int jobs,
-        string? splitRefusal)
+        string? splitRefusal, TextWriter? jsonStdout = null)
     {
         var plan = PlanBundles(bundles, jobs, splitRefusal);
         var shards = plan.Shards;
@@ -433,6 +453,12 @@ internal static class ParallelFanOut
             Directory.CreateDirectory(claimDir);
         }
 
+        // #5129: --out and --output-json are written here, from what each worker hands back.
+        var callerOut = LastValueOf(originalArgs, "--out");
+        var callerJson = originalArgs.Contains("--output-json");
+        var shardResultFiles = Enumerable.Range(0, shards.Count)
+            .Select(i => Path.Combine(tempDir, $"shard-{i}.results.json")).ToList();
+
         var procs = new List<(System.Diagnostics.Process P, string Junit, Task<string> Out, Task<string> Err)>();
         for (var i = 0; i < shards.Count; i++)
         {
@@ -463,6 +489,7 @@ internal static class ParallelFanOut
                          Environment.GetEnvironmentVariable("AL_RUNNER_TEST_TIMEOUT_SEC")))
                 psi.Environment[kv.Key] = kv.Value;
             psi.Environment[TestSelectionAudit.WorkerEnvVar] = "1";
+            if (callerOut != null || callerJson) psi.Environment[JobsReports.ShardResultsEnvVar] = shardResultFiles[i];
             JobsSourceDependencies.ApplyTo(psi.Environment, dependencyOnly[i]);
             if (claimDir != null)
             {
@@ -488,10 +515,12 @@ internal static class ParallelFanOut
         long notRun = 0, partial = 0;
         var shardOutput = new string[procs.Count];
         var shardResumed = new bool[procs.Count];
+        var shardEnded = new string[procs.Count];
         for (var i = 0; i < procs.Count; i++)
         {
             var (p, junit, so, se) = procs[i];
             var killed = WaitForWorkerExit(p, junit, i);
+            shardEnded[i] = killed ? "killed" : $"exit {p.ExitCode}";
             var stdout = so.GetAwaiter().GetResult();
             var stderr = se.GetAwaiter().GetResult();
 
@@ -570,28 +599,64 @@ internal static class ParallelFanOut
             worst = TestSelectionAudit.ExitCode;
         }
 
-        // #5129: BuildChildArgs hands every worker its own file, so the path the caller named is
+        // #5129: BuildChildArgs hands every worker its own files, so the paths the caller named are
         // written here from those files or not at all.
+        var lostOutputs = new List<string>();
+        var lostShardCount = 0;
+        List<BucketResult>? runBuckets = null;
+        if (callerOut != null || callerJson)
+        {
+            var (buckets, lostShards) = JobsReports.Merge(shardResultFiles,
+                shards.Select(s => (IReadOnlyList<string>)s.Select(x => x.Name).ToList()).ToList(), bundles, shardEnded);
+            runBuckets = buckets;
+            lostShardCount = lostShards.Count;
+            foreach (var i in lostShards)
+                Console.Error.WriteLine($"jobs: shard {i} ended ({shardEnded[i]}) without handing back its "
+                    + "results; its bundles are listed as failed to execute in the report");
+        }
+        if (callerOut != null)
+        {
+            var problem = OutputPaths.TryWrite("--out", callerOut, () => Reporter.WriteClassification(runBuckets!, callerOut));
+            if (problem != null) { Console.Error.WriteLine(problem); lostOutputs.Add("--out"); }
+            else Console.WriteLine($"Classification -> {callerOut} (merged from {procs.Count} worker(s))");
+        }
         var callerJunit = LastValueOf(originalArgs, "--output-junit");
         if (callerJunit != null)
         {
-            try
-            {
-                JUnitReport.WriteMergedJUnit(callerJunit, procs.Select(x => x.Junit).ToList());
-                Console.WriteLine($"JUnit XML -> {callerJunit} (merged from {procs.Count} worker(s))");
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"jobs: could not write the merged JUnit report to {callerJunit}: {ex.Message}");
-                if (worst < 2) worst = 2;
-            }
+            var problem = OutputPaths.TryWrite("--output-junit", callerJunit,
+                () => JUnitReport.WriteMergedJUnit(callerJunit, procs.Select(x => x.Junit).ToList()));
+            if (problem != null) { Console.Error.WriteLine(problem); lostOutputs.Add("--output-junit"); }
+            else Console.WriteLine($"JUnit XML -> {callerJunit} (merged from {procs.Count} worker(s))");
+        }
+        if (lostOutputs.Count > 0)
+            Console.Error.WriteLine($"jobs: could not write {string.Join(", ", lostOutputs)} (see the message above)");
+        worst = JobsReports.Escalate(worst, lostShardCount, lostOutputs.Count);
+        if (callerJson)
+        {
+            // After every escalation above: the document's `exitCode` is the run's, as in a plain run.
+            // Program.cs redirected Console.Out to stderr for --output-json and handed us the real one.
+            (jsonStdout ?? Console.Out).WriteLine(Reporter.SerializeJsonOutput(runBuckets!, worst));
         }
 
         // The run's one `Result:` line, after every escalation above; the shards label theirs.
+        var strictExit = StrictExit(originalArgs);
         Console.WriteLine();
-        Console.WriteLine(Reporter.ResultLine(worst));
+        Console.WriteLine(Reporter.ResultLine(strictExit ? worst : 0, strictExit ? null : worst));
         ScratchDirs.Release(tempDir);
-        return worst;
+        return strictExit ? worst : 0;
+    }
+
+    /// <summary>False when the caller's last word on exit codes is `--no-strict-exit`: Program.cs
+    /// lets `--strict` and `--no-strict-exit` override each other in argument order.</summary>
+    internal static bool StrictExit(IReadOnlyList<string> args)
+    {
+        var strict = true;
+        foreach (var a in args)
+        {
+            if (a == "--strict") strict = true;
+            else if (a == "--no-strict-exit") strict = false;
+        }
+        return strict;
     }
 
     private static string? LastValueOf(IReadOnlyList<string> args, params string[] flags)

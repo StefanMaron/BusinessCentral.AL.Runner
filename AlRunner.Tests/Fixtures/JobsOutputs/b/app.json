@@ -1,0 +1,23 @@
+{
+  "id": "7a1e5c10-3b2d-4f60-9a11-5d0e8c4b7a22",
+  "name": "Runner Tests Fixture - Jobs Outputs B",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "One passing and one failing test, so a --jobs run has something to report in every output file.",
+  "description": "One passing and one failing test, so a --jobs run has something to report in every output file.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65770,
+      "to": 65779
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

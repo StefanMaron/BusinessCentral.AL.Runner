@@ -1817,10 +1817,9 @@ if (ProvisionTestDataBackup(AlRunner.Infrastructure.BcArtifacts.SelectedVersion.
 // each claiming test codeunits first come, first served (docs/jobs-unit-claiming.md).
 var jobsSplitRefusal = AlRunner.Infrastructure.ParallelFanOut.SplitRefusal(
     isolation, countBaselinePath != null, expectationsRequireMatch);
-// A single bundle did not fan out before, so it must not start refusing (--count-out, --coverage)
-// or losing its report (--out and --output-json are written by each worker, not merged; #5129).
-var singleBundleMaySplit = outPath == null && !outputJson && countOutPath == null
-    && !coverageEnabled && !countBaselineRequireAll;
+// A single bundle did not fan out before, so it must not start refusing (--count-out, --coverage).
+// --out and --output-json are written by the parent from the workers' results (#5129).
+var singleBundleMaySplit = countOutPath == null && !coverageEnabled && !countBaselineRequireAll;
 var jobsSingleBundlePlan = jobs > 1 && !watchMode && !serverMode && !dapMode
     && bundles.Count == 1 && singleBundleMaySplit
     ? AlRunner.Infrastructure.ParallelFanOut.PlanBundles(bundles, jobs, jobsSplitRefusal)
@@ -1886,7 +1885,7 @@ if (jobs > 1 && !watchMode && !serverMode && !dapMode
             + "Run the covering invocation without --jobs, or drop the flag.");
         return 2;
     }
-    return AlRunner.Infrastructure.ParallelFanOut.Run(bundles, args, jobs, jobsSplitRefusal);
+    return AlRunner.Infrastructure.ParallelFanOut.Run(bundles, args, jobs, jobsSplitRefusal, outputJsonStdout);
 }
 // A heavy single bundle that free memory cannot share runs in one process, as before #5130; say so,
 // because --jobs asked for more.
@@ -5477,6 +5476,15 @@ var lostOutputs = new List<string>();
 // Set when a coverage report was written from a source map that could not be fully read;
 // escalated with lostOutputs below (#3884).
 var incompleteCoverage = false;
+// #5129: a --jobs worker hands its whole results to the parent, which writes the caller's --out and
+// --output-json from them. Written before --output-junit, because the parent kills a worker that
+// outlives its JUnit file (ParallelFanOut.WaitForWorkerExit) and the results must exist by then.
+if (AlRunner.Infrastructure.JobsReports.ShardResultsPath() is { } shardResultsPath)
+{
+    var shardProblem = AlRunner.Infrastructure.OutputPaths.TryWrite("the --jobs worker results file", shardResultsPath,
+        () => AlRunner.Infrastructure.ResumeCarry.Write(shardResultsPath, allResults));
+    if (shardProblem != null) { Console.Error.WriteLine(shardProblem); lostOutputs.Add("the --jobs worker results file"); }
+}
 if (outPath != null)
 {
     var writeProblem = AlRunner.Infrastructure.OutputPaths.TryWrite("--out", outPath,
