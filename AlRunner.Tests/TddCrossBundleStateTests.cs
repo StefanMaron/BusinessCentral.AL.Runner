@@ -57,13 +57,14 @@ public sealed class TddCrossBundleStateTests
     }
 
     /// <summary>
-    /// #5286: a table extension, a RecordRef or FieldRef, and a Codeunit.Run whose first argument is not a
+    /// #5286, #5309: a table extension or a page extension, a RecordRef or FieldRef, and a Codeunit.Run whose first argument is not a
     /// `Codeunit::Name` each make the edges of an earlier bundle readable, because each may start something a
     /// LATER bundle declares; a run with none of them does not, and neither does a Codeunit.Run naming its
     /// codeunit. The control is the same bundles with only the last two.
     /// </summary>
     [Theory]
     [InlineData("tableextension 2 \"E\" extends \"A\" { trigger OnModify() begin end; }", true)]
+    [InlineData("pageextension 2 \"E\" extends \"A\" { trigger OnOpenPage() begin end; }", true)]
     [InlineData("codeunit 2 \"B\" { procedure Q() var R: RecordRef; begin R.Insert(true); end; }", true)]
     [InlineData("codeunit 2 \"B\" { procedure Q() var F: FieldRef; begin F.Validate(1); end; }", true)]
     [InlineData("codeunit 2 \"B\" { procedure Q(Id: Integer) begin Codeunit.Run(Id); end; }", true)]

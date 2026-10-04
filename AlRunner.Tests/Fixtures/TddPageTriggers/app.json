@@ -1,0 +1,23 @@
+{
+  "id": "5309a0c1-7b3d-4e8f-9a2c-6d4e8f0a1b01",
+  "name": "Runner Tests Fixture - Tdd Page Triggers",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves --tdd (#5309) annotates a test that reaches a generated stub through a page's own code a TestPage runs.",
+  "description": "Proves --tdd (#5309) annotates a test that reaches a generated stub through the triggers and events of a page, a control's field triggers and an action's OnAction, each started by the TestPage call that runs it, and leaves a test that runs none of them unannotated.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 72800,
+      "to": 72819
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

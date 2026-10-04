@@ -19,14 +19,17 @@ public sealed class TddCallGraphTriggerNameTests
     public void KnownName_IsStartedByItsOperationOnly(string trigger, string operation)
         => Assert.Equal(new[] { operation }, TddCallGraph.StartedBy(trigger));
 
-    /// <summary>A lookup, a drill-down and an assist-edit run from a page, never from a record operation.</summary>
+    /// <summary>
+    /// A lookup, a drill-down and an assist-edit run from a page control, never from a record operation: the key a
+    /// control's Lookup, Drilldown or AssistEdit raises on its field's table starts them (#5309), and no operation does.
+    /// </summary>
     [Theory]
-    [InlineData("OnLookup")]
-    [InlineData("OnAfterLookup")]
-    [InlineData("OnDrillDown")]
-    [InlineData("OnAssistEdit")]
-    public void PageOnlyName_IsStartedByNoOperation(string trigger)
-        => Assert.Empty(TddCallGraph.StartedBy(trigger));
+    [InlineData("OnLookup", "OnLookup")]
+    [InlineData("OnAfterLookup", "OnLookup")]
+    [InlineData("OnDrillDown", "OnDrillDown")]
+    [InlineData("OnAssistEdit", "OnAssistEdit")]
+    public void PageStartedName_IsStartedByTheControlCallOnly(string trigger, string started)
+        => Assert.Equal(new[] { started }, TddCallGraph.StartedBy(trigger));
 
     /// <summary>The control for the fallback: a name nobody listed over-annotates, and misses nothing.</summary>
     [Theory]
