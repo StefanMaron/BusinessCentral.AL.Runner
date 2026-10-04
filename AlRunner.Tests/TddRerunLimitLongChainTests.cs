@@ -31,6 +31,10 @@ internal static class LongChainFolders
     internal static string[] ReversedWithTwoFourthLinks() => new[]
         { Long("testBoth"), Long("lib4b"), Long("lib4"), Chain("lib3"), Chain("lib2"), Chain("lib1"), Chain("app") };
 
+    /// <summary>The #5265 chain, the test first: app lib1..lib3 and a test calling "M4", one link past the limit.</summary>
+    internal static string[] FourLinkReversed() => new[]
+        { Chain("test"), Chain("lib3"), Chain("lib2"), Chain("lib1"), Chain("app") };
+
     /// <summary>A chain of exactly the limit: app, lib1, lib2, test calling "M3": three re-runs and nothing left over.
     /// The test is listed first, so its dependency load compiles lib1 and lib2 and is stale until the third re-run.</summary>
     internal static string[] AtTheLimit() => new[]
