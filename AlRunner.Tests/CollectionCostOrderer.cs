@@ -162,6 +162,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // #5305: absent from this table. CI 59.1s (BC 27.5) and 57.5s (BC 28.5) on main run 37161245486, the lower leg
             // rounded down; the only main run that carries the class (#5311).
             ["PerSuiteEmitExcludedTests"] = 57,
+            // #5307: added by that PR; an ESTIMATE from one local run (63s, twelve runner invocations on private cache roots,
+            // BC 28.5), not a CI measurement: re-record from the CI TRX once a main run carries the class.
+            ["PerSuiteTddExcludedTests"] = 63,
             // #5132, grown by #5303 (the keep side at four emit sites, each loading the System Application): runner spawns
             // on one scratch tree. CI 143.9s (BC 27.5) and 144.3s (BC 28.5) on main run 37161245486, the lower leg rounded
             // down (#5311).

@@ -3559,6 +3559,15 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
     // outcome and is annotated with the generated members it reaches (#5147, TddDependents).
     var bundleTddDependents = new TddDependents();
     List<TestResult> AnnotateTddDependentResults(IReadOnlyList<TestResult> raw) => bundleTddDependents.Apply(raw);
+    // --tdd: what one compile generated or reached, for the closing block and the rows' annotation. Both loops call it
+    // after their emit (#5329: --per-suite did not, so the members it generated were never listed).
+    void CollectTddMembers(BcEmitOutput emitOutput, string module)
+    {
+        var generated = TddSupport.MembersFor(emitOutput, module);
+        allTddGeneratedMembers.AddRange(generated);
+        bundleTddDependents.Add(generated);
+        bundleTddDependents.Add(TddSupport.ReachedFor(emitOutput));
+    }
     // #1880: counts app groups (bundled mode) / suites (--per-suite) that actually
     // reached test execution and contributed to bundleTests — incremented at the
     // SAME point as bundleTests.AddRange below, in both loops, so a group that threw
@@ -4083,12 +4092,7 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                     // #5037: members generated into another bundle for this module on an earlier
                     // pass of this cycle — this compile resolved them, so it reports none itself.
                     if (tddMode)
-                    {
-                        var bundleGenerated = TddSupport.MembersFor(emitOutput, moduleName);
-                        allTddGeneratedMembers.AddRange(bundleGenerated);
-                        bundleTddDependents.Add(bundleGenerated);
-                        bundleTddDependents.Add(TddSupport.ReachedFor(emitOutput));
-                    }
+                        CollectTddMembers(emitOutput, moduleName);
 
                     // An emit-retry exclusion means one or more AL objects are NOT in the
                     // compiled module. Any test they declared is now absent from the run —
@@ -4607,12 +4611,7 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
             // exit 3); the non-tdd answer is the block below the guards.
             var suiteModule = $"V2_{Path.GetFileName(suite)}";
             if (tddMode)
-            {
-                var suiteGenerated = TddSupport.MembersFor(emitOutput, suiteModule);
-                allTddGeneratedMembers.AddRange(suiteGenerated);
-                bundleTddDependents.Add(suiteGenerated);
-                bundleTddDependents.Add(TddSupport.ReachedFor(emitOutput));
-            }
+                CollectTddMembers(emitOutput, suiteModule);
             var tddDropped = tddMode && emitOutput.ExcludedObjects.Count > 0;
             if (tddDropped)
                 bundleTests.AddRange(ReportTddEmitDrops(emitOutput, suiteName, null, suiteModule, suiteName, bundleAbs));

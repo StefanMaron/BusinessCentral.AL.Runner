@@ -175,25 +175,70 @@ public sealed class PerSuiteTddExcludedTests
         return root;
     }
 
-    private sealed record Pair(string Root, Spawned PerSuite, Spawned Bundled);
-
-    private static Pair Both(Func<string> layout, string tag)
+    // A source dependency in its own folder: the test folder's compile asks for a member of the app folder,
+    // which --tdd generates there and then compiles the cycle again.
+    private static string[] CrossBundleRoots()
     {
-        var root = layout();
+        var root = NewRoot("cross-bundle");
+        Directory.CreateDirectory(Path.Combine(root, "App"));
+        Directory.CreateDirectory(Path.Combine(root, "AppTest"));
+        File.WriteAllText(Path.Combine(root, "App", "app.json"), """
+            { "id": "53070001-0000-4000-8000-000000000000", "name": "XbApp", "publisher": "AL Runner", "version": "1.0.0.0",
+              "dependencies": [], "idRanges": [ { "from": 61000, "to": 61099 } ], "runtime": "14.0" }
+            """);
+        File.WriteAllText(Path.Combine(root, "App", "Impl.al"), """
+            codeunit 61010 "Impl"
+            {
+                procedure Existing(): Integer
+                begin
+                    exit(1);
+                end;
+            }
+            """);
+        File.WriteAllText(Path.Combine(root, "AppTest", "app.json"), """
+            { "id": "53070002-0000-4000-8000-000000000000", "name": "XbTest", "publisher": "AL Runner", "version": "1.0.0.0",
+              "dependencies": [ { "id": "53070001-0000-4000-8000-000000000000", "name": "XbApp", "publisher": "AL Runner", "version": "1.0.0.0" } ],
+              "idRanges": [ { "from": 62000, "to": 62099 } ], "runtime": "14.0" }
+            """);
+        File.WriteAllText(Path.Combine(root, "AppTest", "T.al"), """
+            codeunit 62011 "Gen Test"
+            {
+                Subtype = Test;
+
+                [Test]
+                procedure UsesMissing()
+                var
+                    I: Codeunit "Impl";
+                    R: Integer;
+                begin
+                    R := I.NotYetWritten();
+                end;
+            }
+            """);
+        return new[] { Path.Combine(root, "App"), Path.Combine(root, "AppTest") };
+    }
+
+    private sealed record Pair(string[] Roots, Spawned PerSuite, Spawned Bundled);
+
+    private static Pair Both(Func<string> layout, string tag) => Both(() => new[] { layout() }, tag);
+
+    private static Pair Both(Func<string[]> layout, string tag)
+    {
+        var roots = layout();
         var cache = TestScratch.Dir("al-runner-persuite-tdd-cache-" + tag);
-        return new Pair(root, Run(root, "--tdd --per-suite", cache, tag + "-ps"), Run(root, "--tdd", cache, tag + "-b"));
+        return new Pair(roots, Run(roots, "--tdd --per-suite", cache, tag + "-ps"), Run(roots, "--tdd", cache, tag + "-b"));
     }
 
     private static readonly Lazy<Pair> Issue = new(() => Both(IssueRoot, "issue"));
     private static readonly Lazy<Pair> Many = new(() => Both(ManyRoot, "many"));
     private static readonly Lazy<Pair> Clean = new(() => Both(CleanRoot, "clean"));
     private static readonly Lazy<Pair> Generated = new(() => Both(GeneratedRoot, "generated"));
+    private static readonly Lazy<Pair> CrossBundle = new(() => Both(CrossBundleRoots, "cross-bundle"));
 
     // The control: the issue's layout WITHOUT --tdd, so the difference below is the flag and nothing else.
     private static readonly Lazy<Spawned> IssueWithoutTdd = new(() =>
     {
-        var root = Issue.Value.Root;
-        return Run(root, "--per-suite", TestScratch.Dir("al-runner-persuite-tdd-cache-plain"), "plain");
+        return Run(Issue.Value.Roots, "--per-suite", TestScratch.Dir("al-runner-persuite-tdd-cache-plain"), "plain");
     });
 
     // The shared --jobs fixture of #5256 / #5262 (one dropped codeunit of 3 tests, 3 healthy of 2), as one suite.
@@ -368,6 +413,30 @@ public sealed class PerSuiteTddExcludedTests
     }
 
     /// <summary>
+    /// The member is generated into ANOTHER folder of the run, so the cycle compiles again. The pass that is
+    /// thrown away used to end in an EMIT-ZERO suite error under --per-suite (its test folder's only object was
+    /// dropped); it is TDD-EXCLUDED as in the bundled run, and the final pass lists the member and annotates the
+    /// row exactly as the bundled run does.
+    /// </summary>
+    [SkippableFact]
+    public void AMemberGeneratedIntoAnotherFolder_IsReportedUnderPerSuite_AsItIsBundled()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (_, perSuite, bundled) = CrossBundle.Value;
+
+        Assert.Equal(0, perSuite.Exit);
+        Assert.Contains("TDD-EXCLUDED", perSuite.Output);
+        Assert.DoesNotContain("EMIT-ZERO", perSuite.Output);
+        Assert.Contains("--tdd: generated 1 member(s) this run:", perSuite.Output);
+        Assert.Contains("reaches generated stub(s): Impl: procedure \"NotYetWritten\"(): Integer", perSuite.Output);
+        Assert.Contains("PASS Codeunit62011.UsesMissing", perSuite.Rows);
+
+        Assert.Equal(0, bundled.Exit);
+        Assert.Equal(bundled.Rows, perSuite.Rows);
+        Assert.Equal(bundled.TddLines, perSuite.TddLines);
+    }
+
+    /// <summary>
     /// Under `--jobs` both workers compile the suite and find the same drop; one claim per dropped object
     /// (#5262) makes one worker report its FAILED rows, so the aggregate counts them once, as one process
     /// does: 9 tests with 3 failed, exit 1, and the report holds each case once.
@@ -397,12 +466,12 @@ public sealed class PerSuiteTddExcludedTests
 
     // ── runner invocation ─────────────────────────────────────────────────────────────────
 
-    private static Spawned Run(string root, string flags, string cache, string tag)
+    private static Spawned Run(string[] roots, string flags, string cache, string tag)
     {
         var junit = Path.Combine(TestScratch.Dir("al-runner-persuite-tdd-junit"), tag + ".xml");
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
-        args.Append($" \"{root}\" --show-pass {flags} --cache \"{Path.GetFullPath(cache)}\" --output-junit \"{junit}\"");
+        args.Append($" {string.Join(" ", roots.Select(r => $"\"{r}\""))} --show-pass {flags} --cache \"{Path.GetFullPath(cache)}\" --output-junit \"{junit}\"");
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet", Arguments = args.ToString(),
