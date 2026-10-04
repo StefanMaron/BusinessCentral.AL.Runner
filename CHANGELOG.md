@@ -121,6 +121,7 @@ All notable changes to this project are documented here. Format based on
 - **testpage:** New() on an empty linked part raises the part's OnNewRecord
 
 ### Changed
+- **isolation:** runner children must not inherit runner-read env vars set by test classes
 - **ci:** record TddLibTestPageTests in the weight table and re-scan
 - **ci:** re-read CollectionCostOrderer weight entries from CI runs
 - **jmphook:** isolate the hook-audit sets so the indirect-install guard stops flaking
