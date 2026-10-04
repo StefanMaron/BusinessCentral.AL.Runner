@@ -49,6 +49,7 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+[Collection(HostEnvironmentSerialCollection.Name)]
 public sealed class DotNetShimProbingTests : IDisposable
 {
     private readonly string? _savedOverride =

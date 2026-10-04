@@ -7,12 +7,13 @@ that moment.
 
 The repository fences these with `[CollectionDefinition(Name, DisableParallelization = true)]`
 collections, and pins each fence with a guard test that fails the build when a class forgets to
-join. Two such areas exist today.
+join. Three such areas exist today.
 
 | shared state | collection | guard |
 |---|---|---|
 | the AL parse statics on `RecordPatches` (`_parsedTables`, …) | `RecordPatchesSerialCollection` | `ParserStaticsIsolationGuardTests` (#1712) |
 | the process-wide `Console.Out` / `Console.Error` | any non-parallelizable collection | `ConsoleSwapIsolationGuardTests` (#2913) |
+| the test host's own environment variables | any non-parallelizable collection | `HostEnvironmentIsolationGuardTests` (#5282) |
 
 Both guards are stopgaps that make forgetting loud. The real fixes — returning parse results
 instead of publishing them (#1712), and an injectable log sink instead of touching `Console`
@@ -132,3 +133,40 @@ it comes up again.
   cannot be proven absent by a loop that passed. The structural assertion holds the invariant
   instead: it fails at test time when a class swaps the console without a fence, whatever the
   scheduling happened to be.
+
+## Host environment variables
+
+`Process.Start` copies the host's current environment into the child. The suite spawns the
+runner from many sites, each through its own `new ProcessStartInfo`, so there is no
+single place to scrub a variable; a class that sets one in the host for the length of a test
+hands it to every runner another collection starts in that window. #5201 was exactly that for
+`AL_RUNNER_WIN32_STUBS_SO` (exit 134 in a `--watch` child); #5282 is the rest of the family.
+In-process readers are exposed the same way: a class setting `CI` or
+`AL_RUNNER_METADATA_GROUND_TRUTH` changes the verdict of any other class reading it meanwhile.
+
+**The rule:** a test class that calls `Environment.SetEnvironmentVariable` sits in a collection
+whose `[CollectionDefinition]` sets `DisableParallelization = true`. Such a collection runs
+alone, after every parallel collection (`CollectionCostOrderer.cs`), so the setter has the
+process to itself. `HostEnvironmentSerialCollection` is the one to use when the class has no
+other reason to be serialised. The exemption is a `[ModuleInitializer]` method, which runs once
+at assembly load before any test (`DefaultTestToolPin`, `SharedEngineCaches`,
+`SpawnedRunnerShowsPassLines` pin variables on purpose).
+
+Better than joining it: don't set the variable. Give the child the value through its own
+`ProcessStartInfo.Environment`, or give the runner's read a per-flow seam
+(`Win32Stubs.OverrideSoForTests`, #5201).
+
+`HostEnvironmentIsolationGuardTests` enforces it by reading the **IL** of the test assembly,
+not its source, and has no list of variable names: a name is a literal, a constant, a computed
+string or a parameter, and a class setting a variable the runner never reads still changes what
+in-process readers see. It names a call, method-group or `ldtoken` use of
+`Environment.SetEnvironmentVariable`, the string `"SetEnvironmentVariable"` (reflection), and a
+P/Invoke of `setenv` / `putenv`; and it holds a test class that references a helper doing any of
+these to the same rule. It refuses a mutator no test class reaches (an xunit fixture) because it
+cannot say who runs it, and fails on a method body it could not read rather than skipping it.
+`HostEnvironmentGuardFixtures.cs` holds one fixture per spelling, so each arm is proven on
+input that really contains it.
+
+**Not caught:** a call through a function pointer (`calli`), a mutation inside `AlRunner` that a
+test triggers, and `Directory.SetCurrentDirectory`, which a child inherits the same way but which
+is not an environment variable.

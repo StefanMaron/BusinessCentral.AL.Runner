@@ -8,6 +8,7 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+[Collection(HostEnvironmentSerialCollection.Name)]
 public sealed class CacheCompileLockTests : IDisposable
 {
     private readonly string _dir = TestScratch.FlatDir("al-runner-cache-lock-unit-");
