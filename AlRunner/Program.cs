@@ -3454,14 +3454,16 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                 // A declared dependency is completely absent from every package-cache directory.
                 // Continuing to compile would produce thousands of misleading AL0185 "X is missing"
                 // errors that blame the user's own code. Instead: restore streams, print ONE loud
-                // provisioning-gap message naming the dep + fix commands, and abort.
+                // provisioning-gap message naming the dep + fix commands, and abort with exit 2
+                // ("could not execute", README Exit Codes), as the pre-passes above and --precompile
+                // do for the same condition (#5315). Never 1: that is "a test failed".
                 if (stdoutSilenced) { Console.SetOut(savedOut); Console.SetError(savedErr); }
                 var bcVer = AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString();
                 Console.Error.WriteLine();
                 Console.Error.WriteLine(ex.ToDetailedMessage(bcVer));
                 Console.Error.WriteLine();
                 Reporter.PrintActionNeededOnAbort(results, bundleProvisionGaps);
-                return 1;
+                return 2;
             }
             catch (AlRunner.Infrastructure.AppIdCollisionException ex)
             {
@@ -6457,6 +6459,13 @@ return strictExitCode ? computedExitCode : 0;
             catch (AlRunner.Infrastructure.DependencyLoadException ex)
             {
                 return ServerRunResult.Failure(3, "<deps>", ex.Message, new());
+            }
+            catch (AlRunner.Infrastructure.MissingDependencyException ex)
+            {
+                // The same condition the CLI loop and the server's own pre-pass answer 2 with the
+                // provisioning-gap report for (#5315); not the "compile" code, not the one-liner.
+                return ServerRunResult.Failure(2, "<deps>",
+                    ex.ToDetailedMessage(AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString()), new());
             }
             catch (Exception ex)
             {
