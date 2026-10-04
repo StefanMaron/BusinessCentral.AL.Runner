@@ -1,0 +1,23 @@
+{
+  "id": "5309b0c1-1111-4e8f-9a2c-6d4e8f0a1b01",
+  "name": "Runner Tests Fixture - Tdd Lib Page Triggers Lib",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "The #5309 library: a page with triggers and an action, and a helper that opens a TestPage on it.",
+  "description": "The #5309 library: a page with triggers and an action, and a helper that opens a TestPage on it.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 72820,
+      "to": 72829
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

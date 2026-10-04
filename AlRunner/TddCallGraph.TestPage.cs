@@ -18,12 +18,13 @@ internal sealed partial class TddCallGraph
     private static readonly string[] SetValueOperations = { "Validate", "Insert", "Modify", "Rename" };
     private static readonly string[] NewRecordOperations = { "Insert" };
 
-    /// <summary>Records what a TestPage call starts, and says whether the call was one: a call on a TestPage
-    /// or on one of its controls is never a record operation or a Codeunit.Run, so the caller stops there. Of a
-    /// control's members only a write starts table code: SetValue, Value with an argument (the same setter), and
-    /// Activate, which moves the focus and may insert a draft row; the reads (Value with none, AsInteger,
-    /// AssertEquals, Caption, Editable, ...) start none, and Lookup, Drilldown, AssistEdit and Invoke run page
-    /// code (#5309).</summary>
+    /// <summary>Records what a TestPage call starts, and says whether the call was one: a call on a TestPage or on
+    /// one of its controls or actions is never a record operation or a Codeunit.Run, so the caller stops there. Of
+    /// a control's members a write starts table code: SetValue, Value with an argument (the same setter), and
+    /// Activate, which moves the focus and may insert a draft row; Lookup validates the selected value too (not
+    /// measured, counted) and starts the table field's OnLookup; the reads (Value with none, AsInteger,
+    /// AssertEquals, Caption, Editable, ...) start none. A page's own code, which the same calls start, is
+    /// TddCallGraph.PageTriggers.cs (#5309).</summary>
     private bool AddTestPageOperation(NavCA.SemanticModel model, NavSyntax.MemberAccessExpressionSyntax mae,
         string name, int argumentCount, Node caller)
     {
@@ -32,26 +33,43 @@ internal sealed partial class TddCallGraph
         string? table;
         if (symbol is NavCA.IControlSymbol control)
         {
-            if (name.Equals("SetValue", StringComparison.OrdinalIgnoreCase)
-                || name.Equals("Value", StringComparison.OrdinalIgnoreCase) && argumentCount > 0)
-                operations = SetValueOperations;
-            else if (name.Equals("Activate", StringComparison.OrdinalIgnoreCase))
-                operations = NewRecordOperations;
-            else return true;
+            var typesValue = name.Equals("SetValue", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("Value", StringComparison.OrdinalIgnoreCase) && argumentCount > 0;
             table = TableOfControl(control);
+            AddControlPageOperation(control, name, typesValue, caller);
+            if (typesValue) operations = SetValueOperations;
+            else if (name.Equals("Activate", StringComparison.OrdinalIgnoreCase)) operations = NewRecordOperations;
+            else if (name.Equals("Lookup", StringComparison.OrdinalIgnoreCase))
+            {
+                RaiseOperations(caller, SetValueOperations, table);
+                RaiseTableTrigger(caller, table, "OnLookup");
+                return true;
+            }
+            else return true;
+        }
+        else if (symbol is NavCA.IActionSymbol action)
+        {
+            AddActionPageOperation(action, name, caller);
+            return true;
         }
         else if (TypeOf(symbol) is { NavTypeKind: NavCA.NavTypeKind.TestPage or NavCA.NavTypeKind.TestPart } pageType)
         {
+            var page = pageType.NavTypeKind == NavCA.NavTypeKind.TestPart ? PageOfTestPart(pageType) : TestPageTarget(pageType);
+            AddTestPagePageOperation(page, name, caller);
             if (!name.Equals("OpenNew", StringComparison.OrdinalIgnoreCase)
                 && !name.Equals("New", StringComparison.OrdinalIgnoreCase)) return true;
             operations = NewRecordOperations;
-            table = TableOfPage(pageType.NavTypeKind == NavCA.NavTypeKind.TestPart ? PageOfTestPart(pageType) : TestPageTarget(pageType));
+            table = TableOfPage(page);
         }
+        else if (name.Equals("Invoke", StringComparison.OrdinalIgnoreCase) && AddBuiltInActionInvoke(model, mae, caller)) return true;
         else return false;
 
         RaiseOperations(caller, operations, table);
         return true;
     }
+
+    private void RaiseTableTrigger(Node caller, string? table, string trigger)
+        => Raise(caller, ProcKey(table ?? AnyObject, trigger));
 
     private void RaiseOperations(Node caller, string[] operations, string? table)
     {
@@ -79,7 +97,10 @@ internal sealed partial class TddCallGraph
             {
                 var caller = EnclosingMethod(statement);
                 if (caller != null && model.GetSymbolInfo(mae.Expression).Symbol is NavCA.IControlSymbol control)
+                {
                     RaiseOperations(caller, SetValueOperations, TableOfControl(control));
+                    AddControlPageOperation(control, "Value", typesValue: true, caller);
+                }
             }
             catch { failed++; }
         }

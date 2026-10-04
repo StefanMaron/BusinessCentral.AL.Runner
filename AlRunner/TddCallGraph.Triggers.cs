@@ -50,10 +50,11 @@ internal sealed partial class TddCallGraph
     // operation starts under the same RunTrigger rule.
     private static readonly string[] OperationTriggers = { "OnInsert", "OnModify", "OnDelete", "OnRename", "OnValidate" };
 
-    /// <summary>The operation triggers (<c>OnInsert</c> ...) that start a trigger a table or table extension
-    /// declares under <paramref name="name"/>. A name that is none of them and is not one a record operation
-    /// can never start (a lookup, a drill-down, an assist-edit: a page runs those) is read as started by every
-    /// operation: an unrecognised name over-annotates and never misses (#5286).</summary>
+    /// <summary>The keys that start a trigger a table or table extension declares under
+    /// <paramref name="name"/>: an operation trigger (<c>OnInsert</c> ...) for a record operation, and for a
+    /// lookup, a drill-down or an assist-edit the key a control's Lookup, Drilldown or AssistEdit raises on the
+    /// table of its field (#5309). A name that is none of them is read as started by every operation: an
+    /// unrecognised name over-annotates and never misses (#5286).</summary>
     internal static IReadOnlyList<string> StartedBy(string name)
     {
         var op = name;
@@ -62,8 +63,8 @@ internal sealed partial class TddCallGraph
                 op = "On" + name[prefix.Length..];
         foreach (var known in OperationTriggers)
             if (known.Equals(op, StringComparison.OrdinalIgnoreCase)) return new[] { known };
-        foreach (var pageOnly in new[] { "Lookup", "DrillDown", "AssistEdit" })
-            if (name.Contains(pageOnly, StringComparison.OrdinalIgnoreCase)) return Array.Empty<string>();
+        foreach (var pageStarted in new[] { "Lookup", "DrillDown", "AssistEdit" })
+            if (name.Contains(pageStarted, StringComparison.OrdinalIgnoreCase)) return new[] { "On" + pageStarted };
         return OperationTriggers;
     }
 
@@ -76,14 +77,14 @@ internal sealed partial class TddCallGraph
     private static string? WildcardOf(string key)
     {
         var bar = key.IndexOf('|');
-        return bar > 0 && EntryPointNames.Contains(key[(bar + 1)..]) && key[..bar] != AnyObject
+        return bar > 0 && (EntryPointNames.Contains(key[(bar + 1)..]) || IsPageEntryPoint(key[(bar + 1)..])) && key[..bar] != AnyObject
             ? WildcardKey(key[(bar + 1)..])
             : null;
     }
 
     /// <summary>The keys whose raisers reach something keyed by <paramref name="key"/>: the key itself and,
     /// for an entry point, the wildcard.</summary>
-    private static IEnumerable<string> RaiseKeys(string key)
+    internal static IEnumerable<string> RaiseKeys(string key)
     {
         yield return key;
         if (WildcardOf(key) is { } wildcard) yield return wildcard;
@@ -98,8 +99,13 @@ internal sealed partial class TddCallGraph
     {
         foreach (var obj in root.DescendantNodesAndSelf().OfType<NavSyntax.ObjectSyntax>())
         {
-            if (obj is NavSyntax.TableExtensionSyntax ext)
-                _extensionBase[obj] = ExtensionBase(model, ext);
+            if (obj is NavSyntax.TableExtensionSyntax or NavSyntax.PageExtensionSyntax)
+                _extensionBase[obj] = ExtensionBase(model, obj);
+            if (obj is NavSyntax.PageSyntax or NavSyntax.PageExtensionSyntax)
+            {
+                CollectPageTriggers(obj);
+                continue;
+            }
             if (obj is not (NavSyntax.TableSyntax or NavSyntax.TableExtensionSyntax or NavSyntax.CodeunitSyntax)) continue;
             foreach (var node in obj.DescendantNodes().OfType<Node>())
             {
@@ -117,13 +123,14 @@ internal sealed partial class TddCallGraph
         }
     }
 
-    private static string ExtensionBase(NavCA.SemanticModel model, NavSyntax.TableExtensionSyntax ext)
+    private static string ExtensionBase(NavCA.SemanticModel model, NavSyntax.ObjectSyntax ext)
     {
-        // The symbol knows the table whether the extension names it, qualifies it with a namespace or gives its id.
+        // The symbol knows the table or page whether the extension names it, qualifies it with a namespace or gives its id.
         if (model.GetDeclaredSymbol(ext) is NavCA.IApplicationObjectExtensionTypeSymbol { Target: { } target }
             && target.Name.Length > 0)
             return target.Name;
-        return Unquote(ext.BaseObject?.ToString().Trim() ?? "");
+        // A page extension has no text fallback: the compiler's symbol resolves every extension that compiles.
+        return Unquote((ext as NavSyntax.TableExtensionSyntax)?.BaseObject?.ToString().Trim() ?? "");
     }
 
     /// <summary>Records what the invocation <paramref name="inv"/> starts: a record method's trigger and
@@ -135,6 +142,7 @@ internal sealed partial class TddCallGraph
             : Name(inv.Expression as NavSyntax.IdentifierNameSyntax);
         if (name.Length == 0) return;
         if (mae != null && AddTestPageOperation(model, mae, name, inv.ArgumentList.Arguments.Count, caller)) return;
+        if (mae != null && (AddCurrentPageOperation(mae, name, caller) || AddPageRun(model, inv, mae, name, caller))) return;
         if (name.Equals("Run", StringComparison.OrdinalIgnoreCase))
         {
             if (mae != null) AddCodeunitRun(model, inv, mae, caller);

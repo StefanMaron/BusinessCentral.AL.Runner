@@ -182,7 +182,14 @@ public sealed class TddResultAnnotationTests
         Assert.Contains("only when their RunTrigger argument is not omitted or false", guideText);
         Assert.Contains("a RecordRef, a FieldRef or a record that is not a variable (a procedure's return value) names none, so its operation counts for every table", guideText);
         Assert.Contains("Codeunit.Run reaches the OnRun of the codeunit named by Codeunit::Name", guideText);
-        Assert.Contains("the triggers and events of a page, report, query or xmlport, a TestPage's actions and a control's Lookup, Drilldown, AssistEdit and Invoke (#5309; so a record that page code writes), and a table operation or Codeunit.Run inside a precompiled .app that the test only calls", guideText);
+        Assert.Contains("the triggers and events of a report, query or xmlport (#5322), a TestRequestPage, the page an action's RunObject opens, and a table operation, Codeunit.Run or page operation inside a precompiled .app that the test only calls", guideText);
+        Assert.DoesNotContain("which is not followed", guideText);
+        Assert.Contains("A page's own code is followed too (#5309)", guideText);
+        Assert.Contains("OpenView, OpenEdit and OpenNew start OnInit, OnOpenPage, OnFindRecord, OnNextRecord, OnAfterGetRecord, OnAfterGetCurrRecord and OnNewRecord", guideText);
+        Assert.Contains("Invoke on an action its OnAction, that action's and no other's", guideText);
+        Assert.Contains("Page code that calls CurrPage.Update, SaveRecord or Close starts the row, save or close triggers of its page", guideText);
+        Assert.Contains("Page.Run and Page.RunModal of a named page, and Run or RunModal on a Page variable, start every trigger of that page", guideText);
+        Assert.Contains("a lookup, drill-down or assist-edit trigger by the Lookup, Drilldown or AssistEdit of a page control on that table", guideText);
         Assert.Contains("A TestPage writes records from the page runtime, so its calls count as table operations too (#5301): OpenNew and New as an Insert", guideText); // #5301
         Assert.Contains("typing into a field as a Validate, Insert, Modify and Rename, always running the triggers and raising the events", guideText);
         Assert.Contains("a control's SetValue, its Value with an argument, and an assignment to its Value (P.Qty.Value := x)", guideText);
@@ -218,7 +225,14 @@ public sealed class TddResultAnnotationTests
         Assert.Contains("A table operation starts what the table declares (#5286)", serverText); // #5286
         Assert.Contains("only when their `RunTrigger` argument is not omitted or `false`", serverText);
         Assert.Contains("a `RecordRef`, a `FieldRef` or a record that is not a variable (a procedure's return value) names none, so its operation counts for every table", serverText);
-        Assert.Contains("the triggers and events of a page, report, query or xmlport, a `TestPage`'s actions and a control's `Lookup`, `Drilldown`, `AssistEdit` and `Invoke` (#5309; so a record that page code writes), and a table operation or `Codeunit.Run` inside a precompiled `.app` that the test only calls", serverText);
+        Assert.Contains("the triggers and events of a report, query or xmlport (#5322), a `TestRequestPage`, the page an action's `RunObject` opens, and a table operation, `Codeunit.Run` or page operation inside a precompiled `.app` that the test only calls", serverText);
+        Assert.DoesNotContain("which is not followed", serverText);
+        Assert.Contains("A page's own code is followed too (#5309)", serverText);
+        Assert.Contains("`OpenView`, `OpenEdit` and `OpenNew` start `OnInit`, `OnOpenPage`, `OnFindRecord`, `OnNextRecord`, `OnAfterGetRecord`, `OnAfterGetCurrRecord` and `OnNewRecord`", serverText);
+        Assert.Contains("`Invoke` on an action its `OnAction`, that action's and no other's", serverText);
+        Assert.Contains("Page code that calls `CurrPage.Update`, `SaveRecord` or `Close` starts the row, save or close triggers of its page", serverText);
+        Assert.Contains("`Page.Run` and `Page.RunModal` of a named page, and `Run` or `RunModal` on a `Page` variable, start every trigger of that page", serverText);
+        Assert.Contains("a lookup, drill-down or assist-edit trigger by the `Lookup`, `Drilldown` or `AssistEdit` of a page control on that table", serverText);
         Assert.Contains("A `TestPage` writes records from the page runtime, so its calls count as table operations too (#5301): `OpenNew` and `New` as an `Insert`", serverText); // #5301
         Assert.Contains("typing into a field as a `Validate`, `Insert`, `Modify` and `Rename`, which always run the triggers and raise the events", serverText);
         Assert.Contains("a control's `SetValue`, its `Value` with an argument and an assignment to its `Value` (`P.Qty.Value := x`)", serverText);

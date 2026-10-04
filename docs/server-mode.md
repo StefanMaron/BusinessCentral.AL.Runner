@@ -1276,7 +1276,7 @@ It runs the same generation as the CLI and `--watch --tdd` (`--guide`, "TDD MODE
   counts for its base table: its `OnBefore` and `OnAfter` `Insert`, `Modify`, `Delete` and `Rename`, and the
   `OnBeforeValidate` and `OnAfterValidate` of a `modify()` block, are started by the operation of that name,
   under the same `RunTrigger` rule; a trigger name this list does not know counts as started by every
-  operation, and a lookup, drill-down or assist-edit trigger, a page's, by none. The table is the one the record variable is declared with: a `RecordRef`,
+  operation, and a lookup, drill-down or assist-edit trigger by the `Lookup`, `Drilldown` or `AssistEdit` of a page control on that table (below). The table is the one the record variable is declared with: a `RecordRef`,
   a `FieldRef` or a record that is not a variable (a procedure's return value) names none, so its
   operation counts for every table. `Codeunit.Run` reaches the
   `OnRun` of the codeunit named by `Codeunit::Name` or declared on the variable, and any `OnRun` when it
@@ -1287,16 +1287,36 @@ It runs the same generation as the CLI and `--watch --tdd` (`--guide`, "TDD MODE
   always run the triggers and raise the events: a control's `SetValue`, its `Value` with an argument and an
   assignment to its `Value` (`P.Qty.Value := x`). A control's `Activate` counts as an `Insert`, because the
   focus move may insert a draft row. Reading a control (`Value` with no argument, `AsInteger`, `AssertEquals`,
-  `Caption`, `Editable` and the like) starts nothing, and `Lookup`, `Drilldown`, `AssistEdit` and `Invoke` of a
-  control run page code, which is not followed. The `OnValidate` of every field of the table counts, not only the
+  `Caption`, `Editable` and the like) starts nothing, and a control's `Lookup`, `Drilldown`, `AssistEdit` and `Invoke`
+  start the trigger of that name of the field on the table (`Lookup` also a `Validate`, `Insert`, `Modify` and `Rename`: it
+  may validate the selected value, not measured). The `OnValidate` of every field of the table counts, not only the
   field typed into, as for `Validate` above. The table is the one the control's field belongs to, else the one
   the control's page is bound to (a table extension's field counts for its base table); a page or control with
   no table the compiler can read counts for every table. `Close` and the moves (`GoToKey`, `GoToRecord`,
   `Next`, `First` and the like) start nothing of their own: the record they save was made dirty by a `SetValue`
-  or an `OpenNew`, which is already counted. Not followed, so a test that reaches a stub only that way carries no
-  `generatedStubs`: the triggers and events of a page, report, query or xmlport, a `TestPage`'s actions and a control's
-  `Lookup`, `Drilldown`, `AssistEdit` and `Invoke` (#5309; so a record that page code writes), and a table operation or `Codeunit.Run` inside a precompiled `.app` that the
-  test only calls.
+  or an `OpenNew`, which is already counted.
+  A page's own code is followed too (#5309). A `TestPage` call counts as raising the triggers of the page, of its page
+  extensions and of the pages it hosts as parts, and the platform events around them (`OnOpenPageEvent`,
+  `OnAfterGetRecordEvent` and the like, with their subscribers in any bundle of the request; the corpus orders the
+  triggers and events in `TestPageTriggerEvents.al` and runs a page extension's per row in
+  `TestPageExtensionPageTriggers_Tests.al`): `OpenView`, `OpenEdit` and `OpenNew` start `OnInit`, `OnOpenPage`,
+  `OnFindRecord`, `OnNextRecord`, `OnAfterGetRecord`, `OnAfterGetCurrRecord` and `OnNewRecord`; the moves (`GoToKey`,
+  `GoToRecord`, `First`, `Last`, `Next`, `Previous`, `FindFirstField` and the like) the row triggers and the save of the
+  row they leave (`OnInsertRecord`, `OnModifyRecord`); `New` a new row and that save; `Close` `OnQueryClosePage`,
+  `OnClosePage` and that save; a `TestPage` method this list does not know starts every trigger of the page. A
+  control's `SetValue`, its `Value` with an argument and an assignment to its `Value` start the `OnValidate` that
+  control has on its page (its own, not another control's) and the save; its `Lookup` also its `OnLookup` and, because
+  it opens a lookup page the call cannot name, every page's triggers; `Drilldown` and `AssistEdit` their own
+  trigger; `Invoke` on an action its `OnAction`, that action's and no other's. The built-in actions a `TestPage`
+  returns (`OK`, `Cancel`, `Yes`, `No`, `Edit`, `View`) start every trigger of the page when called, and `Invoke` of `Edit` or
+  `View` also opens a page it cannot name (every page).
+  Page code that calls `CurrPage.Update`, `SaveRecord` or `Close` starts the row, save or close triggers of its page.
+  `Page.Run` and `Page.RunModal` of a named page, and `Run` or `RunModal` on a `Page` variable, start every trigger of
+  that page (a handler that replaces the page counts anyway), and of every page when it is named by an id or an
+  expression. A trigger name this list does not know is started by every one of these. Not followed, so a test that
+  reaches a stub only that way carries no `generatedStubs`: the triggers and events of a report, query or xmlport (#5322), a
+  `TestRequestPage`, the page an action's `RunObject` opens, and a table operation, `Codeunit.Run` or page operation
+  inside a precompiled `.app` that the test only calls.
   A procedure of another `sourcePaths` bundle
   is (a test library app compiled separately, #5161): when the member's call sits in a library, a
   test that calls a procedure of it that reaches the call, directly or through further libraries,
