@@ -7,6 +7,10 @@
 // folders in one process. Fixtures/JobsTddRerun: `app` (a codeunit with no members) and `test` (a test calling a
 // member `app` lacks, five test codeunits of one test each, and a dropped test codeunit of two tests).
 // The end-to-end `--jobs 2` run of the same fixture is in JobsSharedBundleTddExcludedWorkerTests.
+//
+// #5326: the routes that do NOT defer (AL_RUNNER_SEQUENTIAL_BUNDLES=1 with several run bundles, and --per-suite)
+// run their bundle in the pass --tdd's re-run discards. The re-run gives that pass's test codeunit claims back
+// (UnitClaimLedger), so the codeunits are claimed and reported again, once.
 
 using System.Text.RegularExpressions;
 using Xunit;
@@ -22,12 +26,22 @@ public sealed class JobsTddDependencyOnlyTests
     private sealed record Run(int Exit, string Output, string Junit);
 
     private static Run Worker(string scratchName, string bundle, string flags, string? dependencyOnly, params string[] folders)
+        => Worker(scratchName, bundle, flags, dependencyOnly, sequentialBundles: false, folders);
+
+    private static Run Worker(string scratchName, string bundle, string flags, string? dependencyOnly,
+        bool sequentialBundles, params string[] folders)
+        => WorkerIn(TestScratch.Dir(scratchName), "run", bundle, flags, dependencyOnly, sequentialBundles, folders);
+
+    /// <summary>A worker whose claim directory is the scratch's own, so a second call over the same scratch is a peer
+    /// (or this worker's later process) over the same claims; `name` keeps the two caches and JUnit files apart.</summary>
+    private static Run WorkerIn(string scratch, string name, string bundle, string flags, string? dependencyOnly,
+        bool sequentialBundles, params string[] folders)
     {
-        var scratch = TestScratch.Dir(scratchName);
-        var junit = Path.Combine(scratch, "run.xml");
+        var junit = Path.Combine(scratch, name + ".xml");
         var (exit, output) = JobsSharedBundleTddExcludedWorkerTests.Worker(
             JobsSharedBundleTddExcludedWorkerTests.Claims(scratch), bundle,
-            $"--cache \"{Path.Combine(scratch, "cache")}\" {flags} --output-junit \"{junit}\"", dependencyOnly, folders);
+            $"--cache \"{Path.Combine(scratch, name + "-cache")}\" {flags} --output-junit \"{junit}\"",
+            dependencyOnly, sequentialBundles, folders);
         return new Run(exit, output, junit);
     }
 
@@ -133,5 +147,135 @@ public sealed class JobsTddDependencyOnlyTests
         Assert.DoesNotContain(Recompiling, run.Output);
         Assert.Matches(new Regex(@"Tests: 10   passed 10   failed 0   errors 0"), run.Output);
         Assert.Equal(10, Names(run).Count);
+    }
+
+    // ---- #5326: the runs that do not defer ----
+
+    private static string Claimed => Fixture("JobsUnitClaim");
+    private const string GaveBack = "gave back";
+
+    private static Run PlainRun(string scratchName, string flags, params string[] folders)
+    {
+        var scratch = TestScratch.Dir(scratchName);
+        var junit = Path.Combine(scratch, "run.xml");
+        var (exit, stdout, stderr) = ResumeRun.Runner(
+            $"--cache \"{Path.Combine(scratch, "cache")}\" {flags} --output-junit \"{junit}\" "
+            + string.Join(" ", folders.Select(f => $"\"{f}\"")));
+        return new Run(exit, stdout + "\n" + stderr, junit);
+    }
+
+    /// <summary>The oracle of the knob route: the three folders in one process, no claims.</summary>
+    private static readonly Lazy<Run> PlainThree = new(() =>
+        PlainRun("al-runner-jobs-tdd-seq-plain", "--tdd", Test, Claimed, App));
+
+    /// <summary>The knob route: AL_RUNNER_SEQUENTIAL_BUNDLES=1 keeps one pass per bundle, so the worker runs `test`
+    /// (shared, claimed) and `JobsUnitClaim` in the pass --tdd's re-run discards.</summary>
+    private static readonly Lazy<Run> SequentialWorker = new(() =>
+        Worker("al-runner-jobs-tdd-seq-worker", Test, "--tdd", App, sequentialBundles: true, Test, Claimed, App));
+
+    /// <summary>The oracle of the per-suite route (one pass per bundle by design, so it never defers).</summary>
+    private static readonly Lazy<Run> PlainPerSuite = new(() =>
+        PlainRun("al-runner-jobs-tdd-persuite-plain", "--tdd --per-suite", App, Test));
+
+    private static readonly Lazy<Run> PerSuiteWorker = new(() =>
+        Worker("al-runner-jobs-tdd-persuite-worker", Test, "--tdd --per-suite", App, Test, App));
+
+    /// <summary>A peer process (its claims are in the directory) that selects Extra1 only, then the worker over the
+    /// same claims.</summary>
+    private static readonly Lazy<(Run Peer, Run Worker)> PeerThenSequentialWorker = new(() =>
+    {
+        var scratch = TestScratch.Dir("al-runner-jobs-tdd-seq-peer");
+        var peer = WorkerIn(scratch, "peer", Test, "--tdd --test Extra1_Runs", App, sequentialBundles: true, Test, Claimed, App);
+        var worker = WorkerIn(scratch, "worker", Test, "--tdd", App, sequentialBundles: true, Test, Claimed, App);
+        return (peer, worker);
+    });
+
+    [SkippableFact]
+    public void Oracle_ThePlainSequentialRunsReRunAndReportEveryTest()
+    {
+        TestArtifacts.SkipIfMissing();
+        var three = PlainThree.Value;
+        var perSuite = PlainPerSuite.Value;
+
+        Assert.Equal(1, three.Exit);
+        Assert.Contains(Recompiling, three.Output);
+        Assert.Contains("Tests: 18   passed 16   failed 2   errors 0", three.Output);
+        Assert.Subset(Names(three).ToHashSet(), Extras.ToHashSet());
+        Assert.Equal(1, perSuite.Exit);
+        Assert.Contains(Recompiling, perSuite.Output);
+        Assert.Contains("Tests: 8   passed 6   failed 2   errors 0", perSuite.Output);
+        Assert.Subset(Names(perSuite).ToHashSet(), Extras.ToHashSet());
+    }
+
+    /// <summary>The knob route: the worker re-runs, gives its claims back and reports every test once, as the plain
+    /// run does (13 tests before the fix: the five Extra codeunits were in no row).</summary>
+    [SkippableFact]
+    public void AWorkerThatKeepsOnePassPerBundle_ReportsEveryTestCodeunitOnce()
+    {
+        TestArtifacts.SkipIfMissing();
+        var worker = SequentialWorker.Value;
+
+        Assert.Equal(1, worker.Exit);
+        Assert.Contains(Recompiling, worker.Output);
+        Assert.Contains(GaveBack, worker.Output);
+        Assert.Contains("Tests: 18   passed 16   failed 2   errors 0", worker.Output);
+        var names = Names(worker);
+        Assert.Equal(Names(PlainThree.Value), names);
+        Assert.Equal(names.Count, names.Distinct().Count());
+        Assert.Subset(names.ToHashSet(), Extras.ToHashSet());
+    }
+
+    /// <summary>The per-suite route: one pass per bundle by design, so it never defers; the same release serves it.</summary>
+    [SkippableFact]
+    public void APerSuiteWorker_ReportsEveryTestCodeunitOnce()
+    {
+        TestArtifacts.SkipIfMissing();
+        var worker = PerSuiteWorker.Value;
+
+        Assert.Equal(1, worker.Exit);
+        Assert.Contains(GaveBack, worker.Output);
+        Assert.Contains("Tests: 8   passed 6   failed 2   errors 0", worker.Output);
+        var names = Names(worker);
+        Assert.Equal(Names(PlainPerSuite.Value), names);
+        Assert.Equal(names.Count, names.Distinct().Count());
+        Assert.Subset(names.ToHashSet(), Extras.ToHashSet());
+    }
+
+    /// <summary>Control: a claim ANOTHER process holds stays taken through the re-run. The peer ran Extra1 only
+    /// (and the dropped objects), so the worker skips Extra1 in both passes and reports the rest; together they
+    /// are the plain run's tests, each once. A release that gave back every claim in the directory would run Extra1
+    /// on both.</summary>
+    [SkippableFact]
+    public void AClaimAPeerHolds_StaysSkippedThroughTheReRun_AndEveryTestStillReportsOnce()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (peer, worker) = PeerThenSequentialWorker.Value;
+
+        Assert.Contains(Recompiling, worker.Output);
+        Assert.Contains(GaveBack, worker.Output);
+        var peerNames = Names(peer);
+        var workerNames = Names(worker);
+        Assert.Contains("Codeunit51122.Extra1_Runs", peerNames);
+        Assert.DoesNotContain("Codeunit51122.Extra1_Runs", workerNames);
+        Assert.Empty(peerNames.Intersect(workerNames));
+        Assert.Equal(Names(PlainThree.Value), peerNames.Concat(workerNames).OrderBy(n => n, StringComparer.Ordinal).ToList());
+    }
+
+    /// <summary>Control: the knob with nothing to re-run (`top` needs no member of `mid` or `base`) releases nothing
+    /// and reports as it did.</summary>
+    [SkippableFact]
+    public void AWorkerWithTheKnobAndNoReRun_IsUnchanged()
+    {
+        TestArtifacts.SkipIfMissing();
+        var top = Fixture("JobsSourceDeps/top");
+        var mid = Fixture("JobsSourceDeps/mid");
+        var baseFolder = Fixture("JobsSourceDeps/base");
+        var run = Worker("al-runner-jobs-tdd-seq-nothing", top, "--tdd", $"{mid}|{baseFolder}", sequentialBundles: true, top, mid, baseFolder);
+
+        Assert.Equal(0, run.Exit);
+        Assert.DoesNotContain(Recompiling, run.Output);
+        Assert.DoesNotContain(GaveBack, run.Output);
+        Assert.Contains("Tests: 3   passed 3   failed 0   errors 0", run.Output);
+        Assert.Equal(3, Names(run).Count);
     }
 }
