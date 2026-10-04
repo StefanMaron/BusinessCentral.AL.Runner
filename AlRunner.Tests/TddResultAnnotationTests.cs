@@ -182,7 +182,13 @@ public sealed class TddResultAnnotationTests
         Assert.Contains("only when their RunTrigger argument is not omitted or false", guideText);
         Assert.Contains("a RecordRef, a FieldRef or a record that is not a variable (a procedure's return value) names none, so its operation counts for every table", guideText);
         Assert.Contains("Codeunit.Run reaches the OnRun of the codeunit named by Codeunit::Name", guideText);
-        Assert.Contains("the triggers and events of a report, query or xmlport (#5322), a TestRequestPage, the page an action's RunObject opens, and a table operation, Codeunit.Run or page operation inside a precompiled .app that the test only calls", guideText);
+        Assert.Contains("A report, a query and an xmlport run their own triggers too (#5322)", guideText);
+        Assert.Contains("Run, RunModal, Execute, Print and SaveAs... on a Report variable or on Report::\"X\"", guideText);
+        Assert.Contains("RunRequestPage only OnInitReport and the request page's triggers; UseRequestPage and SetTableView only OnInitReport", guideText);
+        Assert.Contains("A query's Open, SaveAsCsv, SaveAsXml and SaveAsJson (and any member this list does not know) start OnBeforeOpen", guideText);
+        Assert.Contains("An xmlport's Export starts OnInitXmlPort, OnPreXmlPort, OnPostXmlPort", guideText);
+        Assert.Contains("and writes each of its table elements' tables (Validate, Insert, Modify, with their triggers and events)", guideText);
+        Assert.Contains("the methods of a TestRequestPage itself, the page, report or query an action's RunObject opens, and a table operation, Codeunit.Run, page, report, query or xmlport operation inside a precompiled .app that the test only calls", guideText);
         Assert.DoesNotContain("which is not followed", guideText);
         Assert.Contains("A page's own code is followed too (#5309)", guideText);
         Assert.Contains("OpenView, OpenEdit and OpenNew start OnInit, OnOpenPage, OnFindRecord, OnNextRecord, OnAfterGetRecord, OnAfterGetCurrRecord and OnNewRecord", guideText);
@@ -225,7 +231,13 @@ public sealed class TddResultAnnotationTests
         Assert.Contains("A table operation starts what the table declares (#5286)", serverText); // #5286
         Assert.Contains("only when their `RunTrigger` argument is not omitted or `false`", serverText);
         Assert.Contains("a `RecordRef`, a `FieldRef` or a record that is not a variable (a procedure's return value) names none, so its operation counts for every table", serverText);
-        Assert.Contains("the triggers and events of a report, query or xmlport (#5322), a `TestRequestPage`, the page an action's `RunObject` opens, and a table operation, `Codeunit.Run` or page operation inside a precompiled `.app` that the test only calls", serverText);
+        Assert.Contains("A report, a query and an xmlport run their own triggers too (#5322)", serverText);
+        Assert.Contains("`Run`, `RunModal`, `Execute`, `Print` and `SaveAs...` on a `Report` variable or on `Report::\"X\"`", serverText);
+        Assert.Contains("`RunRequestPage` only `OnInitReport` and the request page's; `UseRequestPage` and `SetTableView` only `OnInitReport`", serverText);
+        Assert.Contains("A query's `Open`, `SaveAsCsv`, `SaveAsXml` and `SaveAsJson` (and any member this list does not know) start `OnBeforeOpen`", serverText);
+        Assert.Contains("An xmlport's `Export` starts `OnInitXmlPort`, `OnPreXmlPort`, `OnPostXmlPort`", serverText);
+        Assert.Contains("writes each of its table elements' tables (`Validate`, `Insert` and `Modify`, with their triggers and events", serverText);
+        Assert.Contains("the methods of a `TestRequestPage` itself (the report is counted at its `Run`), the page, report or query an action's `RunObject` opens, and a table operation, `Codeunit.Run`, or page, report, query or xmlport operation inside a precompiled `.app` that the test only calls", serverText);
         Assert.DoesNotContain("which is not followed", serverText);
         Assert.Contains("A page's own code is followed too (#5309)", serverText);
         Assert.Contains("`OpenView`, `OpenEdit` and `OpenNew` start `OnInit`, `OnOpenPage`, `OnFindRecord`, `OnNextRecord`, `OnAfterGetRecord`, `OnAfterGetCurrRecord` and `OnNewRecord`", serverText);
