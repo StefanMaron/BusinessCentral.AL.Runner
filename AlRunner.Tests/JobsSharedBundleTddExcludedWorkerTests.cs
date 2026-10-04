@@ -16,7 +16,9 @@ public sealed class JobsSharedBundleTddExcludedWorkerTests
 {
     private static string Fixture(string name) => ResumeRun.Fixture(name);
 
-    private static (int Exit, string Output) Worker(string claimDir, string bundle, string args, params string[] folders)
+    /// <summary>`dependencyOnly` is what the `--jobs` parent hands a worker through AL_RUNNER_JOBS_DEPENDENCY_ONLY
+    /// (#5295): always written, empty when none, so a value in this host's environment never reaches the child.</summary>
+    internal static (int Exit, string Output) Worker(string claimDir, string bundle, string args, string? dependencyOnly = null, params string[] folders)
     {
         var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
         var cmd = new StringBuilder(TestBuildConfig.RunArgs(Path.Combine(root, "AlRunner")));
@@ -30,6 +32,7 @@ public sealed class JobsSharedBundleTddExcludedWorkerTests
         };
         psi.Environment[AlRunner.Infrastructure.UnitClaimQueue.DirEnvVar] = claimDir;
         psi.Environment[AlRunner.Infrastructure.UnitClaimQueue.BundlesEnvVar] = bundle;
+        psi.Environment[AlRunner.Infrastructure.JobsSourceDependencies.DependencyOnlyEnvVar] = dependencyOnly ?? "";
         // A watchdog resume is not a crash, but a dump of this child is what CI would write for one.
         psi.Environment["DOTNET_DbgEnableMiniDump"] = "0";
         var p = Process.Start(psi)!;
@@ -40,7 +43,7 @@ public sealed class JobsSharedBundleTddExcludedWorkerTests
         return (p.ExitCode, stdout.GetAwaiter().GetResult() + "\n" + stderr.GetAwaiter().GetResult());
     }
 
-    private static string Claims(string scratch)
+    internal static string Claims(string scratch)
     {
         var dir = Path.Combine(scratch, "claims");
         Directory.CreateDirectory(dir);
@@ -137,11 +140,12 @@ public sealed class JobsSharedBundleTddExcludedWorkerTests
         Assert.Equal(1, exit);
         Assert.Contains("is shared by 2 worker(s)", output);
         Assert.Contains("recompiling it and compiling the bundles that depend on it again", output);
-        // the generated member's test passes; the dropped codeunit's two rows are the only failures
-        Assert.Contains("Tests: 3   passed 1   failed 2   errors 0   skipped 0", output);
+        // the generated member's test and the five Extra test codeunits' pass; the dropped codeunit's two rows fail
+        Assert.Contains("Tests: 8   passed 6   failed 2   errors 0   skipped 0", output);
         var cases = JobsSharedBundleTddExcludedTests.Cases(junit);
         Assert.Equal(new[] { "Jobs Rerun Dropped.RerunDropped_A", "Jobs Rerun Dropped.RerunDropped_B" },
             cases.Where(c => c.Elements("failure").Any()).Select(JobsSharedBundleTddExcludedTests.Name).OrderBy(n => n, StringComparer.Ordinal));
-        Assert.Single(cases, c => !c.Elements("failure").Any());
+        Assert.Equal(6, cases.Count(c => !c.Elements("failure").Any()));
+        Assert.Equal(cases.Count, cases.Select(JobsSharedBundleTddExcludedTests.Name).Distinct().Count());
     }
 }

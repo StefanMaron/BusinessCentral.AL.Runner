@@ -3093,8 +3093,9 @@ if (watchUi && !AlRunner.Log.Verbose)
 // whole set: every bundle named is installed together. --per-suite keeps one pass per bundle, and
 // so does AL_RUNNER_SEQUENTIAL_BUNDLES=1: the ordered-bundle CI steps need an earlier bundle to run
 // before a later one registers, which is the order their cache-poisoning defects need (#4450).
-var deferBundleRuns = bundledMode && runBundles.Count > 1 && !watchAffected
-    && Environment.GetEnvironmentVariable("AL_RUNNER_SEQUENTIAL_BUNDLES") != "1";
+var deferBundleRuns = AlRunner.Infrastructure.BundleRunDeferral.Defers(bundledMode, watchAffected,
+    Environment.GetEnvironmentVariable("AL_RUNNER_SEQUENTIAL_BUNDLES") == "1",
+    runBundles.Count, bundles.Count, tddMode);
 var deferredBundleRuns = new List<Action>();
 if (deferBundleRuns) BcRuntime.BeginBundleEpoch();
 // #5027: --watch --affected runs the cycle through the server's selecting run instead of the
