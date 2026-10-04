@@ -134,6 +134,7 @@ internal sealed partial class TddCallGraph
         var name = mae != null ? Name(mae.Name as NavSyntax.IdentifierNameSyntax)
             : Name(inv.Expression as NavSyntax.IdentifierNameSyntax);
         if (name.Length == 0) return;
+        if (mae != null && AddTestPageOperation(model, mae, name, inv.ArgumentList.Arguments.Count, caller)) return;
         if (name.Equals("Run", StringComparison.OrdinalIgnoreCase))
         {
             if (mae != null) AddCodeunitRun(model, inv, mae, caller);
