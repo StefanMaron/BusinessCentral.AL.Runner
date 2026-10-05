@@ -57,14 +57,22 @@ public sealed class RenameStampPrependBindingTests
     {
         using var module = OpenRewrittenNcl();
         var method = RenameRecordAsync(module);
-        var instructions = method.Body.Instructions;
+        var list = method.Body.Instructions.ToList();
 
-        // The prepend is `ldarg <renamedRecord>; call helper`, ahead of the whole original body.
-        Assert.Equal(OpCodes.Ldarg, instructions[0].OpCode);
-        var argument = Assert.IsAssignableFrom<ParameterDefinition>(instructions[0].Operand);
-        Assert.Equal("renamedRecord", argument.Name);
-        Assert.Equal(OpCodes.Call, instructions[1].OpCode);
-        Assert.Equal(StampOnRename, ((MethodReference)instructions[1].Operand).FullName);
+        // The prepend is `ldarg <renamedRecord>; call helper`. Other prepends on this method
+        // (the Company rename arm: `ldarg.0; ldfld parentRecord; call`) may sit ahead of it, so
+        // the position is judged by shape, not by index 0.
+        var index = list.FindIndex(i => i.OpCode == OpCodes.Call
+            && (i.Operand as MethodReference)?.FullName == StampOnRename);
+        Assert.True(index >= 1, "RenameRecordAsync does not call StampSystemFieldsOnRename");
+        Assert.Equal(OpCodes.Ldarg, list[index - 1].OpCode);
+        Assert.Equal("renamedRecord",
+            Assert.IsAssignableFrom<ParameterDefinition>(list[index - 1].Operand).Name);
+
+        // Only other prepends ahead of it: the original async stub (ldloca, stfld, ...) starts after.
+        for (var i = 0; i < index - 1; i++)
+            Assert.Contains(list[i].OpCode,
+                new[] { OpCodes.Ldarg_0, OpCodes.Ldarg, OpCodes.Ldfld, OpCodes.Call });
 
         // Once: a second call would be a second stamp per rename.
         Assert.Single(CalledMethods(method), name => name == StampOnRename);
