@@ -5,7 +5,7 @@
 //
 // A dropped object EXISTS in the source, so reading it as absent would let a bare `asserterror` pass over a compile
 // error. Run alone, the tests below pass: nothing declares the ids, so they are absent and BC's error is raised.
-// Listed after a bundle that dropped (partial-lib) or never compiled (broken-lib) them, each must FAIL loudly.
+// Listed after a bundle that dropped a codeunit (partial-lib) or never compiled (broken-lib) them, each must FAIL loudly.
 using System.Diagnostics;
 using System.Text;
 using Xunit;
@@ -55,13 +55,13 @@ public sealed class DroppedObjectNotAbsentTests
     private static readonly string[] Tests =
     {
         "BareAsserterror_RunDroppedCodeunit", "Guarded_RunDroppedCodeunit",
-        "BareAsserterror_OpenDroppedTable", "BareAsserterror_RunUncompiledCodeunit",
+        "BareAsserterror_OpenUncompiledTable", "BareAsserterror_RunUncompiledCodeunit",
     };
 
     private static void AssertEveryTestFailed(string output, string which)
     {
-        Assert.True(output.Contains("Tests: 4   passed 0   failed 4"), $"{which}: expected all four to fail loudly.\n{output}");
-        foreach (var t in Tests) Assert.Contains($"FAIL  \"MOD Tests\".{t}", output);
+        foreach (var t in Tests) Assert.True(output.Contains($"FAIL  \"MOD Tests\".{t}"), $"{which}: {t} must fail loudly.\n{output}");
+        Assert.DoesNotContain("PASS  Codeunit72231.", output);
         // Not BC's clean error, which asserterror would have caught: the refusal is a CLR exception that escapes it.
         Assert.DoesNotContain("does not exist in the current application", output);
     }
@@ -76,7 +76,8 @@ public sealed class DroppedObjectNotAbsentTests
         Assert.Contains("Tests: 4   passed 4   failed 0", output);
     }
 
-    /// <summary>The non-TDD path: the library's compile dropped two objects (ReportNonTddEmitDrops).</summary>
+    /// <summary>The non-TDD path: the library's compile dropped a test codeunit nothing names, and the module runs
+    /// past it (ReportNonTddEmitDrops). No bundle failed to compile here, so that path is the only thing that says so.</summary>
     [SkippableFact]
     public void ObjectsAnEarlierBundleDroppedFromItsCompile_AreNotAbsent()
     {
@@ -85,7 +86,21 @@ public sealed class DroppedObjectNotAbsentTests
         var output = Run("partial-lib", "tests");
 
         Assert.Contains("EMIT-EXCLUDED", output);
+        Assert.DoesNotContain("The module was NOT run", output);
         AssertEveryTestFailed(output, "partial-lib");
+    }
+
+    /// <summary>The control for the clause above: a dropped PROFILE declares no executable AL and cannot be reached by id,
+    /// so the drop must not make an id nothing declares read as anything but absent.</summary>
+    [SkippableFact]
+    public void AProfileAnEarlierBundleDropped_DoesNotStopAMissingIdReadingAsAbsent()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var output = Run("profile-lib", "tests");
+
+        Assert.Contains("EMIT-EXCLUDED", output);
+        Assert.Contains("Tests: 4   passed 4   failed 0", output);
     }
 
     /// <summary>A bundle that emitted nothing (the bundle loop's compile-failure stage).</summary>

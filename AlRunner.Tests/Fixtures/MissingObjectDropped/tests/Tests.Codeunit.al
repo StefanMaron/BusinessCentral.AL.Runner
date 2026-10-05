@@ -22,11 +22,11 @@ codeunit 72231 "MOD Tests"
     end;
 
     [Test]
-    procedure BareAsserterror_OpenDroppedTable()
+    procedure BareAsserterror_OpenUncompiledTable()
     var
         RecRef: RecordRef;
     begin
-        asserterror RecRef.Open(72213);
+        asserterror RecRef.Open(72223);
     end;
 
     [Test]

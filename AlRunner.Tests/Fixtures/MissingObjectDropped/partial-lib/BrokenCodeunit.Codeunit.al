@@ -1,7 +1,11 @@
-/// <summary>#5339: calls a procedure that does not exist, so the compile drops this codeunit.</summary>
+/// <summary>#5339: a test codeunit whose only procedure calls one that does not exist, so the compile drops it. Dropping a
+/// test codeunit nothing in the bundle names is the one drop the runner lets the module run past.</summary>
 codeunit 72212 "MOD Dropped Codeunit"
 {
-    trigger OnRun()
+    Subtype = Test;
+
+    [Test]
+    procedure Broken()
     begin
         NoSuchProcedure();
     end;

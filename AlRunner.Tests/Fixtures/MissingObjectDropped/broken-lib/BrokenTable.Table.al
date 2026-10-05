@@ -1,5 +1,5 @@
-/// <summary>#5339: a FlowField over a table that does not exist, so the compile drops this table.</summary>
-table 72213 "MOD Dropped Table"
+/// <summary>#5339: a FlowField over a table that does not exist, so this table does not compile either.</summary>
+table 72223 "MOD Uncompiled Table"
 {
     fields
     {
