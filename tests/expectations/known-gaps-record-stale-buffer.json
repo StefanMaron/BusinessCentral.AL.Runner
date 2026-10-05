@@ -1,0 +1,10 @@
+[
+  {
+    "codeunitId": 69920,
+    "CodeunitName": "Test Record Stale Buffer Write",
+    "Method": "Record_Modify_ThroughStaleVariable_AfterOtherVariableModifiedAndCommit_IsRefused",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/5355",
+    "Note": "A Modify, a Commit, then the stale variable's Modify: BC refuses it with DB:RecordChanged, 'The changes to the <table> record cannot be saved because some information on the page is not up-to-date. Close the page, reopen it, and try again.' followed by the identification fields; the runner accepts it. Measured on the official Windows container (BC 28.4.53241.55757) and on every required cloud leg of corpus PR 546. Added by agent stma-auto-7."
+  }
+]
