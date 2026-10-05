@@ -131,6 +131,7 @@ public sealed class PlatformFloorFixtureGuardTests
         ["DeferredAttemptDependencyFloorTests.cs"] = "the floor is the subject: the withheld attempt cannot supply the Platform floor the default Test Runner declares (#5233)",
         ["DependencyResolverTests.cs"] = "the floor is the subject: the packaged floor is read back by DependencyResolver (#3719)",
         ["PlaceholderFloorProvisioningTests.cs"] = "the floor is the subject: the placeholder 1.0.0.0 floor",
+        ["ServerBcFloorSkipTests.cs"] = "the floor is the subject: one app declares a future 999.0.0.0 floor, a parameter of the test (#5137)",
         ["NestedBundleManifestDiscoveryTests.cs"] = "the floor is the subject: one app declares a future 999.0.0.0 floor, a parameter of the test",
         ["PhaseLogIntegrationTests.cs"] = "the floor is the subject: its platformRoots parameter toggles the floor on purpose, to see the phase log with and without it",
 

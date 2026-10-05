@@ -152,3 +152,57 @@ public class ServerBcFloorSkipTests
         Assert.DoesNotContain(healthy.Warnings, w => w.Contains("[skip]", StringComparison.Ordinal));
     }
 }
+
+/// <summary>
+/// #5137: <c>ProgramSupport.DropAppsBelowBcFloor</c> over shapes the served fixtures do not cover.
+/// An app whose app.json declares a floor above the running BC is skipped; anything else, including
+/// a directory with no app.json and an app declaring no floor, is kept, in order.
+/// </summary>
+public sealed class DropAppsBelowBcFloorTests : IDisposable
+{
+    private readonly string _root = TestScratch.Dir("al-runner-drop-apps-below-bc-floor");
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_root, recursive: true); } catch { /* best-effort cleanup */ }
+    }
+
+    private string Dir(string name, string? appJson)
+    {
+        var dir = Path.Combine(_root, name);
+        Directory.CreateDirectory(dir);
+        if (appJson != null) File.WriteAllText(Path.Combine(dir, "app.json"), appJson);
+        return dir;
+    }
+
+    private static string Manifest(string id, string name, string? platform = null) =>
+        $$"""{ "id": "{{id}}", "name": "{{name}}", "publisher": "P", "version": "1.0.0.0"{{(platform == null ? "" : $", \"platform\": \"{platform}\"")}} }""";
+
+    [Fact]
+    public void OnlyAnAppAboveTheRunningBc_IsDropped_AndNamedInTheSkipLine()
+    {
+        var healthy = Dir("healthy", Manifest("00000000-0000-0000-0000-000000051371", "Healthy", "1.0.0.0"));
+        var future = Dir("future", Manifest("00000000-0000-0000-0000-000000051372", "Future One", "999.0.0.0"));
+        var noManifest = Dir("no-manifest", null);
+        var noFloor = Dir("no-floor", Manifest("00000000-0000-0000-0000-000000051373", "No Floor"));
+
+        var kept = ProgramSupport.DropAppsBelowBcFloor(
+            new[] { future, healthy, noManifest, noFloor }, out var skipped);
+
+        Assert.Equal(new[] { healthy, noManifest, noFloor }, kept);
+        var line = Assert.Single(skipped);
+        Assert.StartsWith("[skip] Future One: declares BC >= 999.0.0.0, running ", line, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NothingDeclaringAFloorAboveTheRunningBc_KeepsEverythingAndReportsNothing()
+    {
+        var a = Dir("a", Manifest("00000000-0000-0000-0000-000000051374", "A", "1.0.0.0"));
+        var b = Dir("b", Manifest("00000000-0000-0000-0000-000000051375", "B"));
+
+        var kept = ProgramSupport.DropAppsBelowBcFloor(new[] { a, b }, out var skipped);
+
+        Assert.Equal(new[] { a, b }, kept);
+        Assert.Empty(skipped);
+    }
+}

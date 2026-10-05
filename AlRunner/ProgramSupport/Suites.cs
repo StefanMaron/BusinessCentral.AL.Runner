@@ -359,11 +359,11 @@ internal static partial class ProgramSupport
     /// floor above the running BC, as the CLI's <c>BuildAppGroups</c> drops that app from a bundle
     /// (#5137). A served path is always a bucket root, which is where the CLI's dependency-union gate
     /// stands down on purpose ("a root manifest speaks for the whole bucket"); the CLI still skips
-    /// such an app at <c>BuildAppGroups</c>, so a root declaring the floor is skipped there too, and
-    /// the server must report the same test set. Same identity requirement as <c>BuildAppGroups</c>:
-    /// an app.json with no readable identity is no app of its own and is never gated. Each skip is
+    /// such an app at <c>BuildAppGroups</c> (measured: a lone app declaring the floor prints
+    /// <c>[skip]</c> and exits 0), so the server must report the same test set. Each skip is
     /// returned, never dropped silently: the caller reports it. Per request, with no per-process
-    /// ledger, because a server request has no other record of what it left out.
+    /// ledger like <c>BcFloorGate.ReportSkip</c>'s, because a server request has no other record of
+    /// what it left out.
     /// </summary>
     internal static string[] DropAppsBelowBcFloor(string[] sourcePaths, out List<string> skipped)
     {
@@ -373,10 +373,9 @@ internal static partial class ProgramSupport
         {
             var appJson = Path.Combine(path, "app.json");
             if (File.Exists(appJson)
-                && AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJson) is { } id
                 && AlRunner.BcFloorGate.DeclaresNewerBcThanRunning(appJson, out var floor) && floor != null)
             {
-                skipped.Add(AlRunner.BcFloorGate.SkipLine(id.Name, floor));
+                skipped.Add(AlRunner.BcFloorGate.SkipLine(AlRunner.BcFloorGate.SuiteNameOf(appJson), floor));
                 continue;
             }
             kept.Add(path);
