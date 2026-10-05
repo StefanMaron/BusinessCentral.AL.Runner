@@ -122,6 +122,7 @@ public static class TddSupport
     /// read again is left out: its failure then keeps the generic message.</summary>
     internal static void RegisterDroppedCodeunits(string app, IReadOnlyList<TddExcludedObjectDetail> details)
     {
+        if (details.Count > 0) TddCrossBundle.NoteObjectsDropped(); // #5339: any kind, before a file can fail to re-read
         foreach (var detail in details)
         {
             try

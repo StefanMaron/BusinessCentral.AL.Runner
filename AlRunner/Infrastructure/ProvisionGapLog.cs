@@ -61,13 +61,19 @@ internal static class ProvisionGapLog
     /// <summary>
     /// Whether an object id that no loaded app declares is ABSENT, as it is on a service tier running the
     /// same apps (#5339), rather than declared by a package this run could not load. False once any gap,
-    /// unservable app or unserved dependency was recorded: the runner then cannot tell the two apart and
+    /// unservable app, unserved dependency or dropped object was recorded: the runner then cannot tell the two apart and
     /// keeps its loud refusal instead of raising BC's own "object does not exist" error. Trap: a false
     /// "absent" turns a provisioning gap into a clean AL error that <c>asserterror</c> then swallows.
     /// </summary>
     internal static bool CanEstablishAbsence
     {
-        get { lock (_lock) return !_dependencyGap && _gaps.Count == 0 && _unservableApps.Count == 0; }
+        get
+        {
+            // A dropped object EXISTS in the source, so its id is not absent (#5339). Read outside our lock:
+            // TddCrossBundle takes its own, and neither calls the other while holding it.
+            if (AlRunner.TddCrossBundle.AnyObjectDropped) return false;
+            lock (_lock) return !_dependencyGap && _gaps.Count == 0 && _unservableApps.Count == 0;
+        }
     }
 
     /// <summary>How many lines of a gap the closing "Action needed" block prints (#4600).</summary>

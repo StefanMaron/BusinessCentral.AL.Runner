@@ -51,11 +51,18 @@ public sealed class MissingObjectStandInTests
     private static Exception AssertErrorOutcome(Exception raised)
         => Record.Exception(() => BcRuntime.NavMethodScope_AssertError(null!, () => throw raised))!;
 
-    private static void WithGap(Action setUp, Action body)
+    // Both registries a run's gaps and drops live in: ProvisionGapLog is per bundle, TddCrossBundle per cycle.
+    private static void ResetState()
     {
         ProvisionGapLog.Reset();
+        TddCrossBundle.ResetForNewCycle();
+    }
+
+    private static void WithGap(Action setUp, Action body)
+    {
+        ResetState();
         try { setUp(); body(); }
-        finally { ProvisionGapLog.Reset(); }
+        finally { ResetState(); }
     }
 
     // ── a gap-free run: the id is ABSENT, and the error is BC's ──
@@ -64,7 +71,7 @@ public sealed class MissingObjectStandInTests
     public void Codeunit_AbsentInAGapFreeRun_RaisesBcsMetadataNotFound_WhichAsserterrorCatches()
     {
         RequireEngine();
-        ProvisionGapLog.Reset();
+        ResetState();
 
         var ex = Resolve(MissingId);
 
@@ -77,7 +84,7 @@ public sealed class MissingObjectStandInTests
     public void Table_AbsentInAGapFreeRun_RaisesBcsMetadataNotFound_WhichAsserterrorCatches()
     {
         RequireEngine();
-        ProvisionGapLog.Reset();
+        ResetState();
 
         var ex = BcRuntime.MissingTable(MissingId);
 
@@ -135,7 +142,7 @@ public sealed class MissingObjectStandInTests
     public void TheGapSurvivesASnapshotRestore_AndAResetClearsIt()
     {
         RequireEngine();
-        ProvisionGapLog.Reset();
+        ResetState();
         try
         {
             ProvisionGapLog.NoteDependencyGap();
@@ -147,7 +154,7 @@ public sealed class MissingObjectStandInTests
             ProvisionGapLog.Restore(snapshot);
             Assert.False(ProvisionGapLog.CanEstablishAbsence, "a restored bundle keeps the gap it had");
         }
-        finally { ProvisionGapLog.Reset(); }
+        finally { ResetState(); }
     }
 
     // ── the resolver is where a gap is found: it must tell the log, or the refusal above never fires ──
@@ -166,7 +173,7 @@ public sealed class MissingObjectStandInTests
     public void AnUnsuppliedPlatformFloor_IsAGap_SoAMissingObjectKeepsTheRefusal()
     {
         RequireEngine();
-        WithGap(ProvisionGapLog.Reset, () =>
+        WithGap(ResetState, () =>
         {
             // The dependent ships AL source and no payload, and declares a floor (System >= 28.0) that no
             // searched directory supplies: DependencyResolverTests pins the report; this pins what it does.
@@ -185,7 +192,7 @@ public sealed class MissingObjectStandInTests
     public void ADependencyNoLoaderTierCanServe_IsAGap_SoAMissingObjectKeepsTheRefusal()
     {
         RequireEngine();
-        WithGap(ProvisionGapLog.Reset, () =>
+        WithGap(ResetState, () =>
         {
             const string id = "00000000-0000-0000-0000-0000005339a2";
             var resolver = ResolveInto("unservable",
@@ -201,7 +208,7 @@ public sealed class MissingObjectStandInTests
     public void ACompleteDependency_IsNotAGap_SoAMissingObjectStaysAbsent()
     {
         RequireEngine();
-        WithGap(ProvisionGapLog.Reset, () =>
+        WithGap(ResetState, () =>
         {
             const string id = "00000000-0000-0000-0000-0000005339a3";
             var resolver = ResolveInto("complete",
@@ -214,6 +221,101 @@ public sealed class MissingObjectStandInTests
         });
     }
 
+    // ── an object a compile DROPPED exists in the source: it is not absent (#5339) ──
+    //
+    // Each path that registers or reports a drop feeds the predicate; the others are the CLI tests in
+    // DroppedObjectNotAbsentTests (a bundle's non-TDD drop, a bundle that did not compile).
+
+    private static string DropFile(string name, string objectText)
+    {
+        var dir = TestScratch.Dir("al-runner-missing-object-dropped");
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, name);
+        File.WriteAllText(path, objectText);
+        return path;
+    }
+
+    private static TddExcludedObjectDetail Dropped(string path, string display)
+        => new(path, display, new[] { $"SourceFile({path}@3:5): error AL0118: The name 'Nope' does not exist in the current context." });
+
+    private static void AssertDroppedCodeunitKeepsTheRefusal()
+    {
+        var ex = Resolve(MissingId);
+        var refusal = Assert.IsType<MissingDependencyCodeunitException>(ex);
+        Assert.Equal(MissingId, refusal.CodeunitId);
+        Assert.Contains("was dropped from it because it did not compile", refusal.Message);
+        Assert.Same(ex, AssertErrorOutcome(ex));
+        var guarded = Unwrap(Assert.ThrowsAny<Exception>(
+            () => BcRuntime.NavCodeunit_RunCodeunit(DataError.TrapError, MissingId, null)));
+        Assert.IsType<MissingDependencyCodeunitException>(guarded);
+    }
+
+    [SkippableFact]
+    public void ACodeunitTheTddBundlePathDropped_KeepsTheRefusalNamingIt_NotTheCleanError()
+    {
+        RequireEngine();
+        WithGap(ResetState, () =>
+        {
+            var file = DropFile("Dropped.Codeunit.al", $"codeunit {MissingId} \"MOD Dropped\"\n{{\n}}\n");
+            TddSupport.RegisterDroppedCodeunits("Contoso/Lib", new[] { Dropped(file, "Codeunit MOD Dropped") });
+
+            Assert.False(ProvisionGapLog.CanEstablishAbsence);
+            AssertDroppedCodeunitKeepsTheRefusal();
+        });
+    }
+
+    [SkippableFact]
+    public void ATableTheTddBundlePathDropped_KeepsTheLoudRefusal_NotTheCleanError()
+    {
+        RequireEngine();
+        WithGap(ResetState, () =>
+        {
+            // The registry holds codeunits by id; a dropped table is not in it, so only the predicate knows.
+            var file = DropFile("Dropped.Table.al", $"table {MissingId} \"MOD Dropped Table\"\n{{\n}}\n");
+            TddSupport.RegisterDroppedCodeunits("Contoso/Lib", new[] { Dropped(file, "Table MOD Dropped Table") });
+
+            var ex = BcRuntime.MissingTable(MissingId);
+
+            Assert.IsType<InvalidOperationException>(ex);
+            Assert.Same(ex, AssertErrorOutcome(ex));
+        });
+    }
+
+    [SkippableFact]
+    public void AnObjectADependencyLoadDropped_IsNotAbsent()
+    {
+        RequireEngine();
+        WithGap(ResetState, () =>
+        {
+            TddCrossBundle.NoteDependencyDropped(new[] { "Codeunit MOD Dropped" });
+
+            Assert.False(ProvisionGapLog.CanEstablishAbsence);
+            Assert.IsType<InvalidOperationException>(BcRuntime.MissingTable(MissingId));
+        });
+    }
+
+    [SkippableFact]
+    public void NothingDropped_StaysAbsent_AndANewCycleForgetsTheDrop()
+    {
+        RequireEngine();
+        WithGap(ResetState, () =>
+        {
+            TddSupport.RegisterDroppedCodeunits("Contoso/Lib", Array.Empty<TddExcludedObjectDetail>());
+            TddCrossBundle.NoteDependencyDropped(Array.Empty<string>());
+            Assert.True(ProvisionGapLog.CanEstablishAbsence, "a drop that dropped nothing is not a drop");
+
+            TddCrossBundle.NoteObjectsDropped();
+            Assert.False(ProvisionGapLog.CanEstablishAbsence);
+
+            TddCrossBundle.ResetForNewCycle();
+            Assert.True(ProvisionGapLog.CanEstablishAbsence, "a new cycle compiles again and starts with no drop");
+
+            TddCrossBundle.NoteObjectsDropped();
+            TddCrossBundle.ClearSourceImpls();
+            Assert.True(ProvisionGapLog.CanEstablishAbsence, "--server forgets the previous request's drops");
+        });
+    }
+
     // ── Codeunit.Run: BC resolves the target before the run, outside the guarded run's try ──
 
     [SkippableTheory]
@@ -222,7 +324,7 @@ public sealed class MissingObjectStandInTests
     public void RunCodeunit_Missing_RaisesInBothSpellings_NeverReturnsFalse(DataError errorLevel)
     {
         RequireEngine();
-        ProvisionGapLog.Reset();
+        ResetState();
 
         var ex = Unwrap(Assert.ThrowsAny<Exception>(
             () => BcRuntime.NavCodeunit_RunCodeunit(errorLevel, MissingId, null)));

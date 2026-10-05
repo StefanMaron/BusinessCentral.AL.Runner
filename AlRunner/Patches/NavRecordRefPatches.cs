@@ -257,7 +257,7 @@ public static partial class BcRuntime
     /// What <c>RecordRef.Open</c> raises for a table no loaded app declares. BC's own ALOpen resolves the
     /// table through NCLMetadata and gets a NavMetadataNotFoundException, which NavMethodScope turns into
     /// the "object does not exist" AL error that asserterror catches (#5339). Only for a gap-free run:
-    /// with a gap recorded the table may be declared by a package this run could not load, and a clean AL
+    /// with a gap or a dropped object recorded the table may be declared by something this run could not load, and a clean AL
     /// error would let asserterror swallow that provisioning gap, so the refusal stays a CLR exception
     /// that escapes it (loud-failures.md).
     /// </summary>
@@ -266,9 +266,9 @@ public static partial class BcRuntime
             ? new Microsoft.Dynamics.Nav.Types.NavMetadataNotFoundException(
                 Microsoft.Dynamics.Nav.Types.ObjectType.Table, tableNo)
             : new InvalidOperationException(
-                $"RecordRef.Open: no NCLMetaTable for table {tableNo}, and this run recorded a provisioning gap "
-                + "(see Action needed), so the runner cannot tell a table that does not exist from one declared "
-                + "by a package it could not load.");
+                $"RecordRef.Open: no NCLMetaTable for table {tableNo}, and this run recorded a provisioning gap or an "
+                + "object it could not compile (see Action needed and the EMIT-EXCLUDED / TDD-EXCLUDED lines), so the "
+                + "runner cannot tell a table that does not exist from one declared by something it could not load.");
 
     private static void OpenRecordRefById(object self, int tableNo, bool isTemporary)
     {
