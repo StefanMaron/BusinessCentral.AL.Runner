@@ -103,6 +103,13 @@ public sealed class DependencyVersionMismatchException : Exception, IDependencyP
         lines.Add("");
         lines.Add($"  Obtain a build of this app at or above v{DepMinVersion} and");
         lines.Add("  add it to your --package-cache <dir> (usually your project's .alpackages).");
+        // #5335, owner's decision: the run is rejected before compiling; an Info says what could be tried.
+        if (HighestAvailable() is { } highest)
+        {
+            lines.Add("");
+            lines.Add($"  Info: if this app does not need {DepPublisher}/{DepName} v{DepMinVersion} or newer, " +
+                      $"you can lower its version in app.json to {highest}.");
+        }
         var bcRelease = MicrosoftBcRelease();
         if (bcRelease != null)
         {
@@ -111,6 +118,16 @@ public sealed class DependencyVersionMismatchException : Exception, IDependencyP
         }
 
         return string.Join(Environment.NewLine, lines);
+    }
+
+    /// <summary>
+    /// The first entry of <see cref="AvailableVersions"/>, as "vX": DependencyResolver lists the copies it
+    /// found highest first. Null when nothing parses, so no hint is printed rather than a wrong one.
+    /// </summary>
+    private string? HighestAvailable()
+    {
+        var first = AvailableVersions.Split(',')[0].Trim().TrimStart('v', 'V');
+        return Version.TryParse(first, out _) ? $"v{first}" : null;
     }
 
     /// <summary>"28.4" for a Microsoft dependency whose minimum is 28.4.x.x, else null.</summary>

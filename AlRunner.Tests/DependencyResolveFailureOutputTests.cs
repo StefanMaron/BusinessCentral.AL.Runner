@@ -1,8 +1,13 @@
 // Issue #4567 (part of #4559): one dependency that cannot be resolved used to print its cause
 // four times — DEP-RESOLVE-FAIL, a `[cache] dependency resolution failed` line, a `[cache] NOKEY`
 // line, then an EMIT-ZERO block listing an AL0185 per reference into the unresolved app. Only the
-// first is the cause. These tests spawn the runner on a bundle whose one dependency is present
-// only below its declared minimum, and pin what a default run and a --verbose run print.
+// first is the cause. These tests spawn the runner on a bundle whose dependency closure cannot be
+// resolved and pin what a default run and a --verbose run print.
+//
+// #5335: a dependency present only below its minimum version no longer reaches the compile (it stops the
+// run with exit 2, MissingDependencyExitCodeTests), and an absent one never did. What still reaches it is
+// a resolve failure that is neither: here a dependency cycle between two packages, which the generic
+// handler reports with DEP-RESOLVE-FAIL and continues from.
 using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -19,8 +24,9 @@ public sealed class DependencyResolveFailureOutputTests : IDisposable
     private const string DepId = "d0104567-dddd-4b22-8c33-d44455566677";
     private const string DepPublisher = "Fabrikam ISV";
     private const string DepName = "Fabrikam Lib";
-    private const string FoundVersion = "1.0.0.0";
-    private const string RequiredVersion = "2.0.0.0";
+    private const string DepVersion = "1.0.0.0";
+    private const string PartnerId = "d0104567-eeee-4b22-8c33-d44455566677";
+    private const string PartnerName = "Fabrikam Partner";
 
     private readonly string _scratch;
 
@@ -46,11 +52,10 @@ public sealed class DependencyResolveFailureOutputTests : IDisposable
         // Still a failed run, with the same exit code a compile failure has always had.
         Assert.True(run.ExitCode == 3, $"exit {run.ExitCode}, expected 3\n{run.Output}");
 
-        // The cause, once, naming the dependency, the version it needs and the one it found.
-        Assert.True(CountOf(run.Output, $"{DepPublisher}/{DepName}") == 1,
-            $"the unresolved dependency should be named exactly once\n{run.Output}");
-        Assert.Contains($"v{RequiredVersion} or newer", run.Output);
-        Assert.Contains($"v{FoundVersion}", run.Output);
+        // The cause, once, naming the cycle's packages.
+        Assert.True(CountOf(run.Output, "Dependency cycle detected") == 1,
+            $"the unresolved dependency should be reported exactly once\n{run.Output}");
+        Assert.Contains($"{DepName} -> {PartnerName} -> {DepName}", run.Output);
 
         // None of the three restatements of that cause.
         Assert.DoesNotContain("[cache] dependency resolution failed", run.Output);
@@ -112,7 +117,7 @@ public sealed class DependencyResolveFailureOutputTests : IDisposable
         Assert.True(run.ExitCode == 3, $"exit {run.ExitCode}, expected 3\n{run.Output}");
         Assert.Contains("AL0185", run.Output);
         Assert.Contains("[cache] NOKEY", run.Output);
-        Assert.Contains($"v{RequiredVersion} or newer", run.Output);
+        Assert.Contains("Dependency cycle detected", run.Output);
     }
 
     /// <summary>The owner's case: a Microsoft app at 28.4 needed on a 28.1 run. Where it comes from.</summary>
@@ -129,7 +134,9 @@ public sealed class DependencyResolveFailureOutputTests : IDisposable
         Assert.Contains("--bc-version 28.4", text);
         Assert.Contains("Dependency chain: Tests-TestLibraries → System Application Test Library", text);
         Assert.Contains("v28.4.0.0 or newer", text);
-        Assert.Equal(1, CountOf(text, "Microsoft/System Application Test Library"));
+        // The "Required:" line and the Info line (#5335) name it; the cause itself is not restated.
+        Assert.Equal(1, CountOf(text, "Required: Microsoft/System Application Test Library"));
+        Assert.Equal(2, CountOf(text, "Microsoft/System Application Test Library"));
         // The searched directories are verbose-only.
         Assert.DoesNotContain("/cache", text);
         Assert.Contains("/cache", string.Join("\n",
@@ -143,6 +150,40 @@ public sealed class DependencyResolveFailureOutputTests : IDisposable
             DepPublisher, DepName, "28.4.0.0", Guid.NewGuid(), new[] { "/cache" }, "v28.1.0.0");
 
         Assert.DoesNotContain("--bc-version", ex.ToDetailedMessage());
+    }
+
+    /// <summary>
+    /// #5335, the owner's "at most an Info about lowering the version": one line, naming the dependency, the
+    /// declared minimum and the HIGHEST copy found (the resolver lists copies highest first), and only when
+    /// there is a copy to name. An absent package has none, so its report carries no such line.
+    /// </summary>
+    [Fact]
+    public void VersionGap_InfoLine_NamesTheHighestAvailableBuild_AndOnlyThen()
+    {
+        var two = new AlRunner.Infrastructure.DependencyVersionMismatchException(
+            "Acme", "Acme Lib", "2.0.0.0", Guid.NewGuid(), new[] { "/cache" }, "v1.2.0.0, v0.5.0.0");
+        var text = two.ToDetailedMessage();
+
+        Assert.Equal(1, CountOf(text, "Info:"));
+        Assert.Contains(
+            "Info: if this app does not need Acme/Acme Lib v2.0.0.0 or newer, you can lower its version in app.json to v1.2.0.0.",
+            text);
+        Assert.DoesNotContain("to v0.5.0.0", text);
+
+        // The version list arrives without a "v" in other callers: still one well-formed line.
+        var bare = new AlRunner.Infrastructure.DependencyVersionMismatchException(
+            "Acme", "Acme Lib", "2.0.0.0", Guid.NewGuid(), Array.Empty<string>(), "1.0.0.0");
+        Assert.Contains("to v1.0.0.0.", bare.ToDetailedMessage());
+
+        // Nothing parses: no hint rather than a wrong one. The rest of the report is unchanged.
+        var none = new AlRunner.Infrastructure.DependencyVersionMismatchException(
+            "Acme", "Acme Lib", "2.0.0.0", Guid.NewGuid(), Array.Empty<string>(), "");
+        Assert.DoesNotContain("Info:", none.ToDetailedMessage());
+        Assert.Contains("This is a VERSION gap", none.ToDetailedMessage());
+
+        var absent = new AlRunner.Infrastructure.MissingDependencyException(
+            "Acme", "Acme Lib", "2.0.0.0", Guid.NewGuid(), new[] { "/cache" });
+        Assert.DoesNotContain("lower its version", absent.ToDetailedMessage());
     }
 
     [Fact]
@@ -265,7 +306,7 @@ public sealed class DependencyResolveFailureOutputTests : IDisposable
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [
-            { "id": "{{DepId}}", "name": "{{DepName}}", "publisher": "{{DepPublisher}}", "version": "{{RequiredVersion}}" }
+            { "id": "{{DepId}}", "name": "{{DepName}}", "publisher": "{{DepPublisher}}", "version": "{{DepVersion}}" }
           ],
           "idRanges": [ { "from": 60797, "to": 60798 } ],
           "runtime": "14.0"
@@ -276,18 +317,23 @@ public sealed class DependencyResolveFailureOutputTests : IDisposable
         if (extraCodeunit != null)
             File.WriteAllText(Path.Combine(bundle, "Extra.Codeunit.al"), extraCodeunit);
 
-        WriteApp(pkgDir);
+        // The two packages each name the other as a dependency: present at the required version, so no
+        // version or absence gap, and the resolver throws InvalidOperationException ("Dependency cycle").
+        WriteApp(pkgDir, DepId, DepName, DepVersion, PartnerId, PartnerName);
+        WriteApp(pkgDir, PartnerId, PartnerName, DepVersion, DepId, DepName);
         return (bundle, pkgDir, cacheDir);
     }
 
-    /// <summary>A minimal NAVX <c>.app</c> declaring the dependency at the too-old version.</summary>
-    private static void WriteApp(string dir)
+    /// <summary>A minimal NAVX <c>.app</c> declaring one dependency.</summary>
+    private static void WriteApp(string dir, string id, string name, string version, string depId, string depName)
     {
         var xml = $"""
             <?xml version="1.0" encoding="utf-8"?>
             <Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
-              <App Id="{DepId}" Name="{DepName}" Publisher="{DepPublisher}" Version="{FoundVersion}"/>
-              <Dependencies />
+              <App Id="{id}" Name="{name}" Publisher="{DepPublisher}" Version="{version}"/>
+              <Dependencies>
+                <Dependency Id="{depId}" Name="{depName}" Publisher="{DepPublisher}" MinVersion="{DepVersion}"/>
+              </Dependencies>
             </Package>
             """;
         using var ms = new MemoryStream();
@@ -303,7 +349,7 @@ public sealed class DependencyResolveFailureOutputTests : IDisposable
         result[0] = (byte)'N'; result[1] = (byte)'A'; result[2] = (byte)'V'; result[3] = (byte)'X';
         BitConverter.TryWriteBytes(result.AsSpan(4, 4), (uint)8);
         zipBytes.CopyTo(result, 8);
-        File.WriteAllBytes(Path.Combine(dir, $"{DepPublisher}_{DepName}_{FoundVersion}.app"), result);
+        File.WriteAllBytes(Path.Combine(dir, $"{DepPublisher}_{name}_{version}.app"), result);
     }
 
     private static (int ExitCode, string Output) Spawn(
