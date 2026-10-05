@@ -1,0 +1,154 @@
+using System.Diagnostics;
+using System.Text;
+using System.Text.Json;
+using Xunit;
+
+namespace AlRunner.Tests;
+
+/// <summary>
+/// #5137: an app whose app.json declares a BC floor above the running BC is skipped by the CLI
+/// ("[skip] ... declares BC >= ...", exit 0). A <c>--server</c> <c>runTests</c> serves every
+/// <c>sourcePaths</c> entry as a bundle root, where the gate never fired, so it ran the app the
+/// CLI skipped. The fixture is <c>Fixtures/BcFloorSkip</c>: a healthy app with one passing test
+/// and a future app (<c>99.0.0.0</c>) whose only test fails unconditionally, so a regressed
+/// gate cannot go green by accident. The skip must also be VISIBLE in the response
+/// (<c>warnings</c> on the summary), because a silent skip reads as a pass.
+/// </summary>
+public class ServerBcFloorSkipTests
+{
+    private static readonly string RepoRoot = Path.GetFullPath(
+        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
+
+    private static string Fixture(params string[] relative) => Path.GetFullPath(Path.Combine(
+        new[] { RepoRoot, "AlRunner.Tests", "Fixtures", "BcFloorSkip" }.Concat(relative).ToArray()));
+
+    private const string HealthyTest = "Codeunit60810.BcFloorSkip_HealthySibling_StillRuns";
+    private const string FutureTest = "Codeunit60820.BcFloorSkip_FutureSuite_MustNeverExecute";
+
+    private sealed record Served(int Exit, int Passed, int Failed, int Total, List<string> Tests, List<string> Warnings, string Text);
+
+    private static async Task<List<Served>> ServeEach(string scratch, params string[][] requests)
+    {
+        var args = new List<string> { "--cache", Path.Combine(scratch, "al-out-server") };
+        var platformApps = TestArtifacts.PlatformAppsDir();
+        if (Directory.Exists(platformApps)) { args.Add("--package-cache"); args.Add(platformApps); }
+        await using var server = await CliServer.StartAsync(args);
+        var served = new List<Served>();
+        foreach (var sourcePaths in requests)
+        {
+            var req = JsonSerializer.Serialize(new { command = "runTests", sourcePaths, packagePaths = Array.Empty<string>() });
+            var lines = await server.SendRequestStreamingAsync(req, TimeSpan.FromSeconds(300));
+            var (events, summary) = ProtocolV2Streaming.Split(lines);
+            var warnings = summary.TryGetProperty("warnings", out var w)
+                ? w.EnumerateArray().Select(x => x.GetString()!).ToList()
+                : new List<string>();
+            served.Add(new Served(
+                summary.GetProperty("exitCode").GetInt32(),
+                summary.GetProperty("passed").GetInt32(),
+                summary.GetProperty("failed").GetInt32(),
+                summary.GetProperty("total").GetInt32(),
+                events.Select(e => e.GetProperty("name").GetString()!).ToList(),
+                warnings,
+                string.Join(" | ", lines) + "\n--- server stderr ---\n" + server.StdErr));
+        }
+        return served;
+    }
+
+    private static (string Output, int Exit) RunCli(string cacheRoot, string bundle)
+    {
+        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
+        args.Append(TestBuildConfig.BcVersionArg);
+        args.Append($" \"{bundle}\" --show-pass --cache \"{cacheRoot}\"");
+        var platformApps = TestArtifacts.PlatformAppsDir();
+        if (Directory.Exists(platformApps)) args.Append($" --package-cache \"{platformApps}\"");
+        var psi = new ProcessStartInfo
+        {
+            FileName = "dotnet", Arguments = args.ToString(),
+            RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
+        };
+        var sb = new StringBuilder();
+        using var p = Process.Start(psi)!;
+        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
+        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
+        p.BeginOutputReadLine();
+        p.BeginErrorReadLine();
+        if (!p.WaitForExit(300_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
+        p.WaitForExit();
+        lock (sb) return (sb.ToString(), p.ExitCode);
+    }
+
+    /// <summary>One warning naming the suite, its floor and the running BC, in the CLI's own words.</summary>
+    private static void AssertSkipReported(Served s)
+    {
+        var skip = Assert.Single(s.Warnings.Where(w => w.Contains("BC Floor Skip - Future", StringComparison.Ordinal)));
+        Assert.Contains("[skip]", skip, StringComparison.Ordinal);
+        Assert.Contains("declares BC >= 99.0.0.0", skip, StringComparison.Ordinal);
+        Assert.Contains("running", skip, StringComparison.Ordinal);
+        Assert.DoesNotContain(s.Warnings, w => w.Contains("BC Floor Skip - Healthy", StringComparison.Ordinal));
+    }
+
+    /// <summary>The issue's scenario: one container holding a healthy app and a future app.</summary>
+    [SkippableFact]
+    public async Task Container_AppDeclaringANewerBc_IsSkippedAndReported_AsTheCliDoes()
+    {
+        TestArtifacts.SkipIfMissing();
+        var scratch = TestScratch.Dir("server-bc-floor-container");
+
+        var (cli, cliExit) = RunCli(Path.Combine(scratch, "al-out-cli"), Fixture());
+        Assert.True(cliExit == 0, cli);
+        Assert.Contains("[skip] BC Floor Skip - Future", cli, StringComparison.Ordinal);
+        Assert.Contains("PASS  " + HealthyTest, cli, StringComparison.Ordinal);
+        Assert.DoesNotContain(FutureTest, cli, StringComparison.Ordinal);
+
+        var s = Assert.Single(await ServeEach(scratch, new[] { Fixture() }));
+        Assert.True(s.Exit == 0, s.Text);
+        Assert.True(s.Passed == 1 && s.Failed == 0 && s.Total == 1, s.Text);
+        Assert.Equal(new[] { HealthyTest }, s.Tests);
+        AssertSkipReported(s);
+    }
+
+    /// <summary>Each app listed as its own <c>sourcePaths</c> entry: the second shape the issue names.</summary>
+    [SkippableFact]
+    public async Task EachAppListedAsItsOwnSourcePath_AppDeclaringANewerBc_IsSkippedAndReported()
+    {
+        TestArtifacts.SkipIfMissing();
+        var scratch = TestScratch.Dir("server-bc-floor-own-entries");
+
+        var s = Assert.Single(await ServeEach(scratch, new[] { Fixture("healthy-suite"), Fixture("future-suite") }));
+        Assert.True(s.Exit == 0, s.Text);
+        Assert.True(s.Passed == 1 && s.Failed == 0 && s.Total == 1, s.Text);
+        Assert.Equal(new[] { HealthyTest }, s.Tests);
+        AssertSkipReported(s);
+    }
+
+    /// <summary>
+    /// Nothing is left to run: like the CLI, a green request with zero tests, and the skip is the
+    /// one thing the response says. Then the SAME server is asked again — the report is per
+    /// request, not once per process like the CLI's ledger — and finally for the healthy app
+    /// alone, which has nothing to report.
+    /// </summary>
+    [SkippableFact]
+    public async Task OnlyANewerBcApp_RunsNothing_ReportsTheSkipEveryRequest_AndAHealthyAppReportsNone()
+    {
+        TestArtifacts.SkipIfMissing();
+        var scratch = TestScratch.Dir("server-bc-floor-only-future");
+
+        var served = await ServeEach(scratch,
+            new[] { Fixture("future-suite") },
+            new[] { Fixture("future-suite") },
+            new[] { Fixture("healthy-suite") });
+
+        foreach (var s in served.Take(2))
+        {
+            Assert.True(s.Exit == 0, s.Text);
+            Assert.True(s.Passed == 0 && s.Failed == 0 && s.Total == 0 && s.Tests.Count == 0, s.Text);
+            AssertSkipReported(s);
+        }
+        var healthy = served[2];
+        Assert.True(healthy.Exit == 0 && healthy.Passed == 1 && healthy.Failed == 0, healthy.Text);
+        Assert.Equal(new[] { HealthyTest }, healthy.Tests);
+        Assert.DoesNotContain(healthy.Warnings, w => w.Contains("[skip]", StringComparison.Ordinal));
+    }
+}
