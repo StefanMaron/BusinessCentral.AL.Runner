@@ -44,6 +44,33 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
     /// <summary>True once another part names this one as its Provider (#5140).</summary>
     internal bool IsProvider { get; set; }
 
+    // The parts whose FIELD links read THIS part's current row (they name it as Provider). Their
+    // rowset follows this part's cursor, so every settled move here re-points them (#5177).
+    private readonly List<LiveNavTestPart> _dependents = new();
+
+    /// <summary>True when this part's FIELD links read a Provider part's row, not the host's (#5177).</summary>
+    internal bool HasProvider { get; private set; }
+
+    internal void AddDependent(LiveNavTestPart dependent)
+    {
+        dependent.HasProvider = true;
+        _dependents.Add(dependent);
+    }
+
+    // The cursor of this part settled on a row: the parts reading it follow. Not a once-guard, like
+    // ReloadLinkedRow itself.
+    private protected override void RefreshLinkedParts()
+    {
+        base.RefreshLinkedParts();
+        ReloadDependents();
+    }
+
+    private void ReloadDependents()
+    {
+        foreach (var dependent in _dependents)
+            dependent.ReloadLinkedRow();
+    }
+
     /// <param name="record">The part page's own source-table cursor, or null when the part
     /// page declares NO SourceTable (issue #2195) — a CardPart bound to page globals, the
     /// info-box shape. Nothing in THIS class needs it in that case, and the reason is a
@@ -327,7 +354,12 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
                     ?? record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult();
         Loaded(found);
         if (!found && !parentHasNoRow) EnterNewRowLine(record);
-        if (!found && IsProvider) BlankBufferWhenNoRowIsShown(record);
+        // A part showing no row has no current record to read, whether or not another part reads
+        // it: a stale buffer would answer with the row the cursor last stood on (#5177).
+        if (!found) BlankBufferWhenNoRowIsShown(record);
+
+        // A found row already re-pointed the dependents through Loaded -> RefreshLinkedParts.
+        if (!found) ReloadDependents();
     }
 
     public override bool FindRowFromTableFieldValues(int[] fieldNos, object[] values, bool forward)
