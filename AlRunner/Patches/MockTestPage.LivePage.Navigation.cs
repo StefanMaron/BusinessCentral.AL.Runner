@@ -499,10 +499,13 @@ internal partial class LiveNavTestPage
     /// shows its own table's full rowset, independent of this page's current row, and BC's
     /// own re-sync behaviour for that shape is unmeasured — see LiveNavTestPart.HasLinks.
     /// </summary>
-    private void RefreshLinkedParts()
+    // A part reading a Provider's row is not refreshed here: its Provider is one of these parts and
+    // re-points it itself after its own reload (LiveNavTestPart.RefreshLinkedParts), so reloading
+    // it here too would fire its triggers twice for one move (#5177).
+    private protected virtual void RefreshLinkedParts()
     {
         foreach (var part in _parts.Values)
-            if (part is LiveNavTestPart { HasLinks: true } linkedPart)
+            if (part is LiveNavTestPart { HasLinks: true, HasProvider: false } linkedPart)
                 linkedPart.ReloadLinkedRow();
     }
 }

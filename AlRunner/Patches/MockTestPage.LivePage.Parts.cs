@@ -183,11 +183,16 @@ internal partial class LiveNavTestPage
         var links = SubPageLinks(definition, partPageId);
         // #5140: with a Provider, a FIELD link reads the PROVIDER part's current row, not the host's.
         NavRecord? parentRecord = null;
+        LiveNavTestPart? provider = null;
         if (LiveNavTestPart.AnyFieldLink(links))
         {
-            parentRecord = definition.ProviderIDSpecified && definition.ProviderID != 0
-                ? ResolveProviderPart(definition.ProviderID, controlId, partPageId).Record!
-                : RequireRecord($"subpage part {controlId}");
+            if (definition.ProviderIDSpecified && definition.ProviderID != 0)
+            {
+                provider = ResolveProviderPart(definition.ProviderID, controlId, partPageId);
+                parentRecord = provider.Record!;
+            }
+            else
+                parentRecord = RequireRecord($"subpage part {controlId}");
         }
         var part = new LiveNavTestPart(
             partRecord, RecordPatches.GetPageControlFieldMap(partPageId),
@@ -200,6 +205,7 @@ internal partial class LiveNavTestPage
         // with OpenView. Apply the same rule MarkOpened applies to a top-level page, with the
         // host's already-resolved editability standing in for the open mode.
         part.MarkPartOf(this);
+        provider?.AddDependent(part);
 
         // OnOpenPage on the PART, and WHY IT IS RAISED HERE rather than anywhere more obvious.
         //

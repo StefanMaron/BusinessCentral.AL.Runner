@@ -1,0 +1,23 @@
+{
+  "id": "5e1b7a90-3c42-4f6d-8a17-9d0e2b6c4f38",
+  "name": "Runner Tests Fixture - TestPage Provider Part Follows",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #5177: a part linked through a Provider follows the Provider's moves and shows nothing when the Provider shows nothing.",
+  "description": "Runner-mechanism fixture. The BC-behaviour claim is measured upstream by corpus codeunit 69143 (StefanMaron/BusinessCentral.AL.Language.Tests#547); this fixture pins the runner's own wiring (the Provider notifies its dependents, a part with no row blanks its buffer). Declares no application floor: everything it needs is its own.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 70960,
+      "to": 70979
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
