@@ -3469,6 +3469,17 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                 Reporter.PrintActionNeededOnAbort(results, bundleProvisionGaps);
                 return 2;
             }
+            catch (AlRunner.Infrastructure.DependencyVersionMismatchException ex)
+            {
+                // The package is in a cache but every build is below app.json's minimum (#5335). Same
+                // condition class as the catch above, same exit 2: the generic handler below prints the
+                // report and CONTINUES, which ran the suite to exit 0. The report text is that handler's.
+                if (stdoutSilenced) { Console.SetOut(savedOut); Console.SetError(savedErr); }
+                DependencyResolveFailureOutput.WriteDependencyResolveFailure(
+                    rel, ex, AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString(), AlRunner.Log.Verbose);
+                Reporter.PrintActionNeededOnAbort(results, bundleProvisionGaps);
+                return 2;
+            }
             catch (AlRunner.Infrastructure.AppIdCollisionException ex)
             {
                 // Two different apps declare the same app.json id (#1850), discovered while
@@ -6476,12 +6487,13 @@ return strictExitCode ? computedExitCode : 0;
             {
                 return ServerRunResult.Failure(3, "<deps>", ex.Message, new());
             }
-            catch (AlRunner.Infrastructure.MissingDependencyException ex)
+            catch (Exception ex) when (ex is AlRunner.Infrastructure.IDependencyProvisioningDiagnostic diag)
             {
-                // The same condition the CLI loop and the server's own pre-pass answer 2 with the
-                // provisioning-gap report for (#5315); not the "compile" code, not the one-liner.
+                // Absent (#5315) or only below the minimum (#5335): the condition the CLI loop and the
+                // server's own pre-pass answer 2 with the provisioning report for; not the "compile" code,
+                // not the one-liner.
                 return ServerRunResult.Failure(2, "<deps>",
-                    ex.ToDetailedMessage(AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString()), new());
+                    diag.ToDetailedMessage(AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString()), new());
             }
             catch (Exception ex)
             {

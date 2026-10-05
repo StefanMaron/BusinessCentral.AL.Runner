@@ -50,7 +50,9 @@ unknown flag — both are argument errors, and both print the reason. A third is
 declared dependency that no package cache holds: the run stops before any test, prints
 "A required dependency package is missing from your package cache" naming the package, and
 exits 2, not 1 (a failing test). Add the package to a `--package-cache`
-directory.
+directory. The same holds when the package is in a cache but every build is older than
+the version `app.json` asks for: the run prints the "VERSION gap" report and exits 2.
+Add a build at or above that version.
 
 See [the exit codes](cli-reference.md) for the rest.
 

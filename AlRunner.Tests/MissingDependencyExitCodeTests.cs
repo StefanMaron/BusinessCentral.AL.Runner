@@ -1,9 +1,12 @@
-// #5315 — one condition, one exit code: a declared dependency that no package cache holds.
+// #5315 and #5335 — one exit code for a declared dependency no package cache can supply: absent from every
+// cache (#5315), or present only below the minimum version app.json declares (#5335).
 //
-// README Exit Codes: 1 is "a test FAILED or ERRORED", 2 is "a bundle could not execute". A missing
-// package is the second. The pre-passes and --precompile already answered 2; the bundled loop (plain and
-// --per-suite share it) answered 1, so a caller reading only the exit code could not tell a provisioning
-// gap from a failing test, and a --server request answered 3 ("compile") with the one-line message.
+// README Exit Codes: 1 is "a test FAILED or ERRORED", 2 is "a bundle could not execute". An unresolvable
+// dependency is the second. The pre-passes and --precompile already answered 2 for both; the bundled loop
+// (plain and --per-suite share it) answered 1 for an absent package and ran the suite to exit 0 for a
+// below-minimum one, and a --server request answered 3 ("compile") with a one-line message for either.
+// The owner's decision on #5336: a below-minimum dependency rejects the run without compiling, with at most
+// an Info line saying the declared version could be lowered.
 //
 // #5333: the same condition under --jobs also has to reach the aggregate's NOT RUN line, which a worker
 // that stopped before it printed any COMPILE FAIL / EXEC FAIL header used to leave out.
@@ -30,6 +33,17 @@ public sealed class MissingDependencyExitCodeTests : IClassFixture<SharedCliServ
     private const string GhostId = "d0105132-eeee-4b22-8c33-d44455566677";
     private const string GhostPublisher = "Nobody";
     private const string GhostName = "Ghost Pkg";
+
+    private const string StaleId = "d0105132-eeee-4b22-8c33-d44455566688";
+    private const string StaleName = "Stale Pkg";
+
+    private const string VersionGapHeadline = "This is a VERSION gap";
+    private const string VersionGapNamesGhost = "Required: Nobody/Ghost Pkg v1.0.0.0 or newer";
+    private const string VersionGapFound = "Available (all too old): v0.5.0.0";
+    // The Info line, and the fragment an ABSENT dependency's report must not carry: nothing to lower to.
+    private const string LowerHintLine =
+        "Info: if this app does not need Nobody/Ghost Pkg v1.0.0.0 or newer, you can lower its version in app.json to v0.5.0.0.";
+    private const string LowerHint = "lower its version in app.json";
 
     private const string GapHeadline = "A required dependency package is missing from your package cache.";
     private const string GapNamesGhost = "Missing: Nobody/Ghost Pkg v1.0.0.0";
@@ -234,28 +248,89 @@ public sealed class MissingDependencyExitCodeTests : IClassFixture<SharedCliServ
         Assert.Matches(@"Tests:\s+1\s+passed\s+1\s+failed\s+0\s+errors\s+0", run.Output);
     }
 
+    // ── a dependency present only below its minimum version (#5335) ───────────────────────
+
+    /// <summary>
+    /// The reported shape: the package cache holds only a 0.5 build of a dependency that needs 1.0. Exit 2 with the
+    /// VERSION-gap report and the Info line, no test run (it ran the suite and exited 0), cold and warm on one
+    /// --cache root.
+    /// </summary>
+    [SkippableFact]
+    public void PlainRun_DependencyOnlyBelowItsMinimum_ExitsTwoNotZero_ColdAndWarm()
+    {
+        TestArtifacts.SkipIfMissing();
+        var fx = Arrange("plain-gap", withGhostPackage: false, PassingTest, belowMinimum: true);
+
+        AssertRefusedAsAVersionGap(Run(fx, fx.Suite));
+        AssertRefusedAsAVersionGap(Run(fx, fx.Suite));
+    }
+
+    /// <summary>--per-suite resolves in the same block as the plain run and must answer the same.</summary>
+    [SkippableFact]
+    public void PerSuite_DependencyOnlyBelowItsMinimum_ExitsTwoNotZero()
+    {
+        TestArtifacts.SkipIfMissing();
+        var fx = Arrange("per-suite-gap", withGhostPackage: false, PassingTest, belowMinimum: true);
+
+        AssertRefusedAsAVersionGap(Run(fx, fx.Suite, "--per-suite"));
+    }
+
+    /// <summary>
+    /// --jobs, one worker per bundle: the worker whose dependency is absent and the one whose dependency is only
+    /// below its minimum each exit 2, the third runs its test, and the aggregate takes the worst code and counts
+    /// both stopped workers NOT RUN. Before the fix the below-minimum worker exited 0.
+    /// </summary>
+    [SkippableFact]
+    public void Jobs_WorkersHitAnUnresolvableDependency_AggregateExitsTwo()
+    {
+        TestArtifacts.SkipIfMissing();
+        var absent = Arrange("jobs-absent", withGhostPackage: false, PassingTest, appId: "71000000-0000-4000-8000-0000000000c5");
+        // A different package from the absent one: --jobs gives every worker the same --package-cache list.
+        var tooOld = Arrange("jobs-gap", withGhostPackage: false, PassingTest, belowMinimum: true,
+            appId: "71000000-0000-4000-8000-0000000000c6", ghostId: StaleId, ghostName: StaleName);
+        var clean = Arrange("jobs-gap-clean", withGhostPackage: false, PassingTest, declareGhost: false,
+            appId: "71000000-0000-4000-8000-0000000000c7");
+
+        var run = Run(absent, absent.Suite, tooOld.Suite, clean.Suite, "--jobs", "3", "--package-cache", tooOld.PkgDir);
+
+        Assert.True(run.ExitCode == 2, $"exit {run.ExitCode}\n{run.Output}");
+        Assert.Contains(GapHeadline, run.Output);
+        Assert.Contains(GapNamesGhost, run.Output);
+        Assert.Contains(VersionGapHeadline, run.Output);
+        Assert.Contains("Required: Nobody/Stale Pkg v1.0.0.0 or newer", run.Output);
+        Assert.Equal(2, Regex.Matches(run.Output, @"shard \d+ \(exit 2\)").Count);
+        Assert.Single(Regex.Matches(run.Output, @"shard \d+ \(exit 0\)"));
+        Assert.Matches(@"Tests:\s+1\s+passed\s+1\s+failed\s+0\s+errors\s+0", run.Output);
+        Assert.Contains("exit code 2", Regex.Match(run.Output, @"^Result: .*$", RegexOptions.Multiline).Value);
+        AssertNotRun(run.Output, 2, "jobs gap");
+    }
+
     // ── controls: the neighbouring exit codes did not move ────────────────────────────────
 
     /// <summary>
     /// The dependency is present and a test fails: exit 1, as before. A fix that mapped every early stop
-    /// to 2 would fail here. Then the passing variant on the same cache: exit 0.
+    /// to 2 would fail here. Then the passing variant on the same cache: exit 0. A below-minimum build of the
+    /// same package sits in a second cache throughout: the gap is only "no sufficient build exists", so the
+    /// sufficient one still resolves and neither run reports a version gap.
     /// </summary>
     [SkippableFact]
     public void DependencyPresent_FailingTestExitsOne_PassingTestExitsZero()
     {
         TestArtifacts.SkipIfMissing();
-        var failing = Arrange("present-failing", withGhostPackage: true, FailingTest);
+        var failing = Arrange("present-failing", withGhostPackage: true, FailingTest, belowMinimum: true);
 
         var failed = Run(failing, failing.Suite);
 
         Assert.True(failed.ExitCode == 1, $"exit {failed.ExitCode}\n{failed.Output}");
         Assert.DoesNotContain(GapHeadline, failed.Output);
+        Assert.DoesNotContain(VersionGapHeadline, failed.Output);
         Assert.Matches(@"Tests:\s+1\s+passed\s+0\s+failed\s+1\s+errors\s+0", failed.Output);
 
         File.WriteAllText(Path.Combine(failing.Suite, "Probe.Codeunit.al"), Codeunit(PassingTest));
         var passed = Run(failing, failing.Suite);
 
         Assert.True(passed.ExitCode == 0, $"exit {passed.ExitCode}\n{passed.Output}");
+        Assert.DoesNotContain(VersionGapHeadline, passed.Output);
         Assert.Matches(@"Tests:\s+1\s+passed\s+1\s+failed\s+0\s+errors\s+0", passed.Output);
     }
 
@@ -285,6 +360,41 @@ public sealed class MissingDependencyExitCodeTests : IClassFixture<SharedCliServ
         Assert.Contains(GapHeadline, text);
         Assert.Contains(GapNamesGhost, text);
         Assert.DoesNotContain("DEP-RESOLVE-FAIL", text);
+        Assert.DoesNotContain(LowerHint, text);
+
+        var ok = await server.SendRequestStreamingAsync(Request(clean.Suite), TimeSpan.FromSeconds(300));
+        var (okTests, okSummary) = ProtocolV2Streaming.Split(ok);
+
+        Assert.True(okSummary.GetProperty("exitCode").GetInt32() == 0, string.Join("\n", ok));
+        Assert.Single(okTests);
+    }
+
+    /// <summary>
+    /// The same for a below-minimum dependency: "could not execute" (2) with the VERSION-gap report and the Info line
+    /// in the protocol. It answered 3 with the one-line "DEP-RESOLVE-FAIL" message. A clean request on the same
+    /// server still runs.
+    /// </summary>
+    [SkippableFact]
+    public async Task Server_DependencyOnlyBelowItsMinimum_AnswersExecutionErrorWithTheVersionGapReport()
+    {
+        TestArtifacts.SkipIfMissing();
+        var broken = Arrange("server-gap", withGhostPackage: false, PassingTest, belowMinimum: true,
+            appId: "71000000-0000-4000-8000-0000000000d3");
+        var clean = Arrange("server-gap-clean", withGhostPackage: false, PassingTest, declareGhost: false,
+            appId: "71000000-0000-4000-8000-0000000000d4");
+        var server = await _server.GetAsync();
+
+        var gap = await server.SendRequestStreamingAsync(Request(broken.Suite, broken.PkgDir), TimeSpan.FromSeconds(300));
+        var (gapTests, gapSummary) = ProtocolV2Streaming.Split(gap);
+
+        Assert.True(gapSummary.GetProperty("exitCode").GetInt32() == 2, string.Join("\n", gap));
+        Assert.Empty(gapTests);
+        var text = ErrorText(gapSummary);
+        Assert.Contains(VersionGapHeadline, text);
+        Assert.Contains(VersionGapNamesGhost, text);
+        Assert.Contains(VersionGapFound, text);
+        Assert.Equal(1, Regex.Matches(text, Regex.Escape(LowerHintLine)).Count);
+        Assert.DoesNotContain("DEP-RESOLVE-FAIL", text);
 
         var ok = await server.SendRequestStreamingAsync(Request(clean.Suite), TimeSpan.FromSeconds(300));
         var (okTests, okSummary) = ProtocolV2Streaming.Split(ok);
@@ -295,7 +405,7 @@ public sealed class MissingDependencyExitCodeTests : IClassFixture<SharedCliServ
 
     // ── fixture ───────────────────────────────────────────────────────────────────────────
 
-    private sealed record Fixture(string Suite, string PkgDir, string CacheDir);
+    private sealed record Fixture(string Suite, string PkgDir, string CacheDir, string? OtherPkgDir = null);
 
     private static string Codeunit(string testBody) => $$"""
         codeunit 71301 "Mde Probe"
@@ -322,7 +432,8 @@ public sealed class MissingDependencyExitCodeTests : IClassFixture<SharedCliServ
     /// property (.claude/rules/no-base-app-in-csharp-tests.md): the closure is the one ghost package.
     /// </summary>
     private Fixture Arrange(string name, bool withGhostPackage, string testBody, bool declareGhost = true,
-        string appId = "71000000-0000-4000-8000-0000000000b0")
+        string appId = "71000000-0000-4000-8000-0000000000b0", bool belowMinimum = false,
+        string ghostId = GhostId, string ghostName = GhostName)
     {
         var root = Path.Combine(_scratch, name);
         var suite = Path.Combine(root, "suite");
@@ -332,7 +443,7 @@ public sealed class MissingDependencyExitCodeTests : IClassFixture<SharedCliServ
         Directory.CreateDirectory(pkg);
         Directory.CreateDirectory(cache);
         var deps = declareGhost
-            ? $$"""{ "id": "{{GhostId}}", "name": "{{GhostName}}", "publisher": "{{GhostPublisher}}", "version": "1.0.0.0" }"""
+            ? $$"""{ "id": "{{ghostId}}", "name": "{{ghostName}}", "publisher": "{{GhostPublisher}}", "version": "1.0.0.0" }"""
             : "";
         File.WriteAllText(Path.Combine(suite, "app.json"), $$"""
         {
@@ -346,17 +457,26 @@ public sealed class MissingDependencyExitCodeTests : IClassFixture<SharedCliServ
         }
         """);
         File.WriteAllText(Path.Combine(suite, "Probe.Codeunit.al"), Codeunit(testBody));
-        if (withGhostPackage) WriteGhostPackage(pkg);
-        return new Fixture(suite, pkg, cache);
+        // The package cache holds only a below-minimum build, or (control) that build in a second cache beside the
+        // sufficient one.
+        string? otherPkg = null;
+        if (withGhostPackage) WriteGhostPackage(pkg, "1.0.0.0", ghostId, ghostName);
+        if (belowMinimum)
+        {
+            otherPkg = withGhostPackage ? Path.Combine(root, "pkg-old") : pkg;
+            Directory.CreateDirectory(otherPkg);
+            WriteGhostPackage(otherPkg, "0.5.0.0", ghostId, ghostName);
+        }
+        return new Fixture(suite, pkg, cache, withGhostPackage && belowMinimum ? otherPkg : null);
     }
 
     /// <summary>A minimal NAVX .app holding the ghost package: a manifest and a payload, no symbols.</summary>
-    private static void WriteGhostPackage(string dir)
+    private static void WriteGhostPackage(string dir, string version, string id, string name)
     {
         var xml = $"""
             <?xml version="1.0" encoding="utf-8"?>
             <Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
-              <App Id="{GhostId}" Name="{GhostName}" Publisher="{GhostPublisher}" Version="1.0.0.0"/>
+              <App Id="{id}" Name="{name}" Publisher="{GhostPublisher}" Version="{version}"/>
               <Dependencies />
             </Package>
             """;
@@ -371,7 +491,7 @@ public sealed class MissingDependencyExitCodeTests : IClassFixture<SharedCliServ
         result[0] = (byte)'N'; result[1] = (byte)'A'; result[2] = (byte)'V'; result[3] = (byte)'X';
         BitConverter.TryWriteBytes(result.AsSpan(4, 4), (uint)8);
         zipBytes.CopyTo(result, 8);
-        File.WriteAllBytes(Path.Combine(dir, $"{GhostPublisher}_{GhostName}_1.0.0.0.app"), result);
+        File.WriteAllBytes(Path.Combine(dir, $"{GhostPublisher}_{name}_{version}.app"), result);
     }
 
     // ── invocation ────────────────────────────────────────────────────────────────────────
@@ -383,6 +503,20 @@ public sealed class MissingDependencyExitCodeTests : IClassFixture<SharedCliServ
         Assert.Contains(GapNamesGhost, run.Output);
         Assert.DoesNotContain("Unhandled exception", run.Output);
         Assert.DoesNotMatch(@"Tests:\s+\d", run.Output);
+        Assert.DoesNotContain(LowerHint, run.Output);   // an absent package has no lower version to suggest
+    }
+
+    /// <summary>Exit 2, the VERSION-gap report naming the dependency, the minimum and the build found, the Info line once, no test counted.</summary>
+    private static void AssertRefusedAsAVersionGap((int ExitCode, string Output) run)
+    {
+        Assert.True(run.ExitCode == 2, $"exit {run.ExitCode}\n{run.Output}");
+        Assert.Contains(VersionGapHeadline, run.Output);
+        Assert.Contains(VersionGapNamesGhost, run.Output);
+        Assert.Contains(VersionGapFound, run.Output);
+        Assert.Equal(1, Regex.Matches(run.Output, Regex.Escape(LowerHintLine)).Count);
+        Assert.DoesNotContain("Unhandled exception", run.Output);
+        Assert.DoesNotMatch(@"Tests:\s+\d", run.Output);
+        Assert.DoesNotContain("PASSED", run.Output);
     }
 
     /// <summary>The aggregate block's NOT RUN line, which a --jobs caller reads: exactly one, with the count.</summary>
@@ -398,8 +532,13 @@ public sealed class MissingDependencyExitCodeTests : IClassFixture<SharedCliServ
     private static void AssertNoPartial(string output)
         => Assert.DoesNotContain("  PARTIAL: ", output[output.LastIndexOf("aggregate across", StringComparison.Ordinal)..]);
 
-    private static string Request(string suite)
-        => JsonSerializer.Serialize(new { command = "runTests", sourcePaths = new[] { suite } });
+    private static string Request(string suite, string? packageDir = null)
+        => JsonSerializer.Serialize(new
+        {
+            command = "runTests",
+            sourcePaths = new[] { suite },
+            packagePaths = packageDir == null ? Array.Empty<string>() : new[] { packageDir },
+        });
 
     private static string ErrorText(JsonElement summary)
     {
@@ -420,7 +559,9 @@ public sealed class MissingDependencyExitCodeTests : IClassFixture<SharedCliServ
             .Append(TestBuildConfig.BcVersionArg)
             .Append($" \"{bundle}\"");
         foreach (var m in more) args.Append(m.StartsWith("--", StringComparison.Ordinal) ? $" {m}" : $" \"{m}\"");
-        args.Append($" --package-cache \"{fx.PkgDir}\" --cache \"{fx.CacheDir}\"");
+        args.Append($" --package-cache \"{fx.PkgDir}\"");
+        if (fx.OtherPkgDir != null) args.Append($" --package-cache \"{fx.OtherPkgDir}\"");
+        args.Append($" --cache \"{fx.CacheDir}\"");
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet",
