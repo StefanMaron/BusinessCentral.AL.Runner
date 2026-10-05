@@ -354,6 +354,36 @@ internal static partial class ProgramSupport
         return expanded.ToArray();
     }
 
+    /// <summary>
+    /// Drops every <paramref name="sourcePaths"/> entry that is an app whose app.json declares a BC
+    /// floor above the running BC, as the CLI's <c>BuildAppGroups</c> drops that app from a bundle
+    /// (#5137). A served path is always a bucket root, which is where the CLI's dependency-union gate
+    /// stands down on purpose ("a root manifest speaks for the whole bucket"); the CLI still skips
+    /// such an app at <c>BuildAppGroups</c>, so a root declaring the floor is skipped there too, and
+    /// the server must report the same test set. Same identity requirement as <c>BuildAppGroups</c>:
+    /// an app.json with no readable identity is no app of its own and is never gated. Each skip is
+    /// returned, never dropped silently: the caller reports it. Per request, with no per-process
+    /// ledger, because a server request has no other record of what it left out.
+    /// </summary>
+    internal static string[] DropAppsBelowBcFloor(string[] sourcePaths, out List<string> skipped)
+    {
+        skipped = new List<string>();
+        var kept = new List<string>(sourcePaths.Length);
+        foreach (var path in sourcePaths)
+        {
+            var appJson = Path.Combine(path, "app.json");
+            if (File.Exists(appJson)
+                && AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJson) is { } id
+                && AlRunner.BcFloorGate.DeclaresNewerBcThanRunning(appJson, out var floor) && floor != null)
+            {
+                skipped.Add(AlRunner.BcFloorGate.SkipLine(id.Name, floor));
+                continue;
+            }
+            kept.Add(path);
+        }
+        return kept.ToArray();
+    }
+
     // Containers a --server request split (ExpandAppContainerRoots) -> the identified suites that
     // are served as their own bundles. Only the server's expansion fills it; the CLI never does.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, HashSet<string>> _fallbackContainers

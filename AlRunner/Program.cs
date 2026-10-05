@@ -8020,7 +8020,9 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
     // #5034: the emit reads the mode from BcCompiler, so it is this request's, and only for it.
     // #5107: before anything keys on a bundle path, so selection state, module names and the
     // runs all name the per-app paths RunAllBundlesForServer compiles.
-    sourcePaths = ExpandAppContainerRoots(sourcePaths);
+    // #5137: an app declaring a BC floor above the running BC is skipped here as the CLI skips it.
+    sourcePaths = DropAppsBelowBcFloor(ExpandAppContainerRoots(sourcePaths), out var bcFloorSkips);
+    foreach (var skip in bcFloorSkips) Console.WriteLine("  " + skip);
     var tddRequest = tdd ? new TddServerRequest(onTestComplete) : null;
     var previousTddMode = BcCompiler.IsTddMode();
     BcCompiler.SetTddMode(tdd);
@@ -8790,7 +8792,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
 
         return new AlRunner.Infrastructure.AffectedRunOutcome(runs, allTests, allCompileErrors, exitCode, cached, cancelled,
             statementTable, perTestStatementTable, scanFailures, requestSelection,
-            requestDiscoveredTestsByBundle, requestSelectedTestsByBundle);
+            requestDiscoveredTestsByBundle, requestSelectedTestsByBundle, bcFloorSkips);
     }
     finally
     {
@@ -9145,6 +9147,9 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 warnings = (fieldWarnings ?? Array.Empty<string>()).Append(note).ToList();
                 if (!notJudged) exitCode = AlRunner.Infrastructure.TestSelectionAudit.ExitCode;
             }
+            // #5137: what the request left out for declaring a newer BC than the running one, as the CLI prints it.
+            if (outcome.BcFloorSkips is { Count: > 0 })
+                warnings = (warnings ?? Array.Empty<string>()).Concat(outcome.BcFloorSkips).ToList();
 
             var combinedHashes = new Dictionary<string, string>();
             foreach (var r in runs)
