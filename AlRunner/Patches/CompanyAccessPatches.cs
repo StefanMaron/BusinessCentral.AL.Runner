@@ -113,12 +113,14 @@ public static class CompanyAccessPatches
     /// </summary>
     private static HashSet<string>? AllCompanyNames(object session)
     {
-        _mGetAllCompanies ??= session.GetType().Assembly
-            .GetType("Microsoft.Dynamics.Nav.Runtime.CompanyHelper")
-            ?.GetMethod("GetAllCompaniesAsync", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
-            ?? throw new InvalidOperationException(
-                "CompanyHelper.GetAllCompaniesAsync not found — BC shape changed; the runner cannot "
-                + "tell which companies exist (#5071).");
+        _mGetAllCompanies ??= AlRunner.Infrastructure.BcShape.RequiredMethod(
+            session.GetType().Assembly.GetType("Microsoft.Dynamics.Nav.Runtime.CompanyHelper")
+                ?? throw new InvalidOperationException(
+                    "CompanyHelper not found — BC shape changed; the runner cannot tell which companies exist (#5071)."),
+            "GetAllCompaniesAsync", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
+            "Company rename cascade", "CompanyHelper.GetAllCompaniesAsync(NavSession, bool)",
+            "the rename cascade could not tell which companies exist",
+            new[] { typeof(Microsoft.Dynamics.Nav.Runtime.NavSession), typeof(bool) });
         var pending = (System.Threading.Tasks.ValueTask<HashSet<string>>)
             _mGetAllCompanies.Invoke(null, new object[] { session, false })!;
         return pending.AsTask().GetAwaiter().GetResult();
