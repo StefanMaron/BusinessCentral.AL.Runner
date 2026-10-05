@@ -234,14 +234,14 @@ public static partial class BcRuntime
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(tie.InnerException);
             return default;
         }
-        catch when (guarded)
+        catch (Exception ex) when (guarded && GuardedRunSuppresses(ex))
         {
             // BC's DoRunAsync `errorLevel != DataError.ThrowError` branch wraps OnRun in
             // `catch (NavBaseException) { /* suppressed */ }` — the guarded (Boolean-result-
             // consumed) form of `Codeunit.Run` traps its inner error and returns false,
-            // exactly like the static form's `catch when (trap)` in NavCodeunit_RunCodeunit
-            // below. Before this, only the static spelling trapped; the instance spelling
-            // (`SomeCodeunitVar.Run(Rec)`) rethrew at the AL caller instead. See AlRunner#2334.
+            // exactly like the static form's catch in NavCodeunit_RunCodeunit below. Before
+            // #2334 only the static spelling trapped. What is suppressed is decided in ONE
+            // place for both spellings: GuardedRunSuppresses (#5342).
             return new System.Threading.Tasks.ValueTask<bool>(false);
         }
         finally
@@ -278,11 +278,11 @@ public static partial class BcRuntime
         // BC's RunCodeunit takes `handle.Target` BEFORE RunAsync, so a codeunit that cannot be resolved
         // raises even when the Boolean result is consumed: the guarded form never traps it (measured:
         // corpus PR 542, `Ok := Codeunit.Run(<missing id>)` raises the "object does not exist" error
-        // on the service tier). Before #5339 the resolution sat inside the `catch when (trap)` below,
+        // on the service tier). Before #5339 the resolution sat inside the guarded catch below,
         // so a guarded run of a codeunit the runner could not load returned false silently.
         var target = NavCodeunitHandle_CreateTarget(CreateCodeunitHandle(objectId));
 
-        // Deliberately OUTSIDE the `catch when (trap)` below, exactly as BC places
+        // Deliberately OUTSIDE the guarded catch below, exactly as BC places
         // BeginTransactionWorldAndTransaction outside the try whose catch suppresses the
         // codeunit's own errors: a refusal must reach the AL caller as an error, never be
         // converted into a `false` return. See ALDatabasePatches.ThrowIfWriteTransactionStarted.
@@ -304,9 +304,9 @@ public static partial class BcRuntime
             ran = true;
             return true;
         }
-        catch when (trap)
+        catch (Exception ex) when (trap && GuardedRunSuppresses(ex))
         {
-            // TrapError contract for Codeunit.Run(...): swallow and return false.
+            // TrapError contract for Codeunit.Run(...): swallow what BC swallows and return false.
             return false;
         }
         finally
@@ -314,6 +314,32 @@ public static partial class BcRuntime
             ALDatabasePatches.ExitRunTransaction();
             if (guarded) ALDatabasePatches.EndGuardedRunTransaction(ran);
         }
+    }
+
+    /// <summary>
+    /// What a guarded <c>Codeunit.Run</c> (the Boolean result is consumed) turns into
+    /// <c>false</c>: an AL runtime error, and nothing else.
+    ///
+    /// <para>Claim: BC's <c>NavCodeunit.DoRunAsync</c>, which both spellings of the call reach
+    /// (<c>RunCodeunit</c> goes through <c>handle.Target.RunAsync</c>), wraps <c>OnRun</c> in
+    /// <c>catch (NavBaseException)</c> on the guarded branch and has no other clause, so any other
+    /// exception reaches the caller. Citation: decompiled on Ncl 28.4.53241.54346 (6f2cf682…);
+    /// 27.5.46862.53931 (affa03c9…) has the identical body (#5342).</para>
+    ///
+    /// <para>The runner's own refusals (<see cref="AlRunner.Infrastructure.RunnerOutOfScopeException"/>,
+    /// the <c>out-of-scope: </c> message convention, <see cref="AlRunner.Infrastructure.BcShapeGapException"/>,
+    /// <see cref="AlRunner.Infrastructure.BcAppSymbolReadException"/>) are never BC errors, so they are
+    /// answered first and escape even when BC's own code wrapped one in a NavBaseException:
+    /// turning one into <c>false</c> hid #5149's refusal as a missing UI handler. A runner
+    /// <c>NullReferenceException</c> and every other CLR exception escape for the same reason BC's do.
+    /// Trap: asserterror, not this method, is where a refusal is deliberately catchable (#2871).</para>
+    /// </summary>
+    internal static bool GuardedRunSuppresses(Exception ex)
+    {
+        if (AlRunner.Infrastructure.BcShapeGapException.Find(ex) != null) return false;
+        if (AlRunner.Infrastructure.BcAppSymbolReadException.Find(ex) != null) return false;
+        if (AlRunner.Infrastructure.OutOfScopeMessage.FromException(ex) != null) return false;
+        return ex is Microsoft.Dynamics.Nav.Types.Exceptions.NavBaseException;
     }
 
     /// <summary>
