@@ -21,6 +21,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **testpage:** a Provider-linked part follows its Provider and reads blank when no row matches
 - **records:** Rename refreshes SystemModifiedAt/SystemModifiedBy
 - **company:** Company.Rename of a company the test inserted opens its cascade and advances the permission setup version
 - **deps:** a dependency below its minimum version ends the run with exit 2
