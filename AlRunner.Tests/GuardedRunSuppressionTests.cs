@@ -107,4 +107,23 @@ public sealed class GuardedRunSuppressionTests
         Assert.False(BcRuntime.GuardedRunSuppresses(read));
         Assert.False(BcRuntime.GuardedRunSuppresses(new NavALException("an AL error", read)));
     }
+
+    // ── The same classification, as StartSession's TrapError catch asks it (#5342) ──
+
+    [Fact]
+    public void IsRunnerRefusal_SeesARefusalBehindTheReflectionWrapper()
+    {
+        // trigger.Invoke wraps whatever the worker raises in a TargetInvocationException.
+        var wrapped = new TargetInvocationException(
+            new RunnerOutOfScopeException("TaskScheduler.TaskExists", "task-scheduler", "jobs"));
+
+        Assert.True(BcRuntime.IsRunnerRefusal(wrapped));
+    }
+
+    [Fact]
+    public void IsRunnerRefusal_IsNotTrueOfAnOrdinaryWorkerError()
+    {
+        Assert.False(BcRuntime.IsRunnerRefusal(new TargetInvocationException(new NavALException("an AL error"))));
+        Assert.False(BcRuntime.IsRunnerRefusal(new NullReferenceException("probe")));
+    }
 }

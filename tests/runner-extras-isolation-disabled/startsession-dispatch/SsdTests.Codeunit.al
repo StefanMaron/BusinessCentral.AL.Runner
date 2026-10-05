@@ -106,4 +106,22 @@ codeunit 61104 "Ssd StartSession Tests"
         Assert.Contains(GetLastErrorText(), '1999999',
             'A StartSession naming an object id with no codeunit behind it must fail and name that id.');
     end;
+
+    // #5342 — the worker's own error is invisible to BC's caller, but a RUNNER REFUSAL is not an
+    // error of the worker's at all: the surface the worker touched does not exist here. The
+    // consumed-Boolean form (`Started := StartSession(...)`) swallowed every worker exception into
+    // false, refusals included, so the refusal disappeared and surfaced somewhere unrelated.
+    // The asserterror is the proof it escaped: the runner's asserterror catches a refusal on
+    // purpose (#2871), and with the worker's refusal swallowed it fails instead ("expected an error").
+    [Test]
+    procedure StartSession_WorkerHitsARunnerRefusal_TheConsumedFormDoesNotSwallowIt()
+    var
+        SessionId: Integer;
+        Started: Boolean;
+    begin
+        asserterror Started := StartSession(SessionId, Codeunit::"Ssd Refusing Worker");
+
+        Assert.Contains(GetLastErrorText(), 'out-of-scope: TaskScheduler.TaskExists',
+            'a refusal raised inside the worker must reach the caller by name, not read as false.');
+    end;
 }

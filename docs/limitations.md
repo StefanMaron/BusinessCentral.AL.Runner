@@ -1816,6 +1816,31 @@ naming the gap for a table. Codeunit ids in the system (1-9999) and test-toolkit
 ranges keep the older contract of running as a silent no-op when missing, which is not BC's
 behaviour and is not changed here.
 
+### A guarded `Codeunit.Run` and runner refusals
+
+`Ok := Codeunit.Run(...)` (the Boolean consumed, in either spelling: the static call or a codeunit
+variable's own `Run()`) returns `false` for an AL runtime error, with the inner error readable
+through `GetLastErrorText()`. BC's `NavCodeunit.DoRunAsync` does that with a `catch (NavBaseException)`
+on its guarded branch and no other clause (decompiled: Ncl 28.4.53241.54346, `6f2cf682`; the body is
+identical on 27.5.46862.53931, `affa03c9`), so every other exception reaches the caller. The runner
+now draws the same line (`BcRuntime.GuardedRunSuppresses`, #5342): a runner refusal (out-of-scope,
+a BC shape gap, a corrupt dependency package), including one BC's own code wrapped in an AL error,
+and a raw CLR exception escape the guarded run. Before, both replacements caught everything, so a
+refusal became `ok=No lastError=[]` and resurfaced somewhere unrelated (#5149).
+
+Two consequences. `asserterror` around a guarded run still catches a refusal, by the pinned
+contract of #2871, so a test can assert the refusal by name. And an AL `[TryFunction]` keeps its
+own, different rule: it traps a *permanent* out-of-scope refusal into `false`
+(`NavApplicationObjectBase_TryInvoke`), a guarded run does not.
+
+`StartSession` with the Boolean consumed (TrapError) swallowed a worker's exception the same way,
+and lets a runner refusal out now. Any other worker exception still returns `false`: BC's own
+`StartSession` never shows the caller a worker's error, so no BC catch decides that case.
+
+Pinned by `tests/runner-extras/guarded-codeunit-run-refusal`,
+`tests/runner-extras-isolation-disabled/startsession-dispatch` and
+`AlRunner.Tests/GuardedRunSuppressionTests.cs`; the BC half is corpus codeunit 60217.
+
 ### The `!` sweep — 73 more member lookups that used to fail as a silent null
 
 [#3051](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3051) closed the other

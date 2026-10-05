@@ -335,12 +335,21 @@ public static partial class BcRuntime
     /// Trap: asserterror, not this method, is where a refusal is deliberately catchable (#2871).</para>
     /// </summary>
     internal static bool GuardedRunSuppresses(Exception ex)
-    {
-        if (AlRunner.Infrastructure.BcShapeGapException.Find(ex) != null) return false;
-        if (AlRunner.Infrastructure.BcAppSymbolReadException.Find(ex) != null) return false;
-        if (AlRunner.Infrastructure.OutOfScopeMessage.FromException(ex) != null) return false;
-        return ex is Microsoft.Dynamics.Nav.Types.Exceptions.NavBaseException;
-    }
+        => !IsRunnerRefusal(ex)
+           && ex is Microsoft.Dynamics.Nav.Types.Exceptions.NavBaseException;
+
+    /// <summary>
+    /// True when <paramref name="ex"/> is, or carries on its inner chain, a refusal the RUNNER raised —
+    /// an out-of-scope signal (typed, or the <c>out-of-scope: </c> message convention), a BC shape gap
+    /// or a corrupt dependency package. BC has no such exception, so no AL error-trapping seam that
+    /// copies a BC catch may turn one into <c>false</c>; the chain walk is what catches one wrapped by
+    /// <c>MethodBase.Invoke</c> or by BC's own remap. Shared by <see cref="GuardedRunSuppresses"/> and
+    /// <c>AlRunnerStartSession</c>'s TrapError catch.
+    /// </summary>
+    internal static bool IsRunnerRefusal(Exception ex)
+        => AlRunner.Infrastructure.BcShapeGapException.Find(ex) != null
+           || AlRunner.Infrastructure.BcAppSymbolReadException.Find(ex) != null
+           || AlRunner.Infrastructure.OutOfScopeMessage.FromException(ex) != null;
 
     /// <summary>
     /// The target of <paramref name="objectId"/> when it is a <c>Subtype = Test</c> codeunit,

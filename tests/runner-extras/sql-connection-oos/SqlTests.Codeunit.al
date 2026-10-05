@@ -7,9 +7,10 @@
 // and raising an [ExternalBusinessEvent] (#5149, external-business-event) — and this suite pins
 // the net underneath them: any OTHER path now refuses by name too.
 //
-// Not tested here: a GUARDED Codeunit.Run (`if not Codeunit.Run(...) then`). The runner's
-// Codeunit.Run catches every exception into `false` with an empty GetLastErrorText(), refusals
-// included, whatever surface raised them; that is not specific to SQL and is tracked as #5342.
+// Not tested here: a GUARDED Codeunit.Run (`if not Codeunit.Run(...) then`). It used to catch every
+// exception into `false` with an empty GetLastErrorText(), refusals included, whatever surface raised
+// them; that was not specific to SQL (#5342) and is pinned, SQL flavour included, by
+// tests/runner-extras/guarded-codeunit-run-refusal.
 //
 // Database.AlterKey is the statement that drives it. The TryFunction test and the control at the
 // bottom matter as much as the refusal: the backstop must not turn into a quiet `false`, and a surface

@@ -718,15 +718,23 @@ public static partial class BcRuntime
             }
             return true;
         }
-        catch (TargetInvocationException tie) when (trap)
+        catch (Exception ex) when (trap && !IsRunnerRefusal(ex))
         {
-            // TrapError semantics: swallow + return false.
-            _ = tie;
+            // TrapError semantics: swallow + return false — EXCEPT a runner refusal (#5342). It is not
+            // an error of the worker's, it says the surface the worker touched does not exist in this
+            // runner, and `false` would hide it. IsRunnerRefusal walks the inner chain, so one wrapped
+            // by the reflective trigger.Invoke is recognised too. Other worker exceptions keep
+            // returning false, as before; BC's own StartSession never shows the caller a worker's
+            // error at all, so no BC catch decides that case.
             return false;
         }
-        catch when (trap)
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
-            return false;
+            // Not swallowed above, so it is the caller's: surface the worker's own exception, never
+            // the reflection wrapper's "Exception has been thrown by the target of an invocation."
+            // (which is all asserterror and GetLastErrorText would read otherwise).
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(tie.InnerException);
+            throw;
         }
     }
 }
