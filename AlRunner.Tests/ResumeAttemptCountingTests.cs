@@ -266,4 +266,73 @@ public sealed class ResumeAttemptCountingTests : IDisposable
         Assert.Equal(1, ParallelFanOut.ExtraSightings(new[] { resumed, alsoResumed }, new[] { 0, 1 }, header, new[] { true, true }));
         Assert.Equal(1, ParallelFanOut.CountAcrossAttempts(resumed, header, resumed: true));
     }
+
+    // ── #5333: a worker that stopped before it reported prints no header, so the bundles it held are counted ──
+
+    private static IReadOnlyList<IReadOnlyList<string>> Shards(params string[][] shards) => shards;
+    private static string[] Out(params string[] perShard) => perShard;
+    private static readonly bool[] NoneResumed = { false, false, false };
+
+    [Fact]
+    public void CountWorkersThatLeftNothing_ABundleOnALostWorker_IsOneNotRun()
+    {
+        var shards = Shards(new[] { "/b/ghost" }, new[] { "/b/clean" });
+
+        Assert.Equal((1, 0), ParallelFanOut.CountWorkersThatLeftNothing(shards, new[] { false, true }, Out("", "=== clean ===\n"), NoneResumed));
+    }
+
+    /// <summary>The whole worker stopped, so every bundle it was handed is missing, not only the one that caused it.</summary>
+    [Fact]
+    public void CountWorkersThatLeftNothing_EveryBundleTheLostWorkerHeld_IsNotRun()
+    {
+        var shards = Shards(new[] { "/b/one", "/b/two" }, new[] { "/b/three" });
+
+        Assert.Equal((2, 0), ParallelFanOut.CountWorkersThatLeftNothing(shards, new[] { false, true }, Out("", ""), NoneResumed));
+    }
+
+    [Fact]
+    public void CountWorkersThatLeftNothing_WhenEveryWorkerReported_AddsNothing()
+    {
+        var shards = Shards(new[] { "/b/one" }, new[] { "/b/two" });
+
+        Assert.Equal((0, 0), ParallelFanOut.CountWorkersThatLeftNothing(shards, new[] { true, true }, Out("", ""), NoneResumed));
+    }
+
+    /// <summary>A bundle two workers share, both lost: one bundle, not two.</summary>
+    [Fact]
+    public void CountWorkersThatLeftNothing_ASharedBundleEveryHolderLost_IsOneNotRun()
+    {
+        var shards = Shards(new[] { "/b/shared" }, new[] { "/b/shared" });
+
+        Assert.Equal((1, 0), ParallelFanOut.CountWorkersThatLeftNothing(shards, new[] { false, false }, Out("", ""), NoneResumed));
+    }
+
+    /// <summary>One holder lost and the other ran its share: the bundle's other tests are in the totals, so it is partial, once.</summary>
+    [Fact]
+    public void CountWorkersThatLeftNothing_ASharedBundleOneHolderLost_IsOnePartial()
+    {
+        var shards = Shards(new[] { "/b/shared" }, new[] { "/b/shared" }, new[] { "/b/shared" });
+
+        Assert.Equal((0, 1), ParallelFanOut.CountWorkersThatLeftNothing(shards, new[] { false, false, true }, Out("", "", "=== shared ===\n"), NoneResumed));
+    }
+
+    /// <summary>The holder that reported already printed the bundle's COMPILE FAIL header, which counted it: not counted twice.</summary>
+    [Fact]
+    public void CountWorkersThatLeftNothing_ASharedBundleAlreadyReportedNotRunByAHolder_AddsNothing()
+    {
+        var shards = Shards(new[] { "/b/shared" }, new[] { "/b/shared" });
+
+        Assert.Equal((0, 0), ParallelFanOut.CountWorkersThatLeftNothing(shards, new[] { false, true },
+            Out("", "=== shared — COMPILE FAIL ===\n"), NoneResumed));
+    }
+
+    /// <summary>The same for a SUITE ERRORS header: the holder's own count of the bundle as partial stands, once.</summary>
+    [Fact]
+    public void CountWorkersThatLeftNothing_ASharedBundleAlreadyReportedPartialByAHolder_AddsNothing()
+    {
+        var shards = Shards(new[] { "/b/shared" }, new[] { "/b/shared" });
+
+        Assert.Equal((0, 0), ParallelFanOut.CountWorkersThatLeftNothing(shards, new[] { false, true },
+            Out("", "=== shared — SUITE ERRORS (2) ===\n"), NoneResumed));
+    }
 }

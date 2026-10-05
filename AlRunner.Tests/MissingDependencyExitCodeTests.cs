@@ -5,6 +5,9 @@
 // --per-suite share it) answered 1, so a caller reading only the exit code could not tell a provisioning
 // gap from a failing test, and a --server request answered 3 ("compile") with the one-line message.
 //
+// #5333: the same condition under --jobs also has to reach the aggregate's NOT RUN line, which a worker
+// that stopped before it printed any COMPILE FAIL / EXEC FAIL header used to leave out.
+//
 // Runner-only claim: which exit code the runner's own CLI and protocol carry for a resolution failure.
 // Every test spawns the real runner. The pre-pass and --precompile answers are pinned where they were
 // written (SiblingSourceDepProvisioningReportingTests, LayeredPrePassProvisioningReportingTests,
@@ -88,25 +91,146 @@ public sealed class MissingDependencyExitCodeTests : IClassFixture<SharedCliServ
 
     /// <summary>
     /// --jobs: the worker that hits the gap exits 2, the other runs its test, and the aggregate takes the
-    /// worst code. Before the fix the aggregate read 1, "at least one test failed", with 0 failures counted.
+    /// worst code. Before #5315 the aggregate read 1, "at least one test failed", with 0 failures counted.
+    /// The cold and the warm run share one --cache root, and the aggregate's NOT RUN line (#5333) is the
+    /// same on both: the worker printed the gap report and no per-bundle header, so the line read the
+    /// header and counted nothing.
     /// </summary>
     [SkippableFact]
-    public void Jobs_OneWorkerHitsTheMissingDependency_AggregateExitsTwo()
+    public void Jobs_OneWorkerHitsTheMissingDependency_AggregateExitsTwoAndCountsItNotRun_ColdAndWarm()
     {
         TestArtifacts.SkipIfMissing();
         var broken = Arrange("jobs-broken", withGhostPackage: false, PassingTest);
         var clean = Arrange("jobs-clean", withGhostPackage: false, PassingTest, declareGhost: false, appId: "71000000-0000-4000-8000-0000000000c1");
 
-        var run = Run(broken, broken.Suite, clean.Suite, "--jobs", "2");
+        foreach (var attempt in new[] { "cold", "warm" })
+        {
+            var run = Run(broken, broken.Suite, clean.Suite, "--jobs", "2");
+
+            Assert.True(run.ExitCode == 2, $"{attempt}: exit {run.ExitCode}\n{run.Output}");
+            Assert.Contains(GapHeadline, run.Output);
+            Assert.Contains(GapNamesGhost, run.Output);
+            // One worker per bundle: the gap is that worker's exit, the clean one's is 0, and the survivor's test is counted.
+            Assert.Single(Regex.Matches(run.Output, @"shard \d+ \(exit 2\)"));
+            Assert.Single(Regex.Matches(run.Output, @"shard \d+ \(exit 0\)"));
+            Assert.Matches(@"Tests:\s+1\s+passed\s+1\s+failed\s+0\s+errors\s+0", run.Output);
+            Assert.Contains("exit code 2", Regex.Match(run.Output, @"^Result: .*$", RegexOptions.Multiline).Value);
+            AssertNotRun(run.Output, 1, attempt);
+            AssertNoPartial(run.Output);
+            // The note names the bundle that was lost, from the one worker that never reported.
+            Assert.Single(Regex.Matches(run.Output, @"^jobs: shard \d+ ended \(exit 2\) without writing its test results", RegexOptions.Multiline));
+            Assert.Matches(@"MISSING from the totals: .*jobs-broken", run.Output);
+        }
+    }
+
+    /// <summary>
+    /// The same run with every report named: the lost worker is already an ExecuteFailed bucket in --out and
+    /// --output-json (#5338), and the aggregate counts it once, not once per route. The NOT RUN line is
+    /// read off the aggregate block only: the report-lost-worker note and the new one are different lines.
+    /// </summary>
+    [SkippableFact]
+    public void Jobs_WithEveryReportNamed_TheLostWorkerIsCountedOnceNotRun()
+    {
+        TestArtifacts.SkipIfMissing();
+        var broken = Arrange("jobs-rep-broken", withGhostPackage: false, PassingTest);
+        var clean = Arrange("jobs-rep-clean", withGhostPackage: false, PassingTest, declareGhost: false, appId: "71000000-0000-4000-8000-0000000000c2");
+        var reports = Path.Combine(_scratch, "jobs-rep-out");
+        Directory.CreateDirectory(reports);
+
+        var run = Run(broken, broken.Suite, clean.Suite, "--jobs", "2", "--out", Path.Combine(reports, "out.json"),
+            "--output-json", "--output-junit", Path.Combine(reports, "out.xml"));
 
         Assert.True(run.ExitCode == 2, $"exit {run.ExitCode}\n{run.Output}");
-        Assert.Contains(GapHeadline, run.Output);
+        Assert.Contains("without handing back its results", run.Output);   // the report route fired as well
+        AssertNotRun(run.Output, 1, "reports");
+        AssertNoPartial(run.Output);
+    }
+
+    /// <summary>
+    /// A gap bundle several workers share: each worker stops on it, and it is one NOT RUN bundle. Both
+    /// workers are lost, so the shared-bundle correction applies to workers that printed nothing.
+    /// </summary>
+    [SkippableFact]
+    public void Jobs_AGhostBundleSharedByTwoWorkers_IsOneNotRunBundle()
+    {
+        TestArtifacts.SkipIfMissing();
+        var shared = Arrange("jobs-shared", withGhostPackage: false, PassingTest);
+        File.WriteAllText(Path.Combine(shared.Suite, "Probe2.Codeunit.al"), SecondCodeunit(PassingTest));
+
+        var run = Run(shared, shared.Suite, new Dictionary<string, string> { ["AL_RUNNER_JOBS_SPLIT_MIN_FILES"] = "1" },
+            "--jobs", "2");
+
+        Assert.True(run.ExitCode == 2, $"exit {run.ExitCode}\n{run.Output}");
+        Assert.Contains("is shared by 2 worker(s)", run.Output);   // the premise: two workers hold the one bundle
+        Assert.Equal(2, Regex.Matches(run.Output, @"shard \d+ \(exit 2\)").Count);
+        Assert.Equal(2, Regex.Matches(run.Output, GapHeadline).Count);
+        AssertNotRun(run.Output, 1, "shared");
+        AssertNoPartial(run.Output);
+    }
+
+    /// <summary>The edge: every worker stops on the gap. Nothing ran, every bundle is NOT RUN, exit 2.</summary>
+    [SkippableFact]
+    public void Jobs_EveryWorkerHitsTheGap_EveryBundleIsNotRun()
+    {
+        TestArtifacts.SkipIfMissing();
+        var first = Arrange("jobs-all-1", withGhostPackage: false, PassingTest, appId: "71000000-0000-4000-8000-0000000000e1");
+        var second = Arrange("jobs-all-2", withGhostPackage: false, PassingTest, appId: "71000000-0000-4000-8000-0000000000e2");
+
+        var run = Run(first, first.Suite, second.Suite, "--jobs", "2");
+
+        Assert.True(run.ExitCode == 2, $"exit {run.ExitCode}\n{run.Output}");
+        Assert.Equal(2, Regex.Matches(run.Output, @"shard \d+ \(exit 2\)").Count);
+        Assert.Matches(@"Tests:\s+0\s+passed\s+0\s+failed\s+0\s+errors\s+0\s+skipped\s+0", run.Output);
+        AssertNotRun(run.Output, 2, "every worker");
+    }
+
+    /// <summary>--tdd and --per-suite resolve in their own blocks; a worker running either stops on the gap
+    /// the same way and the aggregate counts it the same way.</summary>
+    [SkippableTheory]
+    [InlineData("--tdd")]
+    [InlineData("--per-suite")]
+    public void Jobs_TheGapUnderAnotherMode_IsCountedNotRun(string mode)
+    {
+        TestArtifacts.SkipIfMissing();
+        var name = "jobs" + mode.Replace("--", "-");
+        var broken = Arrange(name + "-broken", withGhostPackage: false, PassingTest);
+        var clean = Arrange(name + "-clean", withGhostPackage: false, PassingTest, declareGhost: false,
+            appId: mode == "--tdd" ? "71000000-0000-4000-8000-0000000000c3" : "71000000-0000-4000-8000-0000000000c4");
+
+        var run = Run(broken, broken.Suite, clean.Suite, "--jobs", "2", mode);
+
+        Assert.True(run.ExitCode == 2, $"{mode}: exit {run.ExitCode}\n{run.Output}");
         Assert.Contains(GapNamesGhost, run.Output);
-        // One worker per bundle: the gap is that worker's exit, the clean one's is 0, and the survivor's test is counted.
-        Assert.Single(Regex.Matches(run.Output, @"shard \d+ \(exit 2\)"));
-        Assert.Single(Regex.Matches(run.Output, @"shard \d+ \(exit 0\)"));
         Assert.Matches(@"Tests:\s+1\s+passed\s+1\s+failed\s+0\s+errors\s+0", run.Output);
-        Assert.Contains("exit code 2", Regex.Match(run.Output, @"^Result: .*$", RegexOptions.Multiline).Value);
+        AssertNotRun(run.Output, 1, mode);
+    }
+
+    /// <summary>
+    /// Control: a worker that exits for another reason and DID report keeps the line it had. A bundle that
+    /// does not compile prints its COMPILE FAIL header and writes its JUnit file, so it is one NOT RUN
+    /// bundle by the header and is not also counted as a worker that left nothing.
+    /// </summary>
+    [SkippableFact]
+    public void Jobs_ACompileFailingBundle_IsCountedOnceAndIsNotAWorkerThatLeftNothing()
+    {
+        TestArtifacts.SkipIfMissing();
+        var broken = Arrange("jobs-cf-broken", withGhostPackage: false, PassingTest, declareGhost: false,
+            appId: "71000000-0000-4000-8000-0000000000f1");
+        File.WriteAllText(Path.Combine(broken.Suite, "Probe.Codeunit.al"), Codeunit("""
+            procedure Passes()
+            begin
+                NoSuchProcedure();
+            end;
+            """));
+        var clean = Arrange("jobs-cf-clean", withGhostPackage: false, PassingTest, declareGhost: false, appId: "71000000-0000-4000-8000-0000000000f2");
+
+        var run = Run(clean, broken.Suite, clean.Suite, "--jobs", "2");
+
+        Assert.True(run.ExitCode == 3, $"exit {run.ExitCode}\n{run.Output}");
+        Assert.DoesNotContain(GapHeadline, run.Output);
+        Assert.DoesNotContain("without writing its test results", run.Output);
+        AssertNotRun(run.Output, 1, "compile fail");
+        Assert.Matches(@"Tests:\s+1\s+passed\s+1\s+failed\s+0\s+errors\s+0", run.Output);
     }
 
     // ── controls: the neighbouring exit codes did not move ────────────────────────────────
@@ -174,6 +298,16 @@ public sealed class MissingDependencyExitCodeTests : IClassFixture<SharedCliServ
 
     private static string Codeunit(string testBody) => $$"""
         codeunit 71301 "Mde Probe"
+        {
+            Subtype = Test;
+
+            [Test]
+            {{testBody}}
+        }
+        """;
+
+    private static string SecondCodeunit(string testBody) => $$"""
+        codeunit 71302 "Mde Probe Two"
         {
             Subtype = Test;
 
@@ -250,6 +384,18 @@ public sealed class MissingDependencyExitCodeTests : IClassFixture<SharedCliServ
         Assert.DoesNotMatch(@"Tests:\s+\d", run.Output);
     }
 
+    /// <summary>The aggregate block's NOT RUN line, which a --jobs caller reads: exactly one, with the count.</summary>
+    private static void AssertNotRun(string output, int bundles, string run)
+    {
+        var aggregate = output[output.LastIndexOf("aggregate across", StringComparison.Ordinal)..];
+        var lines = Regex.Matches(aggregate, @"^  NOT RUN: +(\d+) bundle\(s\).*$", RegexOptions.Multiline);
+        Assert.True(lines.Count == 1 && lines[0].Groups[1].Value == bundles.ToString(),
+            $"{run}: expected one NOT RUN line counting {bundles}, found {lines.Count} ({string.Join(" | ", lines.Select(l => l.Value))})\n{output}");
+    }
+
+    private static void AssertNoPartial(string output)
+        => Assert.DoesNotContain("  PARTIAL: ", output[output.LastIndexOf("aggregate across", StringComparison.Ordinal)..]);
+
     private static string Request(string suite)
         => JsonSerializer.Serialize(new { command = "runTests", sourcePaths = new[] { suite } });
 
@@ -262,6 +408,11 @@ public sealed class MissingDependencyExitCodeTests : IClassFixture<SharedCliServ
 
     /// <summary>One runner child over <paramref name="bundles"/>, with the fixture's own package cache and --cache root.</summary>
     private static (int ExitCode, string Output) Run(Fixture fx, string bundle, params string[] more)
+        => Run(fx, bundle, null, more);
+
+    /// <summary><paramref name="env"/> goes to the child's own environment only (never this process's).</summary>
+    private static (int ExitCode, string Output) Run(Fixture fx, string bundle,
+        IReadOnlyDictionary<string, string>? env, params string[] more)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath))
             .Append(TestBuildConfig.BcVersionArg)
@@ -275,6 +426,9 @@ public sealed class MissingDependencyExitCodeTests : IClassFixture<SharedCliServ
             RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
         };
+        // The plan sizes a shared bundle from the free memory it reads: pin it, as JobsUnitClaimEndToEndTests does.
+        psi.Environment[AlRunner.Infrastructure.JobsMemory.FreeMemoryEnvVar] = "1000000";
+        foreach (var kv in env ?? new Dictionary<string, string>()) psi.Environment[kv.Key] = kv.Value;
         var sb = new StringBuilder();
         using var p = Process.Start(psi)!;
         p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
