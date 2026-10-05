@@ -1,0 +1,18 @@
+{
+  "id": "e898e838-50fb-48ac-a68e-6c4dd070c8be",
+  "name": "Runner Extras - Guarded Codeunit.Run Refusal",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #5342: a guarded Codeunit.Run (`Ok := Codeunit.Run(...)`, static or on a codeunit variable) swallowed every exception into false, runner refusals and raw CLR exceptions included, and left GetLastErrorText() empty. BC's NavCodeunit.DoRunAsync catches only a NavBaseException there. The runner now draws that line, with the one exception an AL [TryFunction] already has: a PERMANENTLY out-of-scope refusal is trapped into false (loudly on stderr, no last error), while a not-yet-implemented refusal escapes the guarded run by name. An AL error, a BC-raised error and a CLR exception BC remaps to an AL error still come back as false with their text.",
+  "description": "Runner-specific by construction: which exceptions a runner refusal is, and that it must not turn into a quiet false. The plain-BC half (a guarded run returns false and GetLastErrorText carries the inner error, both forms) is BC behaviour and lives upstream in the al-language corpus as codeunit 60217 'Test Codeunit Run Guard', which a service tier adjudicates. The controls here pin that the runner keeps that half while the refusal escapes. target=OnPrem because Database.AlterKey is OnPrem-only.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65740,
+      "to": 65749
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}

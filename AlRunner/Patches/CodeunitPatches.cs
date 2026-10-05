@@ -234,14 +234,15 @@ public static partial class BcRuntime
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(tie.InnerException);
             return default;
         }
-        catch when (guarded)
+        catch (Exception ex) when (guarded && GuardedRunSuppresses(ex))
         {
+            ReportTrappedPermanentRefusal(ex, "a guarded Codeunit.Run");
             // BC's DoRunAsync `errorLevel != DataError.ThrowError` branch wraps OnRun in
             // `catch (NavBaseException) { /* suppressed */ }` — the guarded (Boolean-result-
             // consumed) form of `Codeunit.Run` traps its inner error and returns false,
-            // exactly like the static form's `catch when (trap)` in NavCodeunit_RunCodeunit
-            // below. Before this, only the static spelling trapped; the instance spelling
-            // (`SomeCodeunitVar.Run(Rec)`) rethrew at the AL caller instead. See AlRunner#2334.
+            // exactly like the static form's catch in NavCodeunit_RunCodeunit below. Before
+            // #2334 only the static spelling trapped. What is suppressed is decided in ONE
+            // place for both spellings: GuardedRunSuppresses (#5342).
             return new System.Threading.Tasks.ValueTask<bool>(false);
         }
         finally
@@ -278,11 +279,11 @@ public static partial class BcRuntime
         // BC's RunCodeunit takes `handle.Target` BEFORE RunAsync, so a codeunit that cannot be resolved
         // raises even when the Boolean result is consumed: the guarded form never traps it (measured:
         // corpus PR 542, `Ok := Codeunit.Run(<missing id>)` raises the "object does not exist" error
-        // on the service tier). Before #5339 the resolution sat inside the `catch when (trap)` below,
+        // on the service tier). Before #5339 the resolution sat inside the guarded catch below,
         // so a guarded run of a codeunit the runner could not load returned false silently.
         var target = NavCodeunitHandle_CreateTarget(CreateCodeunitHandle(objectId));
 
-        // Deliberately OUTSIDE the `catch when (trap)` below, exactly as BC places
+        // Deliberately OUTSIDE the guarded catch below, exactly as BC places
         // BeginTransactionWorldAndTransaction outside the try whose catch suppresses the
         // codeunit's own errors: a refusal must reach the AL caller as an error, never be
         // converted into a `false` return. See ALDatabasePatches.ThrowIfWriteTransactionStarted.
@@ -304,9 +305,10 @@ public static partial class BcRuntime
             ran = true;
             return true;
         }
-        catch when (trap)
+        catch (Exception ex) when (trap && GuardedRunSuppresses(ex))
         {
-            // TrapError contract for Codeunit.Run(...): swallow and return false.
+            ReportTrappedPermanentRefusal(ex, "a guarded Codeunit.Run");
+            // TrapError contract for Codeunit.Run(...): swallow what BC swallows and return false.
             return false;
         }
         finally
@@ -314,6 +316,89 @@ public static partial class BcRuntime
             ALDatabasePatches.ExitRunTransaction();
             if (guarded) ALDatabasePatches.EndGuardedRunTransaction(ran);
         }
+    }
+
+    /// <summary>
+    /// What a guarded <c>Codeunit.Run</c> (the Boolean result is consumed) turns into
+    /// <c>false</c>: an AL runtime error, and a PERMANENTLY out-of-scope runner refusal; nothing else.
+    ///
+    /// <para>Claim: BC's <c>NavCodeunit.DoRunAsync</c>, which both spellings of the call reach
+    /// (<c>RunCodeunit</c> goes through <c>handle.Target.RunAsync</c>), wraps <c>OnRun</c> in
+    /// <c>catch (NavBaseException)</c> on the guarded branch and has no other clause, so any other
+    /// exception reaches the caller. Citation: decompiled on Ncl 28.4.53241.54346 (6f2cf682…);
+    /// 27.5.46862.53931 (affa03c9…) has the identical body (#5342).</para>
+    ///
+    /// <para>A permanent refusal is trapped for the reason <c>IsPermanentOutOfScope</c> already gives
+    /// for a [TryFunction]: the surface does not exist in the runner's world, and a BC environment that
+    /// also lacks it raises a trappable error there, which this catch suppresses. Same predicate, same
+    /// loud <c>[oos-in-try]</c> line (<see cref="ReportTrappedPermanentRefusal"/>); no last error is
+    /// recorded, exactly as in a [TryFunction]. Every other runner refusal is never suppressed
+    /// (<see cref="IsRunnerRefusal"/>), even when BC's own code wrapped it in an AL error: not-yet-implemented
+    /// ones, shape gaps and corrupt packages, because turning one into <c>false</c> hid #5149's refusal
+    /// as a missing UI handler. A runner <c>NullReferenceException</c> and every other CLR exception
+    /// escape for the same reason BC's do. Trap: a shape gap or a corrupt package on the chain beats a
+    /// permanent refusal on it (the order <c>NavApplicationObjectBase_TryInvoke</c> uses); and
+    /// asserterror, not this method, is where a refusal is deliberately catchable (#2871).</para>
+    /// </summary>
+    internal static bool GuardedRunSuppresses(Exception ex)
+        => IsTrappablePermanentRefusal(ex)
+           || (!IsRunnerRefusal(ex)
+               && ex is Microsoft.Dynamics.Nav.Types.Exceptions.NavBaseException);
+
+    /// <summary>
+    /// True when <paramref name="ex"/> is, or carries on its inner chain, a refusal the RUNNER raised —
+    /// an out-of-scope signal (typed, or the <c>out-of-scope: </c> message convention), a BC shape gap
+    /// or a corrupt dependency package. BC has no such exception, so no AL error-trapping seam that
+    /// copies a BC catch may turn one into <c>false</c> unless <see cref="IsTrappablePermanentRefusal"/>
+    /// says so; the chain walk is what catches one wrapped by <c>MethodBase.Invoke</c> or by BC's own
+    /// remap.
+    /// </summary>
+    internal static bool IsRunnerRefusal(Exception ex)
+        => AlRunner.Infrastructure.BcShapeGapException.Find(ex) != null
+           || AlRunner.Infrastructure.BcAppSymbolReadException.Find(ex) != null
+           || AlRunner.Infrastructure.OutOfScopeMessage.FromException(ex) != null;
+
+    /// <summary>
+    /// The typed, PERMANENT out-of-scope refusal on <paramref name="ex"/>'s inner chain that a trapping
+    /// seam may turn into <c>false</c>, else null. A shape gap or a corrupt package on the chain wins
+    /// and yields null. Only a typed <see cref="AlRunner.Infrastructure.RunnerOutOfScopeException"/> counts:
+    /// the same test <c>NavApplicationObjectBase_TryInvoke</c> applies, through <c>IsPermanentOutOfScope</c>,
+    /// so there is one classification of "permanent".
+    /// </summary>
+    private static AlRunner.Infrastructure.RunnerOutOfScopeException? FindTrappablePermanentRefusal(Exception ex)
+    {
+        if (AlRunner.Infrastructure.BcShapeGapException.Find(ex) != null) return null;
+        if (AlRunner.Infrastructure.BcAppSymbolReadException.Find(ex) != null) return null;
+        const int MaxDepth = 16;
+        var e = ex;
+        for (var d = 0; e != null && d < MaxDepth; d++, e = e.InnerException)
+        {
+            // The FIRST typed refusal decides, as OutOfScopeMessage.FromException does.
+            if (e is AlRunner.Infrastructure.RunnerOutOfScopeException found)
+                return IsPermanentOutOfScope(found, out _) ? found : null;
+        }
+        return null;
+    }
+
+    internal static bool IsTrappablePermanentRefusal(Exception ex) => FindTrappablePermanentRefusal(ex) != null;
+
+    /// <summary>
+    /// What <c>AlRunnerStartSession</c>'s TrapError catch swallows into <c>false</c>: any worker exception
+    /// except a runner refusal, and a trappable permanent refusal is the one refusal that is swallowed
+    /// (loudly). Not an AL-error rule like <see cref="GuardedRunSuppresses"/>: BC's own StartSession never
+    /// shows the caller a worker's error, so no BC catch decides the non-refusal case.
+    /// </summary>
+    internal static bool StartSessionTrapSuppresses(Exception ex)
+        => !IsRunnerRefusal(ex) || IsTrappablePermanentRefusal(ex);
+
+    /// <summary>
+    /// The loud half of trapping a permanent refusal: the same `[oos-in-try]` line a [TryFunction] prints
+    /// (the surface a test quietly did without must stay visible), naming the seam that absorbed it.
+    /// A no-op for an ordinary AL error.
+    /// </summary>
+    internal static void ReportTrappedPermanentRefusal(Exception ex, string seam)
+    {
+        if (FindTrappablePermanentRefusal(ex) is { } oos) ReportOosTrappedByTryFunction(oos, seam);
     }
 
     /// <summary>

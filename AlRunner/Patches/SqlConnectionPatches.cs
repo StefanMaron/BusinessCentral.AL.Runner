@@ -76,7 +76,7 @@ public static class SqlConnectionPatches
         // refusal into `false` (ApplicationObjectBasePatches.IsPermanentOutOfScope), and this backstop
         // cannot know that every surface behind it is permanent. Trapped, it would turn the NRE that
         // used to tear through the try into a quiet `false`. Not trapped, it keeps tearing through,
-        // now with a name. (A guarded Codeunit.Run swallows every exception regardless: #5342.)
+        // now with a name. (A guarded Codeunit.Run lets it out too: #5342.)
         var reason =
             "not-yet-implemented — the runner has no SQL Server: the skeleton database carries no database "
             + "server and no SQL connection provider, and this surface has no answer of its own that works "

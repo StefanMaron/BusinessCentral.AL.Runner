@@ -106,4 +106,25 @@ codeunit 61104 "Ssd StartSession Tests"
         Assert.Contains(GetLastErrorText(), '1999999',
             'A StartSession naming an object id with no codeunit behind it must fail and name that id.');
     end;
+
+    // #5342 — the worker's own error is invisible to BC's caller, and a runner refusal is not an error of
+    // the worker's at all: the surface the worker touched does not exist here. The consumed-Boolean form
+    // (`Started := StartSession(...)`) used to swallow every worker exception into false, refusals
+    // included, so a refusal disappeared and surfaced somewhere unrelated. A PERMANENT out-of-scope
+    // refusal (task scheduling) is now trapped the way a guarded Codeunit.Run and a [TryFunction] trap
+    // it: false, loudly on stderr as [oos-in-try], no last error. A not-yet-implemented one escapes
+    // (pinned in AlRunner.Tests/GuardedRunSuppressionTests: the AL surfaces that raise one need an OnPrem
+    // target, which this Cloud suite cannot declare).
+    [Test]
+    procedure StartSession_WorkerHitsAPermanentRefusal_TheConsumedFormTrapsItAsFalse()
+    var
+        SessionId: Integer;
+        Started: Boolean;
+    begin
+        ClearLastError();
+        Started := StartSession(SessionId, Codeunit::"Ssd Refusing Worker");
+
+        Assert.IsTrue(not Started, 'a permanently out-of-scope surface in the worker reads as false, like a TryFunction.');
+        Assert.AreEqual('', GetLastErrorText(), 'a trapped permanent refusal records no last error.');
+    end;
 }
