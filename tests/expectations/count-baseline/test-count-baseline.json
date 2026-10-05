@@ -72,6 +72,7 @@
         "session-company-default": { "tests": 4 },
         "session-user-row": { "tests": 3 },
         "source-tableext-relation": { "tests": 5 },
+        "sql-connection-oos": { "tests": 4 },
         "standalone-suites": { "tests": 116 },
         "static-runmodal-record": { "tests": 5 },
         "table-connection-live-oos": { "tests": 2 },

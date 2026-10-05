@@ -70,6 +70,7 @@ public static partial class NclCecilRewrite
         AddReportsOwned(set);
         AddRuntimeOwned(set);
         AddExternalEventsOwned(set);
+        AddSqlConnectionOwned(set);
         return set;
     }
 
@@ -511,6 +512,7 @@ public static partial class NclCecilRewrite
         RewriteNcl_Reports(asm, oosCtor);
         RewriteNcl_Runtime(asm);
         RewriteNcl_ExternalEvents(asm);
+        RewriteNcl_SqlConnection(asm);
         // Last: it rewrites every read of RecordImplementation.dataAccess, including any an
         // earlier pass emitted.
         RewriteNcl_RecordDataAccessReads(asm);

@@ -1,0 +1,18 @@
+{
+  "id": "12f857e0-b73e-4ad2-ba6c-1885a6029e30",
+  "name": "Runner Extras - SQL Connection OOS",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #5190: any Ncl path that opens a SQL connection died with an unnamed NullReferenceException out of NavSqlConnectionScope.TryOpenConnection, because the runner's skeleton database has no database server. TaskScheduler.TaskExists/CancelTask (#2866) and raising an [ExternalBusinessEvent] (#5149) were fixed one by one; this is the backstop for every other surface. Database.AlterKey is the AL statement this suite drives: it reaches BC's SQL layer through no runner patch. The refusal must name the API, cite docs/scope.md#sql-connection, name the BC frame that asked, and tear through an AL TryFunction instead of reading as a quiet false (a guarded Codeunit.Run swallows every exception whatever raised it, tracked as #5342).",
+  "description": "Runner-specific by construction: which surface the runner refuses, under which name, and that the per-surface refusals it already has are not replaced by this one. Whether BC's Database.AlterKey succeeds against a SQL Server is not asserted here.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65680,
+      "to": 65689
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}
