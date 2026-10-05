@@ -1537,9 +1537,14 @@ internal static partial class BcAppSymbolCache
         {
             foreach (var table in tableArray.EnumerateArray())
             {
-                var parsed = TryParseTableSymbol(table, alNamespace);
+                var parsed = TryParseTableSymbol(table);
                 if (parsed != null && !tables.ContainsKey(parsed.TableId))
-                    tables[parsed.TableId] = parsed;
+                    // The Namespaces tree path the table sat under, null at the root (#5224).
+                    // Usings stays null: it is what marks a table as parsed from AL source for
+                    // RecordPatches.ResolveInFileScope.
+                    tables[parsed.TableId] = string.IsNullOrWhiteSpace(alNamespace)
+                        ? parsed
+                        : parsed with { Namespace = alNamespace.Trim() };
             }
         }
 
@@ -2952,7 +2957,7 @@ internal static partial class BcAppSymbolCache
         return result;
     }
 
-    private static ParsedTable? TryParseTableSymbol(JsonElement table, string? alNamespace = null)
+    private static ParsedTable? TryParseTableSymbol(JsonElement table)
     {
         if (!table.TryGetProperty("Id", out var idProp) || !idProp.TryGetInt32(out var tableId))
             return null;
@@ -3122,10 +3127,7 @@ internal static partial class BcAppSymbolCache
             TableTypeName: string.IsNullOrWhiteSpace(tableType) ? null : tableType.Trim(),
             DataClassificationName: string.IsNullOrWhiteSpace(dataClassification) ? null : dataClassification.Trim(),
             ExternalName: string.IsNullOrWhiteSpace(externalName) ? null : externalName.Trim(),
-            PrimaryKey: primaryKey,
-            // The Namespaces tree path, null at the root (#5224). Usings stays null: it is what
-            // marks a table as parsed from AL source for RecordPatches.ResolveInFileScope.
-            Namespace: string.IsNullOrWhiteSpace(alNamespace) ? null : alNamespace.Trim());
+            PrimaryKey: primaryKey);
     }
 
     /// <summary>
