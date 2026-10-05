@@ -26,7 +26,7 @@ codeunit 72231 "MOD Tests"
     var
         RecRef: RecordRef;
     begin
-        asserterror RecRef.Open(72223);
+        asserterror RecRef.Open(72253);
     end;
 
     [Test]

@@ -109,7 +109,7 @@ public sealed class DroppedObjectNotAbsentTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var output = Run("broken-lib", "tests");
+        var output = Run("broken-lib", "broken-table-lib", "tests");
 
         Assert.Contains("EMIT-ZERO", output);
         AssertEveryTestFailed(output, "broken-lib");
