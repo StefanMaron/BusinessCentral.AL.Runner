@@ -51,8 +51,10 @@ declared dependency that no package cache holds: the run stops before any test, 
 "A required dependency package is missing from your package cache" naming the package, and
 exits 2, not 1 (a failing test). Add the package to a `--package-cache`
 directory. The same holds when the package is in a cache but every build is older than
-the version `app.json` asks for: the run prints the "VERSION gap" report and exits 2.
-Add a build at or above that version.
+the version `app.json` asks for: the run prints the "VERSION gap" report and exits 2,
+without compiling. Add a build at or above that version, or, if the app does not need
+it, lower the dependency's version in `app.json` (the report's `Info:` line names the highest
+build the cache holds).
 
 See [the exit codes](cli-reference.md) for the rest.
 
