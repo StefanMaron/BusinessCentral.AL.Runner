@@ -21,6 +21,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **deps:** a dependency below its minimum version ends the run with exit 2
 - **tables:** a relation name prefers the writer's own-namespace dependency table over an imported bundle table
 - **codeunit:** a guarded Codeunit.Run lets runner refusals escape instead of returning false
 - **jobs:** the --jobs aggregate counts a worker that stopped on a provisioning gap as NOT RUN
