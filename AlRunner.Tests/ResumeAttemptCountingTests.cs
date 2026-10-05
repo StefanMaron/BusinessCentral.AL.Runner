@@ -335,4 +335,50 @@ public sealed class ResumeAttemptCountingTests : IDisposable
         Assert.Equal((0, 0), ParallelFanOut.CountWorkersThatLeftNothing(shards, new[] { false, true },
             Out("", "=== shared — SUITE ERRORS (2) ===\n"), NoneResumed));
     }
+
+    // The whole count, as the parent computes it from every worker's captured output.
+
+    private static (int NotRun, int Partial) Aggregate(string[][] shards, string[] split, bool[] handedBack, string[] stdout)
+        => ParallelFanOut.CountLostAcrossWorkers(shards, split, handedBack, stdout, new string[shards.Length].Select(_ => "").ToArray());
+
+    /// <summary>A shared bundle that fails to compile in two workers is one bundle, and a third worker that stopped
+    /// before reporting holds it too: still one. Without the lost worker left out of the comparison, its empty
+    /// output would make the common sighting zero and the two headers would count twice.</summary>
+    [Fact]
+    public void CountLostAcrossWorkers_ASharedCompileFailWithALostHolder_IsOneNotRun()
+    {
+        var header = "=== shared — COMPILE FAIL ===\n";
+        var shards = new[] { new[] { "/b/shared" }, new[] { "/b/shared" }, new[] { "/b/shared" } };
+
+        Assert.Equal((1, 0), Aggregate(shards, new[] { "/b/shared" }, new[] { true, true, false }, new[] { header, header, "" }));
+    }
+
+    /// <summary>What a lost worker printed is not read: a COMPILE FAIL header it got to print before it died, for a
+    /// bundle it was also handed, is one bundle, not the header and the hand-over.</summary>
+    [Fact]
+    public void CountLostAcrossWorkers_ALostWorkersOwnHeaders_AreNotReadOnTopOfItsBundles()
+    {
+        var shards = new[] { new[] { "/b/one", "/b/two" }, new[] { "/b/three" } };
+        var printedBeforeDying = "=== one — COMPILE FAIL ===\n";
+
+        Assert.Equal((2, 0), Aggregate(shards, Array.Empty<string>(), new[] { false, true }, new[] { printedBeforeDying, "" }));
+    }
+
+    /// <summary>The same two workers, both reporting: nothing of the new route fires, and the headers count as before.</summary>
+    [Fact]
+    public void CountLostAcrossWorkers_WhenEveryWorkerReported_ReadsOnlyTheirHeaders()
+    {
+        var shards = new[] { new[] { "/b/one" }, new[] { "/b/two" } };
+
+        Assert.Equal((1, 1), Aggregate(shards, Array.Empty<string>(), new[] { true, true },
+            new[] { "=== one — COMPILE FAIL ===\n", "=== two — SUITE ERRORS (1) ===\n" }));
+    }
+
+    [Fact]
+    public void CountLostAcrossWorkers_EveryWorkerLost_EveryBundleIsNotRun()
+    {
+        var shards = new[] { new[] { "/b/one" }, new[] { "/b/two" } };
+
+        Assert.Equal((2, 0), Aggregate(shards, Array.Empty<string>(), new[] { false, false }, new[] { "", "" }));
+    }
 }

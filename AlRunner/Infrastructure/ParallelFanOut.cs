@@ -512,9 +512,8 @@ internal static class ParallelFanOut
         long tests = 0, failures = 0, errors = 0, skipped = 0;
         long selected = 0;
         var selectionUnreported = false;
-        long notRun = 0, partial = 0;
-        var shardOutput = new string[procs.Count];
-        var shardResumed = new bool[procs.Count];
+        var shardStdout = new string[procs.Count];
+        var shardStderr = new string[procs.Count];
         var shardHandedBack = new bool[procs.Count];
         var shardEnded = new string[procs.Count];
         for (var i = 0; i < procs.Count; i++)
@@ -543,59 +542,26 @@ internal static class ParallelFanOut
             var exit = killed ? ExitCodeForKilledWorker(c) : p.ExitCode;
             if (exit > worst) worst = exit;
 
-            // A bundle that COMPILE FAILs (Reporter.cs's "=== <bundle> — COMPILE FAIL ===")
-            // contributes zero tests to the JUnit this worker writes, so it vanishes from the
-            // totals above with no trace — the exact shape #2715 measured (40,550 tests down to
-            // 14,856, reported as a plain total). Count it here so the aggregate says a bundle
-            // is missing instead of silently reporting the smaller number as complete.
-            //
-            // BOTH headers, since #2779: a bundle that compiled and then failed at RUN time now
-            // reports "— EXEC FAIL ===" instead. It contributes zero tests for exactly the same
-            // reason, so counting only the compile header would have re-introduced #2715's
-            // silent loss for every execution failure.
-            //
-            // A worker that left no JUnit file printed no header: what it lost is counted from the
-            // bundles it was handed (CountWorkersThatLeftNothing, #5333), and nothing it printed is read,
-            // so one lost bundle is never taken from both routes.
+            shardStdout[i] = stdout;
+            shardStderr[i] = stderr;
             if (!handedBack)
-            {
-                shardOutput[i] = "";
                 Console.Error.WriteLine($"jobs: shard {i} ended ({shardEnded[i]}) without writing its test results; "
                     + "its bundle(s) are MISSING from the totals: " + string.Join(", ", shards[i].Select(x => x.Name)));
-                continue;
-            }
-            shardOutput[i] = stdout + "\n" + stderr;
-            shardResumed[i] = AbortResume.WasResumed(stderr);
-            var lost = CountLostBundles(stdout, stderr);
-            notRun += lost.NotRun;
-
-            // #2762: the sibling shape. A bundle that lost SOME suites and still produced tests
-            // is not "not run" — its survivors ARE in the totals above, so counting it as
-            // missing would overstate the loss. But it covers less than it declares, and the
-            // aggregate is the only summary a --jobs caller reads; without this the parent
-            // reprints a clean total for a run in which whole suites never compiled.
-            partial += lost.Partial;
         }
 
-        var leftNothing = CountWorkersThatLeftNothing(
+        // A bundle that COMPILE FAILs (Reporter.cs's "=== <bundle> — COMPILE FAIL ===")
+        // contributes zero tests to the JUnit its worker writes, so it vanishes from the
+        // totals above with no trace — the exact shape #2715 measured (40,550 tests down to
+        // 14,856, reported as a plain total). Counting it here makes the aggregate say a bundle
+        // is missing instead of silently reporting the smaller number as complete. BOTH headers
+        // since #2779, and a bundle that lost only SOME suites is PARTIAL since #2762: its
+        // survivors are in the totals, but it covers less than it declares.
+        var lostBundles = CountLostAcrossWorkers(
             shards.Select(sh => (IReadOnlyList<string>)sh.Select(x => x.Name).ToList()).ToList(),
-            shardHandedBack, shardOutput, shardResumed);
-        notRun += leftNothing.NotRun;
-        partial += leftNothing.Partial;
+            plan.SplitBundles, shardHandedBack, shardStdout, shardStderr);
+        var notRun = lostBundles.NotRun;
+        var partial = lostBundles.Partial;
         var lostWorkers = Enumerable.Range(0, shards.Count).Where(sh => !shardHandedBack[sh]).ToList();
-
-        // A bundle several workers share prints its COMPILE FAIL / EXEC FAIL / SUITE ERRORS header
-        // once per worker. It is one missing bundle, so take the extra sightings back out. Only the
-        // workers that reported are compared: a lost one printed nothing, and is counted above.
-        foreach (var name in plan.SplitBundles)
-        {
-            var sharing = Enumerable.Range(0, shards.Count)
-                .Where(sh => shardHandedBack[sh] && shards[sh].Any(x => x.Name == name)).ToList();
-            var label = Reporter.BundleLabel(name);
-            foreach (var header in NotRunHeaders)
-                notRun -= ExtraSightings(shardOutput, sharing, $"=== {label}{header}", shardResumed);
-            partial -= ExtraSightings(shardOutput, sharing, $"=== {label}{PartialLossHeader}", shardResumed);
-        }
 
         Console.WriteLine();
         Console.WriteLine("=================================================================");
@@ -808,6 +774,48 @@ internal static class ParallelFanOut
     internal static int CountAcrossAttempts(string output, string needle, bool resumed)
         => Attempts(output, resumed).Select(a => CountOccurrences(a, needle)).DefaultIfEmpty(0).Max();
 
+    /// <summary>The aggregate's NOT RUN and PARTIAL bundle counts, from every worker's captured output.
+    /// A worker that reported (<paramref name="handedBack"/>) is read for the headers it printed; one that
+    /// did not is counted from the bundles it held and its text is never read. A bundle several workers
+    /// share prints its header once per worker, and is one bundle, so the extra sightings come back out.</summary>
+    internal static (int NotRun, int Partial) CountLostAcrossWorkers(
+        IReadOnlyList<IReadOnlyList<string>> shardBundles, IReadOnlyCollection<string> splitBundles,
+        IReadOnlyList<bool> handedBack, IReadOnlyList<string> stdout, IReadOnlyList<string> stderr)
+    {
+        int notRun = 0, partial = 0;
+        var output = new string[shardBundles.Count];
+        var resumed = new bool[shardBundles.Count];
+        for (var i = 0; i < shardBundles.Count; i++)
+        {
+            if (!handedBack[i]) { output[i] = ""; continue; }
+            output[i] = stdout[i] + "\n" + stderr[i];
+            resumed[i] = AbortResume.WasResumed(stderr[i]);
+            var lost = CountLostBundles(stdout[i], stderr[i]);
+            notRun += lost.NotRun;
+            partial += lost.Partial;
+        }
+
+        var leftNothing = CountWorkersThatLeftNothing(shardBundles, handedBack, output, resumed);
+        notRun += leftNothing.NotRun;
+        partial += leftNothing.Partial;
+
+        // Only the workers that reported are compared: a lost one printed nothing, and is counted above.
+        foreach (var name in splitBundles)
+        {
+            var sharing = ReportingHolders(shardBundles, handedBack, name);
+            var label = Reporter.BundleLabel(name);
+            foreach (var header in NotRunHeaders)
+                notRun -= ExtraSightings(output, sharing, $"=== {label}{header}", resumed);
+            partial -= ExtraSightings(output, sharing, $"=== {label}{PartialLossHeader}", resumed);
+        }
+        return (notRun, partial);
+    }
+
+    /// <summary>The workers that hold <paramref name="bundle"/> and reported.</summary>
+    internal static List<int> ReportingHolders(IReadOnlyList<IReadOnlyList<string>> shardBundles,
+        IReadOnlyList<bool> handedBack, string bundle)
+        => Enumerable.Range(0, shardBundles.Count).Where(sh => handedBack[sh] && shardBundles[sh].Contains(bundle)).ToList();
+
     /// <summary>The bundles the workers that wrote no JUnit file cost the aggregate (#5333). Such a worker
     /// reached no output block, so nothing it was handed is in the totals and it printed no
     /// <c>COMPILE FAIL</c> / <c>EXEC FAIL</c> header for the NOT RUN count to read: every bundle it holds is
@@ -827,8 +835,7 @@ internal static class ParallelFanOut
             foreach (var bundle in shardBundles[lost])
             {
                 if (!counted.Add(bundle)) continue;
-                var ran = Enumerable.Range(0, shardBundles.Count)
-                    .Where(sh => handedBack[sh] && shardBundles[sh].Contains(bundle)).ToList();
+                var ran = ReportingHolders(shardBundles, handedBack, bundle);
                 if (ran.Count == 0) { notRun++; continue; }
                 var label = Reporter.BundleLabel(bundle);
                 var reported = ran.Any(sh => NotRunHeaders.Append(PartialLossHeader)

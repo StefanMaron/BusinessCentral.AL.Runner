@@ -115,7 +115,8 @@ public sealed class MissingDependencyExitCodeTests : IClassFixture<SharedCliServ
             Assert.Single(Regex.Matches(run.Output, @"shard \d+ \(exit 0\)"));
             Assert.Matches(@"Tests:\s+1\s+passed\s+1\s+failed\s+0\s+errors\s+0", run.Output);
             Assert.Contains("exit code 2", Regex.Match(run.Output, @"^Result: .*$", RegexOptions.Multiline).Value);
-            AssertNotRun(run.Output, 1, attempt);
+            // The line says a worker stopped, so a reader knows why no header is in that shard's output.
+            Assert.Contains("which stopped before it reported", AssertNotRun(run.Output, 1, attempt));
             AssertNoPartial(run.Output);
             // The note names the bundle that was lost, from the one worker that never reported.
             Assert.Single(Regex.Matches(run.Output, @"^jobs: shard \d+ ended \(exit 2\) without writing its test results", RegexOptions.Multiline));
@@ -229,7 +230,7 @@ public sealed class MissingDependencyExitCodeTests : IClassFixture<SharedCliServ
         Assert.True(run.ExitCode == 3, $"exit {run.ExitCode}\n{run.Output}");
         Assert.DoesNotContain(GapHeadline, run.Output);
         Assert.DoesNotContain("without writing its test results", run.Output);
-        AssertNotRun(run.Output, 1, "compile fail");
+        Assert.DoesNotContain("stopped before it reported", AssertNotRun(run.Output, 1, "compile fail"));
         Assert.Matches(@"Tests:\s+1\s+passed\s+1\s+failed\s+0\s+errors\s+0", run.Output);
     }
 
@@ -385,12 +386,13 @@ public sealed class MissingDependencyExitCodeTests : IClassFixture<SharedCliServ
     }
 
     /// <summary>The aggregate block's NOT RUN line, which a --jobs caller reads: exactly one, with the count.</summary>
-    private static void AssertNotRun(string output, int bundles, string run)
+    private static string AssertNotRun(string output, int bundles, string run)
     {
         var aggregate = output[output.LastIndexOf("aggregate across", StringComparison.Ordinal)..];
         var lines = Regex.Matches(aggregate, @"^  NOT RUN: +(\d+) bundle\(s\).*$", RegexOptions.Multiline);
         Assert.True(lines.Count == 1 && lines[0].Groups[1].Value == bundles.ToString(),
             $"{run}: expected one NOT RUN line counting {bundles}, found {lines.Count} ({string.Join(" | ", lines.Select(l => l.Value))})\n{output}");
+        return lines[0].Value;
     }
 
     private static void AssertNoPartial(string output)
