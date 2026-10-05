@@ -194,9 +194,11 @@ v1 and v2 predate this record.
   through v46: `ParsedTable.Namespace` already existed and held null for a symbol-read table, so
   `PayloadShape` cannot see the value change, and a warm box would replay a Base Application
   table with no namespace, which `RecordPatches.ResolveInFileScope` reads as "not in the writer's
-  own namespace".
+  own namespace". Measured, not inferred: a `--cache` root warmed by a build that left the
+  namespace null kept failing the runner-extras `relation-own-ns-dependency-twin` suite (2 of 2)
+  under a build that reads it, with the integer unchanged, because both wrote the same key.
 
-  47 was confirmed free immediately before pushing: see the PR body for what `origin/main` read.
+  47 was confirmed free by reading `origin/main`'s constant (46) immediately before pushing.
 
 ## Changes that deliberately did not bump
 
