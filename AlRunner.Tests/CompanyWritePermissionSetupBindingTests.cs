@@ -1,14 +1,14 @@
-// CompanyWritePermissionSetupBindingTests — issue #5020.
+// CompanyWritePermissionSetupBindingTests — issues #5020 and #5071.
 //
 // A RUNNER-MECHANISM test. The BC-observable claim (a permission set composed before a grant is
 // recomposed by the next read after a Company insert or delete, inside the same transaction) is
-// measured upstream by corpus codeunit 67947, ExpandedPermission_Company*.
+// measured upstream by corpus codeunits 67951..67953, ExpandedPermission_Company*.
 //
-// What this pins is the runner's wiring: that the two RecordPatches Company helpers are
-// prepended to RecordImplementation.InsertRecordAsync / DeleteRecordAsync on their parentRecord,
+// What this pins is the runner's wiring: that the three RecordPatches Company helpers are
+// prepended to RecordImplementation.InsertRecordAsync / DeleteRecordAsync / RenameRecordAsync on their parentRecord,
 // ahead of the original body — the point below NavRecord's trigger dispatch where BC's
 // SystemTableTriggers arms run — and to no NavRecord entry point, where they would run before
-// the OnInsert/OnDelete triggers. Rename is #5071.
+// the OnInsert/OnDelete/OnRename triggers.
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 using Xunit;
@@ -21,6 +21,8 @@ public sealed class CompanyWritePermissionSetupBindingTests
         "System.Void AlRunner.Patches.RecordPatches::OnCompanyInsertRecord(System.Object)";
     private const string DeleteArm =
         "System.Void AlRunner.Patches.RecordPatches::OnCompanyDeleteRecord(System.Object)";
+    private const string RenameArm =
+        "System.Void AlRunner.Patches.RecordPatches::OnCompanyRenameRecord(System.Object)";
 
     private static string RewrittenNclPath => Path.Combine(
         Path.GetDirectoryName(typeof(CompanyWritePermissionSetupBindingTests).Assembly.Location)
@@ -50,18 +52,22 @@ public sealed class CompanyWritePermissionSetupBindingTests
             .Select(i => (i.Operand as MethodReference)?.FullName ?? string.Empty)
             .ToList();
 
-    public static TheoryData<string, string> SingleArgumentArms => new()
+    // The parameter types are the method's own: Rename also takes the renamed NavRecord.
+    public static TheoryData<string, string, string> WriteArms => new()
     {
-        { "InsertRecordAsync", InsertArm },
-        { "DeleteRecordAsync", DeleteArm },
+        { "InsertRecordAsync", InsertArm, "DataError" },
+        { "DeleteRecordAsync", DeleteArm, "DataError" },
+        { "RenameRecordAsync", RenameArm, "DataError,NavRecord" },
     };
 
     [SkippableTheory]
-    [MemberData(nameof(SingleArgumentArms))]
-    public void RecordWrite_CarriesTheCompanyArm_OnItsParentRecord_AheadOfTheOriginalBody(string method, string arm)
+    [MemberData(nameof(WriteArms))]
+    public void RecordWrite_CarriesTheCompanyArm_OnItsParentRecord_AheadOfTheOriginalBody(
+        string method, string arm, string parameterTypes)
     {
         using var module = OpenNcl();
-        var instructions = RecordImplementationMethod(module, method, "DataError").Body.Instructions.ToList();
+        var parameters = parameterTypes.Split(',');
+        var instructions = RecordImplementationMethod(module, method, parameters).Body.Instructions.ToList();
         var index = instructions.FindIndex(i =>
             i.OpCode == OpCodes.Call && (i.Operand as MethodReference)?.FullName == arm);
 
@@ -70,7 +76,7 @@ public sealed class CompanyWritePermissionSetupBindingTests
         Assert.Equal(OpCodes.Ldarg_0, instructions[index - 2].OpCode);
         Assert.Equal("parentRecord", (instructions[index - 1].Operand as FieldReference)?.Name);
         AssertOnlyPrependsBefore(instructions, index, method);
-        Assert.Single(CalledMethods(RecordImplementationMethod(module, method, "DataError")), n => n == arm);
+        Assert.Single(CalledMethods(RecordImplementationMethod(module, method, parameters)), n => n == arm);
     }
 
     [SkippableFact]
@@ -83,6 +89,7 @@ public sealed class CompanyWritePermissionSetupBindingTests
             var called = CalledMethods(method);
             Assert.DoesNotContain(InsertArm, called);
             Assert.DoesNotContain(DeleteArm, called);
+            Assert.DoesNotContain(RenameArm, called);
         }
     }
 

@@ -22,8 +22,8 @@
 // that at its transaction ends, including a transaction world that ends without committing
 // (NotePermissionSetupTableWrite / EndPermissionSetupTransaction, #4983, #5022; corpus 67947).
 // BC also bumps mid-transaction, from SystemTableTriggers.OnWriteToCompanyTable on a Company
-// insert, rename or delete; the runner mirrors insert and delete at its data-layer prepends
-// (#5020). Rename is not mirrored: the runner refuses a Company rename before it gets there (#5071).
+// insert, rename or delete; the runner mirrors all three at its data-layer prepends
+// (#5020, rename #5071).
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -145,6 +145,23 @@ public static partial class RecordPatches
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void OnCompanyDeleteRecord(object? record)
+    {
+        if (!IsCompanyRow(record, out _)) return;
+        ResetPermissionSetupForCompanyWrite();
+    }
+
+    /// <summary>
+    /// Prepended to RecordImplementation.RenameRecordAsync(DataError, NavRecord), on its
+    /// parentRecord: BC's OnBeforeModifyCompanyAsync ends in OnWriteToCompanyTable, advancing
+    /// SetupVersion at once, inside the transaction (#5071; Ncl 28.4.53241.54346 (6f2cf682),
+    /// body identical in 27.5.46862.53931; corpus 67952 is green on the Windows nightly).
+    /// Traps: BC raises CannotRenameCurrentCompany and ValidateCompanyName ahead of the bump and
+    /// the runner models neither, so a rename BC would refuse bumps here; and BC bumps only when
+    /// the trigger sees a changed Name, which a rename to the identical name may not give. That
+    /// case is unmeasured, so it bumps like any other rename.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void OnCompanyRenameRecord(object? record)
     {
         if (!IsCompanyRow(record, out _)) return;
         ResetPermissionSetupForCompanyWrite();

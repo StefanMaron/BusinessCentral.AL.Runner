@@ -1488,9 +1488,9 @@ public static partial class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Prepended OnBeforeUserModify → RecordImplementation.ModifyRecordAsync(DataError)");
         }
 
-        // ── RecordImplementation.{Insert,Delete}RecordAsync — Company permission-setup bump ──
+        // ── RecordImplementation.{Insert,Delete,Rename}RecordAsync — Company permission-setup bump ──
         // BC's SystemTableTriggers.OnWriteToCompanyTable advances PermissionSetupMonitor.SetupVersion
-        // mid-transaction on a Company insert or delete (#5020; rename: #5071). The runner's data
+        // mid-transaction on a Company insert, delete (#5020) or rename (#5071). The runner's data
         // layer is not BC's, so these prepend at the nearest point above it, as the User arms do.
         // Emits `ldarg.0; ldfld parentRecord; call helper`: parentRecord is a FieldDefinition of
         // this module, so the ldfld adds no typeRef/memberRef to Ncl (no token shift).
@@ -1502,17 +1502,20 @@ public static partial class NclCecilRewrite
                 ?? throw new InvalidOperationException(
                     "RecordImplementation.parentRecord (NavRecord) not found — the Company "
                     + "permission-setup bump could not be bound.");
-            foreach (var (method, helper) in new[]
+            // RenameRecordAsync is (DataError, NavRecord renamedRecord): the same prepend serves it.
+            foreach (var (method, helper, paramCount) in new[]
                      {
-                         ("InsertRecordAsync", nameof(AlRunner.Patches.RecordPatches.OnCompanyInsertRecord)),
-                         ("DeleteRecordAsync", nameof(AlRunner.Patches.RecordPatches.OnCompanyDeleteRecord)),
+                         ("InsertRecordAsync", nameof(AlRunner.Patches.RecordPatches.OnCompanyInsertRecord), 1),
+                         ("DeleteRecordAsync", nameof(AlRunner.Patches.RecordPatches.OnCompanyDeleteRecord), 1),
+                         ("RenameRecordAsync", nameof(AlRunner.Patches.RecordPatches.OnCompanyRenameRecord), 2),
                      })
             {
                 var target = recImpl.Methods.FirstOrDefault(m =>
                     m.Name == method
-                    && m.Parameters.Count == 1
+                    && m.HasBody
+                    && m.Parameters.Count == paramCount
                     && m.Parameters[0].ParameterType.Name == "DataError")
-                    ?? throw new InvalidOperationException($"RecordImplementation.{method}(DataError) not found");
+                    ?? throw new InvalidOperationException($"RecordImplementation.{method}(DataError, …) not found");
                 var helperMi = typeof(AlRunner.Patches.RecordPatches).GetMethod(
                     helper, BindingFlags.Public | BindingFlags.Static)
                     ?? throw new InvalidOperationException($"RecordPatches.{helper} not found");

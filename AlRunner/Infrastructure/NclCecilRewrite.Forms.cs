@@ -1405,6 +1405,88 @@ public static partial class NclCecilRewrite
                     + "Ncl shape changed; GetAllCompaniesAsync would NRE again. Do not commit.");
             Console.Error.WriteLine(
                 $"[Cecil] Redirected {licenseReads} CompanyHelper license company-filter read(s) → unlicensed (no filter)");
+
+            // 8e-3. CompanyTokens.Get(string) — a token for any company but the session's own
+            //     (#5071). Two edits, both inside the runtime engine: the "tenant databases only"
+            //     guard's `get_DatabaseType` read → CompanyAccessPatches.TenantDatabaseType, and
+            //     the SQL-backed spelling lookup → CompanyAccessPatches.CompanyTokens_GetCollationAwareCompanyName.
+            //     Both helpers keep the original stack shape (NavDatabase in → enum out; this +
+            //     string in → string out); new MethodReferences are appended, none renamed.
+            var tokensType = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.CompanyTokens")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] CompanyTokens type not found — Ncl shape changed; do not commit");
+            var tokenGet = tokensType.Methods.FirstOrDefault(m => m.Name == "Get" && m.HasThis
+                    && m.HasBody && m.Parameters.Count == 1 && m.Parameters[0].ParameterType.FullName == "System.String")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] CompanyTokens.Get(string) not found — Ncl shape changed; do not commit");
+            var typeRead = tokenGet.Body.Instructions
+                .Where(i => i.Operand is MethodReference r && r.Name == "get_DatabaseType"
+                            && r.DeclaringType.FullName == "Microsoft.Dynamics.Nav.Runtime.NavDatabase")
+                .ToList();
+            if (typeRead.Count != 1)
+                throw new InvalidOperationException(
+                    $"[Cecil] CompanyTokens.Get(string) has {typeRead.Count} NavDatabase.get_DatabaseType reads, "
+                    + "expected exactly 1 — Ncl shape changed; do not commit");
+            typeRead[0].OpCode = OpCodes.Call;
+            typeRead[0].Operand = asm.MainModule.ImportReference(
+                typeof(AlRunner.Patches.CompanyAccessPatches).GetMethod(
+                    nameof(AlRunner.Patches.CompanyAccessPatches.TenantDatabaseType),
+                    BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] CompanyAccessPatches.TenantDatabaseType not found"));
+
+            var collationName = tokensType.Methods.FirstOrDefault(m => m.Name == "GetCollationAwareCompanyName"
+                    && m.HasThis && m.HasBody && m.Parameters.Count == 1)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] CompanyTokens.GetCollationAwareCompanyName not found — Ncl shape changed; do not commit");
+            ReplaceBodyWithHelper(asm.MainModule, collationName,
+                typeof(AlRunner.Patches.CompanyAccessPatches).GetMethod(
+                    nameof(AlRunner.Patches.CompanyAccessPatches.CompanyTokens_GetCollationAwareCompanyName),
+                    BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] CompanyAccessPatches.CompanyTokens_GetCollationAwareCompanyName not found"));
+            Console.Error.WriteLine(
+                "[Cecil] Rewrote CompanyTokens.Get(string) → tenant-database guard satisfied, no SQL spelling lookup");
+
+            // 8e-4. NavRecord.UpdateReferencingTableOnRenameAsync(…, string companyName) — the
+            //     per-company update of a rename cascade. Its state machine's one
+            //     `NCLMetaTable.CreateObjectInstance(5 args)` call → CompanyAccessPatches.
+            //     CreateRenameCascadeRecord, which grants every Company-row company for the length of
+            //     that construction (#5071). Same stack shape: table + 5 args in, NavRecord out.
+            var navRecordType = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.NavRecord")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NavRecord type not found — Ncl shape changed; do not commit");
+            var perCompanyMachines = navRecordType.NestedTypes
+                .Where(t => t.Name.StartsWith("<UpdateReferencingTableOnRenameAsync>d__")
+                            && t.Fields.Any(f => f.Name == "companyName"))
+                .ToList();
+            if (perCompanyMachines.Count != 1)
+                throw new InvalidOperationException(
+                    $"[Cecil] found {perCompanyMachines.Count} UpdateReferencingTableOnRenameAsync state machines "
+                    + "with a companyName field, expected exactly 1 — Ncl shape changed; do not commit");
+            var machineMoveNext = perCompanyMachines[0].Methods.FirstOrDefault(m => m.Name == "MoveNext" && m.HasBody)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] UpdateReferencingTableOnRenameAsync state machine has no MoveNext — Ncl shape changed");
+            var createCalls = machineMoveNext.Body.Instructions
+                .Where(i => i.Operand is MethodReference r && r.Name == "CreateObjectInstance"
+                            && r.Parameters.Count == 5
+                            && r.DeclaringType.FullName == "Microsoft.Dynamics.Nav.Runtime.NCLMetaTable")
+                .ToList();
+            if (createCalls.Count != 1)
+                throw new InvalidOperationException(
+                    $"[Cecil] the per-company rename update has {createCalls.Count} NCLMetaTable.CreateObjectInstance(5) "
+                    + "calls, expected exactly 1 — Ncl shape changed; do not commit");
+            createCalls[0].OpCode = OpCodes.Call;
+            createCalls[0].Operand = asm.MainModule.ImportReference(
+                typeof(AlRunner.Patches.CompanyAccessPatches).GetMethod(
+                    nameof(AlRunner.Patches.CompanyAccessPatches.CreateRenameCascadeRecord),
+                    BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] CompanyAccessPatches.CreateRenameCascadeRecord not found"));
+            Console.Error.WriteLine(
+                "[Cecil] Rewrote NavRecord.UpdateReferencingTableOnRenameAsync(company) → company-row access for the rename cascade");
         }
 
         // 8f. SessionTransactionExtensions.Rollback — see RecordPatches.RollbackToCommitPoint.
