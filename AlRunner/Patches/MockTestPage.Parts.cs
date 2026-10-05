@@ -45,7 +45,8 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
     internal bool IsProvider { get; set; }
 
     // The parts whose FIELD links read THIS part's current row (they name it as Provider). Their
-    // rowset follows this part's cursor, so every settled move here re-points them (#5177).
+    // rowset follows this part's cursor, so every settled move here re-points them (#5177). BC does
+    // the same without a move of the dependent: corpus codeunit 69143 (corpus PR #547).
     private readonly List<LiveNavTestPart> _dependents = new();
 
     /// <summary>True when this part's FIELD links read a Provider part's row, not the host's (#5177).</summary>
