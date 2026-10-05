@@ -40,7 +40,7 @@ internal static partial class BcAppSymbolCache
     //
     // Every bump adds its row to docs/bc-symbol-cache-versions.md#version-history (why that
     // integer was taken); BcAppSymbolCacheVersionHistoryTests holds the page to this constant.
-    private const int CacheVersion = 46;
+    private const int CacheVersion = 47;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820's path -> content-hash memo now lives in
     // RunnerFingerprint._fileContentHashes (#2955), because AppLoader's persisted r2r-chunks
@@ -1539,7 +1539,12 @@ internal static partial class BcAppSymbolCache
             {
                 var parsed = TryParseTableSymbol(table);
                 if (parsed != null && !tables.ContainsKey(parsed.TableId))
-                    tables[parsed.TableId] = parsed;
+                    // The Namespaces tree path the table sat under, null at the root (#5224).
+                    // Usings stays null: it is what marks a table as parsed from AL source for
+                    // RecordPatches.ResolveInFileScope.
+                    tables[parsed.TableId] = string.IsNullOrWhiteSpace(alNamespace)
+                        ? parsed
+                        : parsed with { Namespace = alNamespace.Trim() };
             }
         }
 

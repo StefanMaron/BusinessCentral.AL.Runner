@@ -1,0 +1,18 @@
+{
+  "id": "5d2a7c14-3b8e-4f60-9a1d-5224a0b7c001",
+  "name": "Runner Extras - Relation Own-Namespace Dependency Twin",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #5224: a bundle table naming a table in a TableRelation or CalcFormula resolves it to the same table whether or not a modify(...) tableextension touches the writing table.",
+  "description": "Runner-specific: the runner builds a table nobody modifies from BC's compiled metadata and one a modify(...) extension touches from its AL source, two routes that must answer alike. The BC half (which table the name means) is corpus codeunit 69217 'Test Relation Own NS Dep'; this suite pins only that the two routes agree. The writing tables sit in Microsoft.Foundation.Shipping, so the name means Base Application's table of the own namespace, while a using brings in a bundle table of the same name.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 66600,
+      "to": 66609
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "15.0"
+}

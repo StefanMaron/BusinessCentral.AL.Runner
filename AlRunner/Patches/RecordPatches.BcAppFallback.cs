@@ -804,14 +804,17 @@ public static partial class RecordPatches
 
     /// <summary>
     /// A name written in AL source resolves in the file that wrote it: the file's own namespace
-    /// first, then the global namespace and the namespaces it imports with <c>using</c> (#4133).
-    /// Answers when a source-parsed table carries the name; when none of them is in scope the
-    /// name means a dependency's table, looked up in the symbol index directly because
-    /// <see cref="TryPopulateParsedTableByName"/> would hand back the out-of-scope table.
-    /// Null means "no verdict" (no source-parsed table of that name, or no dependency one
-    /// either) and the caller keeps its by-name lookup. Adjudicated by corpus codeunit 69210
-    /// "Test Relation Target NS Scope". Own namespace before imported is the compiler's order;
-    /// dependency candidates are not namespace-checked yet (#5224).
+    /// first, whether a source table or a dependency's, then the global namespace and the
+    /// namespaces it imports with <c>using</c> (#4133, #5224). Answers when a source-parsed table
+    /// carries the name; when none of them is in scope the name means a dependency's table, looked
+    /// up in the symbol index directly because <see cref="TryPopulateParsedTableByName"/> would
+    /// hand back the out-of-scope table. Null means "no verdict" (no source-parsed table of that
+    /// name, or no dependency one either) and the caller keeps its by-name lookup. Adjudicated by
+    /// corpus codeunits 69210 "Test Relation Target NS Scope" and 69217 "Test Relation Own NS Dep".
+    /// <para>Trap: two shapes are unmeasured on a service tier and keep the answer they had before
+    /// #5224 — a source table and a dependency's table both in the own namespace (the source table
+    /// keeps the name), and an imported source table against a dependency's table in another
+    /// namespace (the source table keeps it).</para>
     /// </summary>
     private static ParsedTable? ResolveInFileScope(string tableName, ParsedTable referencingTable)
     {
@@ -827,23 +830,30 @@ public static partial class RecordPatches
             t.Namespace == null
             || referencingTable.Usings!.Contains(t.Namespace, StringComparer.OrdinalIgnoreCase);
 
-        var inScope = named.FirstOrDefault(SameNamespace) ?? named.FirstOrDefault(Imported);
-        if (inScope != null) return inScope;
-
-        lock (_bcTableIndexLock)
+        // A dependency's table by name, among those the predicate admits on their namespace.
+        ParsedTable? DependencyTable(Func<ParsedTable, bool> admit)
         {
-            EnsureBcSymbolTableIndex();
-            if (_bcSymbolTableIndex == null) return null;
-            foreach (var (id, entry) in _bcSymbolTableIndex)
+            lock (_bcTableIndexLock)
             {
-                if (!string.Equals(entry.Table.TableName, tableName, StringComparison.OrdinalIgnoreCase))
-                    continue;
-                if (!_parsedTables.ContainsKey(id))
-                    _parsedTables[id] = entry.Table;
-                return _parsedTables[id];
+                EnsureBcSymbolTableIndex();
+                if (_bcSymbolTableIndex == null) return null;
+                foreach (var (id, entry) in _bcSymbolTableIndex)
+                {
+                    if (!string.Equals(entry.Table.TableName, tableName, StringComparison.OrdinalIgnoreCase)
+                        || !admit(entry.Table))
+                        continue;
+                    if (!_parsedTables.ContainsKey(id))
+                        _parsedTables[id] = entry.Table;
+                    return _parsedTables[id];
+                }
             }
+            return null;
         }
-        return null;
+
+        return named.FirstOrDefault(SameNamespace)
+            ?? DependencyTable(SameNamespace)
+            ?? named.FirstOrDefault(Imported)
+            ?? DependencyTable(_ => true);
     }
 
     private static readonly Regex _rxAnyTableId = new(

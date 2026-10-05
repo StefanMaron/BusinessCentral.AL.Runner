@@ -61,6 +61,7 @@
         "published-application-system-table": { "tests": 9 },
         "query-dataitem-filter-precompiled-dep": { "tests": 2 },
         "query-join-aggregation-oos": { "tests": 4 },
+        "relation-own-ns-dependency-twin": { "tests": 2 },
         "report-dep-maxiteration": { "tests": 2 },
         "report-precompiled-dep-metadata": { "tests": 2 },
         "report-stubmeta-unbounded-loop": { "tests": 4 },
