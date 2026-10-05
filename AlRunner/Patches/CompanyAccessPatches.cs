@@ -60,7 +60,7 @@ public static class CompanyAccessPatches
         if (string.Equals(companyName, SessionCompanyName(session),
                 System.StringComparison.OrdinalIgnoreCase))
             return true;
-        if (_renameCascadeDepth == 0) return false;
+        if (_renameCascadeDepth <= 0) return false;
 
         var all = AllCompanyNames(session);
         if (all == null || !all.TryGetValue(companyName, out var rowName)) return false;
