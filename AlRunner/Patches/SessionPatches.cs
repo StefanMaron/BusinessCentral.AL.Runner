@@ -718,14 +718,16 @@ public static partial class BcRuntime
             }
             return true;
         }
-        catch (Exception ex) when (trap && !IsRunnerRefusal(ex))
+        catch (Exception ex) when (trap && StartSessionTrapSuppresses(ex))
         {
             // TrapError semantics: swallow + return false — EXCEPT a runner refusal (#5342). It is not
             // an error of the worker's, it says the surface the worker touched does not exist in this
-            // runner, and `false` would hide it. IsRunnerRefusal walks the inner chain, so one wrapped
-            // by the reflective trigger.Invoke is recognised too. Other worker exceptions keep
-            // returning false, as before; BC's own StartSession never shows the caller a worker's
+            // runner, and `false` would hide it. A permanent out-of-scope refusal is the one kind
+            // trapped, loudly, the way a guarded Codeunit.Run and a [TryFunction] trap it. The chain
+            // walk recognises one wrapped by the reflective trigger.Invoke. Other worker exceptions
+            // keep returning false, as before; BC's own StartSession never shows the caller a worker's
             // error at all, so no BC catch decides that case.
+            ReportTrappedPermanentRefusal(ex, "a guarded StartSession");
             return false;
         }
         catch (TargetInvocationException tie) when (tie.InnerException != null)

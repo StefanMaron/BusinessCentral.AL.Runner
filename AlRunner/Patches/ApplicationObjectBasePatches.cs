@@ -288,15 +288,19 @@ public static partial class BcRuntime
     /// TryFunction absorbs it, so the surface a test quietly did without is always visible in
     /// the run output even though the test itself legitimately continues.
     /// </summary>
-    private static void ReportOosTrappedByTryFunction(AlRunner.Infrastructure.RunnerOutOfScopeException oos)
+    private static void ReportOosTrappedByTryFunction(
+        AlRunner.Infrastructure.RunnerOutOfScopeException oos, string seam = "an AL [TryFunction]")
     {
         // The separator is an escape, NOT a literal NUL byte. Written literally it made this
         // file read as binary to file(1) and to ripgrep, which then SKIPPED it silently --
         // so a search for the classification logic below came back empty rather than wrong
         // (the CLAUDE.md false-negative family). Same key, same behaviour, searchable file.
-        if (!_oosTrapReported.TryAdd($"{oos.Api}\0{oos.Reason}", 0)) return;
+        // The seam is part of the key only when it is not the TryFunction one, so each trapping seam
+        // reports a surface once and the TryFunction line is byte-for-byte what it always was.
+        var key = seam == "an AL [TryFunction]" ? $"{oos.Api}\0{oos.Reason}" : $"{oos.Api}\0{oos.Reason}\0{seam}";
+        if (!_oosTrapReported.TryAdd(key, 0)) return;
         Console.Error.WriteLine(
-            $"[oos-in-try] {oos.Api} — {oos.Reason} — reached inside an AL [TryFunction]; " +
+            $"[oos-in-try] {oos.Api} — {oos.Reason} — reached inside {seam}; " +
             $"returning false, which is what real BC does in an environment that also lacks " +
             $"this surface. Reported once per surface.");
     }

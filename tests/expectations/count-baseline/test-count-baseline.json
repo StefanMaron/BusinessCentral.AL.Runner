@@ -30,7 +30,7 @@
         "field-virtual-table-item-tracking": { "tests": 4, "absentOn": ["27.0", "27.3", "27.5"] },
         "field-virtual-table-item-tracking-ext": { "tests": 0, "absentOn": ["27.0", "27.3", "27.5"] },
         "field-virtual-table-item-tracking-test": { "tests": 1, "absentOn": ["27.0", "27.3", "27.5"] },
-        "guarded-codeunit-run-refusal": { "tests": 14 },
+        "guarded-codeunit-run-refusal": { "tests": 16 },
         "http-egress-boundary-oos": { "tests": 4 },
         "install-trigger-seed": { "tests": 4 },
         "install-trigger-text-constant": { "tests": 2 },

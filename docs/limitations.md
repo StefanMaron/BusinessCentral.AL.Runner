@@ -1822,20 +1822,30 @@ behaviour and is not changed here.
 variable's own `Run()`) returns `false` for an AL runtime error, with the inner error readable
 through `GetLastErrorText()`. BC's `NavCodeunit.DoRunAsync` does that with a `catch (NavBaseException)`
 on its guarded branch and no other clause (decompiled: Ncl 28.4.53241.54346, `6f2cf682`; the body is
-identical on 27.5.46862.53931, `affa03c9`), so every other exception reaches the caller. The runner
-now draws the same line (`BcRuntime.GuardedRunSuppresses`, #5342): a runner refusal (out-of-scope,
-a BC shape gap, a corrupt dependency package), including one BC's own code wrapped in an AL error,
-and a raw CLR exception escape the guarded run. Before, both replacements caught everything, so a
-refusal became `ok=No lastError=[]` and resurfaced somewhere unrelated (#5149).
+identical on 27.5.46862.53931, `affa03c9`), so every other exception reaches the caller. Both runner
+replacements used to catch everything, so a refusal became `ok=No lastError=[]` and resurfaced
+somewhere unrelated (#5149). They now ask one predicate (`BcRuntime.GuardedRunSuppresses`, #5342):
 
-Two consequences. `asserterror` around a guarded run still catches a refusal, by the pinned
-contract of #2871, so a test can assert the refusal by name. And an AL `[TryFunction]` keeps its
-own, different rule: it traps a *permanent* out-of-scope refusal into `false`
-(`NavApplicationObjectBase_TryInvoke`), a guarded run does not.
+- an AL error, or any `NavBaseException`: `false`, with its text, as before;
+- a **permanently** out-of-scope refusal (task scheduling, SMTP, HTTP; whatever
+  `IsPermanentOutOfScope` classifies as permanent): `false`, trapped exactly as an AL `[TryFunction]`
+  traps it, with the same loud `[oos-in-try]` stderr line (naming "a guarded Codeunit.Run", once per
+  surface) and, as in a `[TryFunction]`, **no last error recorded**. A real BC environment that also
+  lacks the surface raises a trappable error there, which BC's catch suppresses. Only a *typed*
+  refusal counts, found anywhere on the inner chain, so one BC wrapped in an AL error is still seen;
+- everything else escapes: a `not-yet-implemented` refusal (the SQL backstop of #5190 is one on
+  purpose), the `out-of-scope: ` message convention, a BC shape gap, a corrupt dependency package,
+  and any raw CLR exception, a runner `NullReferenceException` included. A shape gap or a corrupt
+  package on the chain beats a permanent refusal on it, the order a `[TryFunction]` uses.
 
-`StartSession` with the Boolean consumed (TrapError) swallowed a worker's exception the same way,
-and lets a runner refusal out now. Any other worker exception still returns `false`: BC's own
-`StartSession` never shows the caller a worker's error, so no BC catch decides that case.
+`asserterror` around a guarded run still catches whatever escapes, by the pinned contract of #2871,
+so a test can assert a refusal by name.
+
+`StartSession` with the Boolean consumed (TrapError) swallowed a worker's exception the same way. It
+now traps a permanent refusal as above (seam named "a guarded StartSession") and lets every other
+runner refusal out; any other worker exception still returns `false`, because BC's own
+`StartSession` never shows the caller a worker's error, so no BC catch decides that case. A refusal
+that escapes is unwrapped from the reflection wrapper, for the unguarded `StartSession` too.
 
 Pinned by `tests/runner-extras/guarded-codeunit-run-refusal`,
 `tests/runner-extras-isolation-disabled/startsession-dispatch` and

@@ -1,4 +1,4 @@
-// Issue #5342 — a guarded Codeunit.Run must not turn a runner refusal into a quiet `false`.
+// Issue #5342 — what a guarded Codeunit.Run does with a runner refusal.
 //
 // The guarded form is `Ok := Codeunit.Run(...)` (the Boolean is consumed). BC's
 // NavCodeunit.DoRunAsync wraps OnRun in `catch (NavBaseException)` and nothing else, so an AL
@@ -8,7 +8,13 @@
 // refusal such as TaskScheduler.TaskExists became `ok=No lastError=[]` and resurfaced somewhere
 // unrelated (the #5149 workload).
 //
-// Every refusal test wraps the guarded run in `asserterror`: the runner's asserterror catches a
+// The runner now draws BC's line, with the one exception an AL [TryFunction] already has: a
+// PERMANENTLY out-of-scope refusal (task scheduling here) is trapped into `false`, loudly on stderr
+// and recording no last error, because a BC environment lacking that surface raises a trappable
+// error there. A NOT-YET-IMPLEMENTED refusal (the SQL backstop, Database.AlterKey) is a runner gap
+// and escapes the guarded run, as does anything that is not an AL error.
+//
+// Every escape test wraps the guarded run in `asserterror`: the runner's asserterror catches a
 // refusal on purpose (#2871), so reaching it proves the refusal escaped the guarded run, and a
 // guarded run that swallowed it makes the asserterror itself fail ("expected an error").
 codeunit 65749 "Gcr Tests"
@@ -19,45 +25,23 @@ codeunit 65749 "Gcr Tests"
     var
         Assert: Codeunit "Gcr Assert";
 
-    // ── The refusal escapes, static form ──
+    // ── A not-yet-implemented refusal escapes, static form ──
 
     [Test]
-    procedure StaticGuarded_Refusal_EscapesByName()
-    var
-        Ok: Boolean;
-    begin
-        asserterror Ok := Codeunit.Run(Codeunit::"Gcr Refuses");
-
-        Assert.ExpectedError('out-of-scope: TaskScheduler.TaskExists');
-        Assert.ExpectedError('docs/scope.md#jobs');
-    end;
-
-    [Test]
-    procedure StaticGuarded_RefusalFromBcCode_EscapesByName()
+    procedure StaticGuarded_NotYetImplementedRefusal_EscapesByName()
     var
         Ok: Boolean;
     begin
         asserterror Ok := Codeunit.Run(Codeunit::"Gcr Refuses From Bc");
 
         Assert.ExpectedError('out-of-scope: SQL connection');
+        Assert.ExpectedError('not-yet-implemented');
     end;
 
-    // ── The refusal escapes, instance form ──
+    // ── ...and instance form ──
 
     [Test]
-    procedure InstanceGuarded_Refusal_EscapesByName()
-    var
-        Refuses: Codeunit "Gcr Refuses";
-        Ok: Boolean;
-    begin
-        asserterror Ok := Refuses.Run();
-
-        Assert.ExpectedError('out-of-scope: TaskScheduler.TaskExists');
-        Assert.ExpectedError('docs/scope.md#jobs');
-    end;
-
-    [Test]
-    procedure InstanceGuarded_RefusalFromBcCode_EscapesByName()
+    procedure InstanceGuarded_NotYetImplementedRefusal_EscapesByName()
     var
         Refuses: Codeunit "Gcr Refuses From Bc";
         Ok: Boolean;
@@ -65,29 +49,75 @@ codeunit 65749 "Gcr Tests"
         asserterror Ok := Refuses.Run();
 
         Assert.ExpectedError('out-of-scope: SQL connection');
+        Assert.ExpectedError('not-yet-implemented');
     end;
 
     // ── ...through a second guarded run ──
 
     [Test]
-    procedure NestedGuarded_Refusal_CrossesBothRuns()
+    procedure NestedGuarded_NotYetImplementedRefusal_CrossesBothRuns()
     var
+        Nested: Codeunit "Gcr Nested";
         Ok: Boolean;
     begin
         // The inner guarded run lets the refusal out; the outer one must not catch it either.
-        asserterror Ok := Codeunit.Run(Codeunit::"Gcr Nested");
+        Nested.UseTheNotYetImplementedRefusal();
+        asserterror Ok := Nested.Run();
 
-        Assert.ExpectedError('out-of-scope: TaskScheduler.TaskExists');
+        Assert.ExpectedError('out-of-scope: SQL connection');
+    end;
+
+    // ── A permanent refusal is trapped, as in a [TryFunction]: false, no last error ──
+
+    [Test]
+    procedure StaticGuarded_PermanentRefusal_ReturnsFalseAndRecordsNoError()
+    var
+        Ok: Boolean;
+    begin
+        ClearLastError();
+        Ok := Codeunit.Run(Codeunit::"Gcr Refuses");
+
+        Assert.IsFalse(Ok, 'a guarded run of a permanently out-of-scope surface returns false, like a TryFunction');
+        // Measured, and the same as a [TryFunction]: no AL error was raised, so none is recorded. The
+        // surface is named once on stderr instead ([oos-in-try], pinned in AlRunner.Tests).
+        Assert.AreEqualText('', GetLastErrorText(), 'a trapped permanent refusal records no last error');
+    end;
+
+    [Test]
+    procedure InstanceGuarded_PermanentRefusal_ReturnsFalseAndRecordsNoError()
+    var
+        Refuses: Codeunit "Gcr Refuses";
+        Ok: Boolean;
+    begin
+        ClearLastError();
+        Ok := Refuses.Run();
+
+        Assert.IsFalse(Ok, 'a guarded run of a permanently out-of-scope surface returns false, like a TryFunction');
+        Assert.AreEqualText('', GetLastErrorText(), 'a trapped permanent refusal records no last error');
+    end;
+
+    [Test]
+    procedure NestedGuarded_PermanentRefusal_IsTrappedByTheInnerRun()
+    var
+        Nested: Codeunit "Gcr Nested";
+        Ok: Boolean;
+    begin
+        // The inner guarded run traps it, so the outer codeunit finishes normally and ITS guarded run
+        // answers true.
+        Ok := Nested.Run();
+
+        Assert.IsTrue(Ok, 'the inner guarded run trapped the permanent refusal, so the outer run completed');
     end;
 
     // ── The unguarded form was never swallowed: a control that the fix did not move it ──
 
     [Test]
-    procedure StaticUnguarded_Refusal_StillRaises()
+    procedure StaticUnguarded_PermanentRefusal_StillRaises()
     begin
         asserterror Codeunit.Run(Codeunit::"Gcr Refuses");
 
         Assert.ExpectedError('out-of-scope: TaskScheduler.TaskExists');
+        Assert.ExpectedError('docs/scope.md#jobs');
     end;
 
     // ── What BC suppresses is still suppressed, with its text, in both forms ──
@@ -177,13 +207,28 @@ codeunit 65749 "Gcr Tests"
     begin
         // A refusal that escaped a guarded run must leave the run's transaction bracket closed:
         // the next guarded run behaves like any other.
-        asserterror Ok := Codeunit.Run(Codeunit::"Gcr Refuses");
-        Assert.ExpectedError('out-of-scope: TaskScheduler.TaskExists');
+        asserterror Ok := Codeunit.Run(Codeunit::"Gcr Refuses From Bc");
+        Assert.ExpectedError('out-of-scope: SQL connection');
 
         ClearLastError();
         Ok := Codeunit.Run(Codeunit::"Gcr Errors");
 
         Assert.IsFalse(Ok, 'a guarded run after an escaped refusal still traps an AL error');
+        Assert.AreEqualText('plain AL error', GetLastErrorText(), 'with its text');
+    end;
+
+    [Test]
+    procedure GuardedRun_AfterAPermanentRefusalWasTrapped_StillTrapsAnAlError()
+    var
+        Ok: Boolean;
+    begin
+        Ok := Codeunit.Run(Codeunit::"Gcr Refuses");
+        Assert.IsFalse(Ok, 'the permanent refusal is trapped');
+
+        ClearLastError();
+        Ok := Codeunit.Run(Codeunit::"Gcr Errors");
+
+        Assert.IsFalse(Ok, 'a guarded run after a trapped refusal still traps an AL error');
         Assert.AreEqualText('plain AL error', GetLastErrorText(), 'with its text');
     end;
 

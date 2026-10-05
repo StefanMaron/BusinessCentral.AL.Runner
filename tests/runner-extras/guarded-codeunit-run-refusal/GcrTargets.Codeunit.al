@@ -2,7 +2,8 @@
 // call — the static `Codeunit.Run(Codeunit::X)` and a codeunit variable's own `Run()` — because
 // the runner replaces them with two different methods.
 
-// A runner refusal by name: task scheduling is permanently out of scope (docs/scope.md#jobs).
+// A PERMANENT runner refusal by name: task scheduling is out of scope for good (docs/scope.md#jobs),
+// the kind a guarded run traps, as a [TryFunction] does.
 codeunit 65741 "Gcr Refuses"
 {
     trigger OnRun()
@@ -13,8 +14,9 @@ codeunit 65741 "Gcr Refuses"
     end;
 }
 
-// The other refusal flavour: an in-scope surface the runner cannot answer, raised from inside
-// BC's own code rather than from a runner patch (the #5190 backstop).
+// The other refusal flavour: a NOT-YET-IMPLEMENTED one. An in-scope surface the runner cannot answer,
+// raised from inside BC's own code rather than from a runner patch (the #5190 backstop). Its reason
+// says not-yet-implemented on purpose, so it must escape a guarded run.
 codeunit 65742 "Gcr Refuses From Bc"
 {
     trigger OnRun()
@@ -68,15 +70,26 @@ codeunit 65746 "Gcr Quiet"
     end;
 }
 
-// Runs the refusing codeunit through a guarded run of its own, so the refusal has to cross a
-// second guarded run on its way out.
+// Runs a refusing codeunit through a guarded run of its own, so the outcome has to cross a second
+// guarded run on its way out. One instance carries the choice, so the same codeunit serves both kinds.
 codeunit 65747 "Gcr Nested"
 {
+    var
+        UseNotYetImplemented: Boolean;
+
+    procedure UseTheNotYetImplementedRefusal()
+    begin
+        UseNotYetImplemented := true;
+    end;
+
     trigger OnRun()
     var
         Ok: Boolean;
     begin
-        Ok := Codeunit.Run(Codeunit::"Gcr Refuses");
+        if UseNotYetImplemented then
+            Ok := Codeunit.Run(Codeunit::"Gcr Refuses From Bc")
+        else
+            Ok := Codeunit.Run(Codeunit::"Gcr Refuses");
     end;
 }
 
