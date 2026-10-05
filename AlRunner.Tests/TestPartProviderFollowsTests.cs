@@ -28,6 +28,7 @@ public sealed class TestPartProviderFollowsTests
         r.AssertPassed("Codeunit70961.DependentFollowsTheProvider_ItsOwnCursorIsOnTheProvidersRow");
         r.AssertPassed("Codeunit70961.HostMovesToAnEmptyProvider_DependentShowsNothing");
         r.AssertPassed("Codeunit70961.PlainLinkedPart_HostMovesToARowWithNoChildren_ShowsNothing");
+        r.AssertPassed("Codeunit70961.HostMove_DependentsOnAfterGetRecordCount_IsNotRaisedByTheProviderWiring");
 
         r.AssertNoFailures();
     }

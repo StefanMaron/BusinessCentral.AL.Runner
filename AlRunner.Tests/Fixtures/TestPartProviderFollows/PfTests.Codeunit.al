@@ -29,7 +29,9 @@ codeunit 70961 "PF Tests"
         Header: Record "PF Header";
         Line: Record "PF Line";
         Detail: Record "PF Detail";
+        Log: Record "PF Log";
     begin
+        Log.DeleteAll();
         Detail.DeleteAll();
         Line.DeleteAll();
         Header.DeleteAll();
@@ -128,5 +130,27 @@ codeunit 70961 "PF Tests"
 
         Card.GoToKey('H2');
         Assert.AreEqual('', Card.Lines.HeaderNo.Value, 'H2 has no lines, and the part keeps no row');
+    end;
+
+    // RUNNER MECHANISM, not a BC claim: a host move reloads its parts twice (GoToKey's search
+    // refreshes at the row it settles on and again after, #2677), so the Detail part's trigger
+    // fires twice. Routing the reload through the Provider must keep it at two: the host's own
+    // pass skips a part its Provider re-points, and a third firing would mean it did not.
+    [Test]
+    procedure HostMove_DependentsOnAfterGetRecordCount_IsNotRaisedByTheProviderWiring()
+    var
+        Card: TestPage "PF Card";
+        Log: Record "PF Log";
+        Before: Integer;
+    begin
+        Initialize();
+        Card.OpenView();
+        Card.GoToKey('H1');
+        Assert.AreEqual('ten', Card.Detail.Info.Value, 'the Detail part is built');
+        Before := Log.Count();
+
+        Card.GoToKey('H3');
+        Assert.AreEqual('thirty', Card.Detail.Info.Value, 'the Detail part followed the host move');
+        Assert.AreEqual(Format(Before + 2), Format(Log.Count()), 'the two firings a host move always cost');
     end;
 }

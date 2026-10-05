@@ -15,4 +15,11 @@ page 70961 "PF Detail Part"
             }
         }
     }
+
+    trigger OnAfterGetRecord()
+    var
+        Log: Record "PF Log";
+    begin
+        Log.Insert();
+    end;
 }
