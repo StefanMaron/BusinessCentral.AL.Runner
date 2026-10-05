@@ -21,6 +21,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **jobs:** the --jobs aggregate counts a worker that stopped on a provisioning gap as NOT RUN
 - **asserterror:** missing-object stand-ins for Codeunit.Run and RecordRef.Open
 - **runtime:** refuse by name when a SQL connection scope is opened without a database
 - **jobs:** --jobs writes the caller's --output-junit/--out/--output-json report instead of dropping or clobbering it
