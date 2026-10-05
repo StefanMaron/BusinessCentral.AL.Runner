@@ -403,6 +403,14 @@ them (#5129); a worker never writes the path the caller named.
   and the run exits at least 2: the report is short, which is a statement about the report and not about
   the AL. A report the parent cannot write raises a run that would have exited 0 to 2, as in a single
   process (`JobsReports.Escalate`).
+- The aggregate's `NOT RUN` and `PARTIAL` lines (#5333): a worker that stopped before its output block
+  (a provisioning gap, a crash) wrote no JUnit file and printed no `COMPILE FAIL` / `EXEC FAIL` header, so
+  the parent counts from what the file says and not from text: no readable JUnit file, so every bundle the
+  worker was handed is `NOT RUN`, counted once however many workers hold it, and nothing the worker printed
+  is read. A bundle another worker held and reported is `PARTIAL` (its other part is in the totals), and a
+  bundle a reporting worker already printed a header for is not counted a second time. The
+  `jobs: shard N ended ... without writing its test results` note on stderr names the bundles. The report
+  files above keep their own test, a readable results file from the worker (`JobsReports.Merge`).
 - `--no-strict-exit` is applied by the parent, to the run's own code: a worker forced to exit 0 hid
   its verdict, so the aggregate said `Result: PASSED` over failing tests and the document's `exitCode` read
   0. The document's `exitCode` is the run's own code, as in a single process.

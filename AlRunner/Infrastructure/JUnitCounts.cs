@@ -6,7 +6,10 @@
 //
 // A missing or unreadable file reads as all zeros ON PURPOSE, and is NOT how a failed shard goes
 // unnoticed: Run() takes the worst child exit code independently of these counts, so a worker
-// that died before writing contributes nothing here and still fails the run.
+// that died before writing contributes nothing here and still fails the run. TryRead says which of
+// the two it was: a worker writes this file once it reaches its output block, so a file that is not
+// there is a worker that stopped before reporting (a provisioning gap, a crash), and its bundles are
+// missing from the totals (ParallelFanOut.CountWorkersThatLeftNothing, #5333).
 
 using System.Xml.Linq;
 
@@ -23,9 +26,16 @@ internal static class JUnitCounts
     /// </summary>
     public static JUnitTotals Read(string path)
     {
+        TryRead(path, out var totals);
+        return totals;
+    }
+
+    /// <summary>False when the file is missing or cannot be read; <paramref name="totals"/> is then all zeros.</summary>
+    public static bool TryRead(string path, out JUnitTotals totals)
+    {
         try
         {
-            if (!File.Exists(path)) return default;
+            if (!File.Exists(path)) { totals = default; return false; }
             var doc = XDocument.Load(path);
             long t = 0, f = 0, e = 0, s = 0;
             foreach (var suite in doc.Descendants("testsuite"))
@@ -35,12 +45,14 @@ internal static class JUnitCounts
                 e += Attr(suite, "errors");
                 s += Attr(suite, "skipped");
             }
-            return new JUnitTotals(t, f, e, s);
+            totals = new JUnitTotals(t, f, e, s);
+            return true;
         }
         catch
         {
             // Unreadable output is not a verdict — the shard's exit code is.
-            return default;
+            totals = default;
+            return false;
         }
     }
 

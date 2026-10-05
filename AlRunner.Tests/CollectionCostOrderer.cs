@@ -256,6 +256,10 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // and single runs on one cache root. NOT a CI measurement: 61 s on a local run (BC 28.5), recorded at 2.3 times
             // that; re-record from the first main run that reports it.
             ["JobsReportsEndToEndTests"] = 140,
+            // #5315, #5333: eleven tests spawning runners on a declared dependency no package cache holds: plain, --per-suite,
+            // --server and fan-outs whose NOT RUN count the lost worker must reach. NOT a CI measurement: 92.5 s cold and 54.2 s
+            // warm on local runs (BC 28.5), recorded at 2.3 times the cold one; re-record from the first main run that reports it.
+            ["MissingDependencyExitCodeTests"] = 213,
             // #5238: recorded from Test Matrix run 37080059144 (head 465ed74f), at the lower leg rounded down:
             // CacheCompileLockEndToEndTests 110.1s on 27.5,
             // 123.1s on 28.5. CacheCompileLockWaitersEndToEndTests was recorded from the same run at four rows (107.4s on
