@@ -845,16 +845,35 @@ public static partial class BcRuntime
         if (isFeatureKeyTable)
             AlRunner.Patches.RecordPatches.GuardFeatureKeyReadOnlyFieldsOnModify(self);
 
+        StampModifiedPair(self);
+    }
+
+    /// <summary>
+    /// Stamps SystemModifiedAt/By on the record a Rename writes. Called via Cecil prepend on
+    /// RecordImplementation.RenameRecordAsync(DataError, NavRecord) with its second argument,
+    /// the renamed clone: RenameRecordAsync copies the clone's primary key and changed fields
+    /// into the buffer it hands the data layer, so a stamp set on the clone is what gets written.
+    /// Claim: a rename modifies the key fields, so BC's NavSqlDmlCommand.ModifyAsync ->
+    /// AppendAuditFields stamps the pair, as it does for Modify (decompiled on Ncl
+    /// 28.5.54151.55568, sha256 8b2014bf...; corpus tests in AlRunner#5209). The runner's data
+    /// layer is not BC's SQL layer and so never does it. SystemCreatedAt/By are left alone.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void StampSystemFieldsOnRename(Microsoft.Dynamics.Nav.Runtime.NavRecord renamedRecord)
+        => StampModifiedPair(renamedRecord);
+
+    private static void StampModifiedPair(Microsoft.Dynamics.Nav.Runtime.NavRecord record)
+    {
         try
         {
-            var meta = self.MetaTable;
+            var meta = record.MetaTable;
             var nowUtc = System.DateTime.UtcNow;
 
-            TryStampDateTime(self, meta, 2000000003, nowUtc);    // SystemModifiedAt
+            TryStampDateTime(record, meta, 2000000003, nowUtc);    // SystemModifiedAt
             if (TryGetSessionUserSecurityId(out var sessionUser))
-                TryStampGuid(self, meta, 2000000004, sessionUser); // SystemModifiedBy
+                TryStampGuid(record, meta, 2000000004, sessionUser); // SystemModifiedBy
         }
-        catch { /* never block modify */ }
+        catch { /* never block the write */ }
     }
 
     /// <summary>

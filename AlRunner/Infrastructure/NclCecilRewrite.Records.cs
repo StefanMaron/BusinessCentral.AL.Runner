@@ -1452,6 +1452,40 @@ public static partial class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Prepended StampSystemFieldsOnModify → NavRecord.ModifyAsync(DataError,bool,bool,bool)");
         }
 
+        // ── RecordImplementation.RenameRecordAsync(DataError, NavRecord) — SystemModified stamp prepend ──
+        // BC stamps SystemModifiedAt/By in its SQL layer on any write that modifies a field, and a
+        // rename modifies the key fields (#5209). The runner's data layer does not, and the
+        // NavRecord.ModifyAsync prepend above never sees a Rename. Stamps the second argument, the
+        // renamed clone whose key and changed fields RenameRecordAsync copies into the buffer it
+        // writes. Refuses loudly: without it SystemModifiedAt silently freezes across a Rename.
+        // Same shape as the Modify prepend above (`ldarg; call helper`), so it shifts no tokens.
+        {
+            var recImpl = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.RecordImplementation")
+                ?? throw new InvalidOperationException("RecordImplementation type not found in Ncl");
+            var renameRecord = recImpl.Methods.FirstOrDefault(m =>
+                m.Name == "RenameRecordAsync"
+                && m.Parameters.Count == 2
+                && m.Parameters[0].ParameterType.Name == "DataError"
+                && m.Parameters[1].ParameterType.FullName == "Microsoft.Dynamics.Nav.Runtime.NavRecord")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] RecordImplementation.RenameRecordAsync(DataError, NavRecord) not found — "
+                    + "SystemModifiedAt/By would silently stop moving on every Rename in the run (#5209).");
+
+            var helperMi = typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.StampSystemFieldsOnRename),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("BcRuntime.StampSystemFieldsOnRename not found");
+            var helperRef = asm.MainModule.ImportReference(helperMi);
+
+            var body = renameRecord.Body;
+            var il = body.GetILProcessor();
+            var firstOriginal = body.Instructions[0];
+            il.InsertBefore(firstOriginal, il.Create(OpCodes.Ldarg, renameRecord.Parameters[1]));
+            il.InsertBefore(firstOriginal, il.Create(OpCodes.Call, helperRef));
+            if (body.MaxStackSize < 1) body.MaxStackSize = 1;
+            Console.Error.WriteLine("[Cecil] Prepended StampSystemFieldsOnRename → RecordImplementation.RenameRecordAsync(DataError,NavRecord)");
+        }
+
         // ── RecordImplementation.ModifyRecordAsync(DataError) — User system-table modify arm ──
         // SystemTableTriggers.OnBeforeModifyUserAsync refuses a user name / Windows SID another
         // user carries and normalises + validates "Authentication Email" (#2363). Placed on
