@@ -2831,6 +2831,7 @@ static string DescribeRefusals(
         o => o.StartsWith("Profile ", StringComparison.Ordinal));
     var exclDetails = emitOutput.ExcludedObjectDetails
         ?? Array.Empty<TddExcludedObjectDetail>();
+    if (!allProfiles) TddCrossBundle.NoteObjectsDropped(); // #5339: a dropped object is not an absent one
     var (verdicts, everyDropSafe) = ProgramSupport.ExcludedObjectTriage.TriageDrops(
         emitOutput.ExcludedObjects, exclDetails, allPaths);
 
@@ -3330,6 +3331,10 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                     if (AlRunner.Infrastructure.ProvisionGapLog.WriteAtDiscovery) Console.Error.WriteLine(g);
                     bundleProvisionGaps.Add(g);
                 }
+                // #5339: both lists above bypass ProvisionGapLog.Report, so say so, or a missing-object
+                // refusal would read this run as complete and call a package it could not load "absent".
+                if (resolver.UnservableDependencies.Any() || resolver.ProvisioningGaps.Any())
+                    AlRunner.Infrastructure.ProvisionGapLog.NoteDependencyGap();
                 // #5233: the deferral attempt asks whether the BUNDLE passes without the platform
                 // apps. A loaded dependency that source-compiles against a withheld floor (Test
                 // Runner, by default) answers a different question: its compile drops objects and
@@ -4784,6 +4789,9 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
     if (bundleTests.Count == 0 && bundleErrors.Count > 0
         && !AlRunner.Infrastructure.BundleFailureStage.OnlyDropsAPeerReports(bundleErrors, droppedReportedByPeer))
         bundleStage = AlRunner.Infrastructure.BundleFailureStage.Classify(bundleErrors);
+    // #5339: a bundle that did not compile leaves its objects out of the process, and a later bundle's test that reaches
+    // one by id must not read it as absent.
+    if (bundleStage == BucketStage.CompileFailed) TddCrossBundle.NoteObjectsDropped();
     // #3538: drained here, once per bucket, because the accumulator is run-wide while
     // CompanyInitializer.ResetForNewBundle runs once per APP GROUP — a bucket with several
     // groups can abort in one and initialize cleanly in the next, and both facts belong to

@@ -122,8 +122,10 @@ public sealed class CodeunitRunWriteTransactionRefusalTests
         // TrapError is the errorLevel AL's compiler emits when the Boolean result is consumed.
         // The refusal must escape the trap: `Ok := Codeunit.Run(...)` errors, it does not
         // quietly evaluate to false.
+        // 69004 resolves (UnresolvedCodeunitInvokeTests.Codeunit69004): BC takes `handle.Target`
+        // BEFORE the refusal, so an unresolvable id would raise the missing-object error first (#5339).
         var ex = Assert.ThrowsAny<Exception>(
-            () => BcRuntime.NavCodeunit_RunCodeunit(DataError.TrapError, 60190, null));
+            () => BcRuntime.NavCodeunit_RunCodeunit(DataError.TrapError, 69004, null));
 
         Assert.Equal("NavCSideException", ex.GetType().Name);
         Assert.Equal(LangString("TransactionWorldWithActiveWriteTransactionError"), ex.Message);

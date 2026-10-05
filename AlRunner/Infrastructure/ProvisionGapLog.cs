@@ -31,6 +31,7 @@ internal static class ProvisionGapLog
 {
     private static readonly object _lock = new();
     private static List<string> _gaps = new();
+    private static bool _dependencyGap;
 
     /// <summary>
     /// Forget the previous bundle's gaps. Called once per bundle: a run walks bundles in
@@ -44,6 +45,34 @@ internal static class ProvisionGapLog
             _gaps = new List<string>();
             _unservableApps = new List<(string App, Func<IEnumerable<int>> CodeunitIds)>();
             _codeunitOwner = null;
+            _dependencyGap = false;
+        }
+    }
+
+    /// <summary>
+    /// The run resolved a declared dependency it cannot fully serve (Program's UnservableDependencies /
+    /// ProvisioningGaps), which the console prints from its own list rather than through <see cref="Report"/>.
+    /// </summary>
+    internal static void NoteDependencyGap()
+    {
+        lock (_lock) _dependencyGap = true;
+    }
+
+    /// <summary>
+    /// Whether an object id that no loaded app declares is ABSENT, as it is on a service tier running the
+    /// same apps (#5339), rather than declared by a package this run could not load. False once any gap,
+    /// unservable app, unserved dependency or dropped object was recorded: the runner then cannot tell the two apart and
+    /// keeps its loud refusal instead of raising BC's own "object does not exist" error. Trap: a false
+    /// "absent" turns a provisioning gap into a clean AL error that <c>asserterror</c> then swallows.
+    /// </summary>
+    internal static bool CanEstablishAbsence
+    {
+        get
+        {
+            // A dropped object EXISTS in the source, so its id is not absent (#5339). Read outside our lock:
+            // TddCrossBundle takes its own, and neither calls the other while holding it.
+            if (AlRunner.TddCrossBundle.AnyObjectDropped) return false;
+            lock (_lock) return !_dependencyGap && _gaps.Count == 0 && _unservableApps.Count == 0;
         }
     }
 
@@ -138,11 +167,11 @@ internal static class ProvisionGapLog
 
     /// <summary>One bundle's gaps and unservable apps, restored before its deferred run so the run
     /// names that bundle's missing apps and its tail reads that bundle's gaps (#4931).</summary>
-    internal sealed record Snapshot(List<string> Gaps, List<(string App, Func<IEnumerable<int>> CodeunitIds)> UnservableApps);
+    internal sealed record Snapshot(List<string> Gaps, List<(string App, Func<IEnumerable<int>> CodeunitIds)> UnservableApps, bool DependencyGap);
 
     internal static Snapshot Capture()
     {
-        lock (_lock) return new(_gaps.ToList(), _unservableApps.ToList());
+        lock (_lock) return new(_gaps.ToList(), _unservableApps.ToList(), _dependencyGap);
     }
 
     internal static void Restore(Snapshot snapshot)
@@ -152,6 +181,7 @@ internal static class ProvisionGapLog
             _gaps = snapshot.Gaps.ToList();
             _unservableApps = snapshot.UnservableApps.ToList();
             _codeunitOwner = null;
+            _dependencyGap = snapshot.DependencyGap;
         }
     }
 

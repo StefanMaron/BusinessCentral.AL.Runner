@@ -845,7 +845,7 @@ public sealed class DependencyResolverTests : IDisposable
     /// the only dependency Microsoft's test-toolkit packages declare (Library Assert's manifest:
     /// <c>Platform="28.0.0.0"</c>, an empty <c>&lt;Dependencies /&gt;</c>).
     /// </summary>
-    private static byte[] MakeMinimalApp(string appId, string name, string publisher, string version,
+    internal static byte[] MakeMinimalApp(string appId, string name, string publisher, string version,
         bool r2r, bool alSource, string? platform)
         => MakeMinimalApp(appId, name, publisher, version, r2r, alSource, platform, application: null);
 

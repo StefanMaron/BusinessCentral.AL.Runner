@@ -1,0 +1,23 @@
+{
+  "id": "b2c3d4e5-5339-4a61-8b93-0c7d5e9f2002",
+  "name": "Runner Tests Fixture - Missing Object Broken Lib",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "#5339 fixture",
+  "description": "#5339 fixture",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 72220,
+      "to": 72229
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

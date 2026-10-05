@@ -86,6 +86,22 @@ public static class TddCrossBundle
     /// first AL diagnostic that identified it.</summary>
     internal sealed record DroppedCodeunit(string App, string Name, string Diagnostic);
 
+    // #5339: a compile in this process dropped an object of any kind. The table above holds codeunits only and by id;
+    // this is what lets a missing-object stand-in tell a dropped object, which EXISTS in the source, from an absent one.
+    private static bool _objectsDropped;
+
+    /// <summary>Whether any object was dropped by a compile of this run. Fed by every path that registers or reports a
+    /// drop, and cleared with the table above.</summary>
+    internal static bool AnyObjectDropped
+    {
+        get { lock (Sync) return _objectsDropped; }
+    }
+
+    internal static void NoteObjectsDropped()
+    {
+        lock (Sync) _objectsDropped = true;
+    }
+
     internal static void RegisterDroppedCodeunit(int id, DroppedCodeunit dropped)
     {
         lock (Sync) Dropped[id] = dropped;
@@ -97,7 +113,12 @@ public static class TddCrossBundle
 
     internal static void NoteDependencyDropped(IEnumerable<string> objectDisplayNames)
     {
-        lock (Sync) foreach (var n in objectDisplayNames) DependencyDropped.Add(n);
+        lock (Sync)
+            foreach (var n in objectDisplayNames)
+            {
+                DependencyDropped.Add(n);
+                _objectsDropped = true;
+            }
     }
 
     internal static IReadOnlyList<string> DependencyDroppedNames()
@@ -251,6 +272,7 @@ public static class TddCrossBundle
             RunBundles.Clear();
             Dropped.Clear();
             DependencyDropped.Clear();
+            _objectsDropped = false;
             _anySubscriber = null;
             KeyCallers.Clear();
             KeyGraphApps.Clear();
@@ -278,6 +300,7 @@ public static class TddCrossBundle
             KeyGraphApps.Clear();
             Dropped.Clear();
             DependencyDropped.Clear();
+            _objectsDropped = false;
             _anySubscriber = null;
             _pending = false;
         }

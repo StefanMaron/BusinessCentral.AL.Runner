@@ -39,6 +39,7 @@
 using System;
 using System.Reflection;
 using AlRunner;
+using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
 using Xunit;
 
@@ -186,9 +187,17 @@ public class UnresolvedCodeunitInvokeTests
             Assert.IsType<AlRunner.Infrastructure.MissingDependencyCodeunitException>(viaNoOp).CodeunitId);
 
         const int outOfRange = 69005;   // outside both no-op ranges, and no Codeunit69005 type exists
-        var viaCreate = Unwrap(Assert.ThrowsAny<Exception>(() => new NavCodeunitHandle(Root(), outOfRange).Target));
-        Assert.Equal(outOfRange,
-            Assert.IsType<AlRunner.Infrastructure.MissingDependencyCodeunitException>(viaCreate).CodeunitId);
+        // A gap-free run calls such an id absent and raises BC's own error (#5339, MissingObjectStandInTests);
+        // it is the recorded gap that makes the runner unable to tell, and keeps the typed refusal.
+        ProvisionGapLog.Reset();
+        ProvisionGapLog.Report("a dependency this run could not load");
+        try
+        {
+            var viaCreate = Unwrap(Assert.ThrowsAny<Exception>(() => new NavCodeunitHandle(Root(), outOfRange).Target));
+            Assert.Equal(outOfRange,
+                Assert.IsType<AlRunner.Infrastructure.MissingDependencyCodeunitException>(viaCreate).CodeunitId);
+        }
+        finally { ProvisionGapLog.Reset(); }
     }
 
     /// <summary>
