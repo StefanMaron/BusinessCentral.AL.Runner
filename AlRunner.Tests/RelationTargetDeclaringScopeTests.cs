@@ -162,8 +162,7 @@ public class RelationTargetDeclaringScopeTests
             });
     }
 
-    // Own namespace before imported is the compiler's order; dependency candidates are not
-    // namespace-checked yet (#5224).
+    // Own namespace before imported is the compiler's order.
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -197,6 +196,99 @@ public class RelationTargetDeclaringScopeTests
             {
                 var resolved = RecordPatches.ResolveTableNameInDeclaringScope(TargetName, writer);
                 Assert.Equal(ImportedBundleId, resolved?.TableId);
+            });
+    }
+
+    // #5224. A dependency table is read with the namespace its symbol file states, and a name
+    // the writer's own namespace holds as a dependency's table means that table, not an imported
+    // bundle table. The BC half is corpus codeunit 69217 "Test Relation Own NS Dep".
+    private static ParsedTable DependencyTable(int id, string name, string? ns) =>
+        new(id, name, new List<ParsedField>(), new List<int>(), Namespace: ns);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SourceDeclaredName_OwnNamespaceDependencyAndImportedBundle_TheDependencyWins(bool importedFirst)
+    {
+        var writer = SourceTable(BundleDeclaringId, "RTS Writer", "Test.Own", "Test.Imported");
+        var imported = SourceTable(ImportedBundleId, TargetName, "Test.Imported");
+        WithState(
+            parsed: importedFirst ? new[] { imported, writer } : new[] { writer, imported },
+            index: new[] { (AppA, DependencyTable(DepTargetId, TargetName, "test.own")) },
+            act: () =>
+            {
+                var resolved = RecordPatches.ResolveTableNameInDeclaringScope(TargetName, writer);
+                Assert.Equal(DepTargetId, resolved?.TableId);
+            });
+    }
+
+    // The global namespace is the own namespace of a file that states none.
+    [Fact]
+    public void SourceDeclaredName_GlobalNamespaceWriter_GlobalDependencyBeatsAnImportedBundle()
+    {
+        var writer = SourceTable(BundleDeclaringId, "RTS Writer", null, "Test.Imported");
+        var imported = SourceTable(ImportedBundleId, TargetName, "Test.Imported");
+        WithState(
+            parsed: new[] { imported, writer },
+            index: new[] { (AppA, DependencyTable(DepTargetId, TargetName, null)) },
+            act: () =>
+            {
+                var resolved = RecordPatches.ResolveTableNameInDeclaringScope(TargetName, writer);
+                Assert.Equal(DepTargetId, resolved?.TableId);
+            });
+    }
+
+    // The other half of the order: a dependency table in some OTHER namespace is not in scope
+    // ahead of an imported bundle table, so the bundle table keeps the name.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SourceDeclaredName_DependencyInAnotherNamespace_ImportedBundleStillWins(bool importedFirst)
+    {
+        var writer = SourceTable(BundleDeclaringId, "RTS Writer", "Test.Own", "Test.Imported");
+        var imported = SourceTable(ImportedBundleId, TargetName, "Test.Imported");
+        WithState(
+            parsed: importedFirst ? new[] { imported, writer } : new[] { writer, imported },
+            index: new[] { (AppA, DependencyTable(DepTargetId, TargetName, "Test.Elsewhere")) },
+            act: () =>
+            {
+                var resolved = RecordPatches.ResolveTableNameInDeclaringScope(TargetName, writer);
+                Assert.Equal(ImportedBundleId, resolved?.TableId);
+            });
+    }
+
+    // Nothing in scope in the own namespace or through a using: the name still means a
+    // dependency's table, whatever namespace that one sits in (the step before #5224).
+    [Fact]
+    public void SourceDeclaredName_OnlyADependencyInAnotherNamespace_StillResolvesToIt()
+    {
+        var writer = SourceTable(BundleDeclaringId, "RTS Writer", "Test.Own", "Test.Imported");
+        WithState(
+            parsed: new[] { SourceTable(BundleTargetId, TargetName, "Test.Unrelated"), writer },
+            index: new[] { (AppA, DependencyTable(DepTargetId, TargetName, "Test.Elsewhere")) },
+            act: () =>
+            {
+                var resolved = RecordPatches.ResolveTableNameInDeclaringScope(TargetName, writer);
+                Assert.Equal(DepTargetId, resolved?.TableId);
+            },
+            freshParsedTables: true);
+    }
+
+    // Both in the own namespace: the runner takes the bundle table, as before #5224. A runner
+    // choice, not a BC claim: no corpus test declares a bundle table over a dependency's name in
+    // the dependency's own namespace.
+    [Fact]
+    public void SourceDeclaredName_OwnNamespaceBundleAndOwnNamespaceDependency_TheBundleTableKeepsIt()
+    {
+        var writer = SourceTable(BundleDeclaringId, "RTS Writer", "Test.Own");
+        var own = SourceTable(OtherBundleId, TargetName, "Test.Own");
+        WithState(
+            parsed: new[] { own, writer },
+            index: new[] { (AppA, DependencyTable(DepTargetId, TargetName, "Test.Own")) },
+            act: () =>
+            {
+                var resolved = RecordPatches.ResolveTableNameInDeclaringScope(TargetName, writer);
+                Assert.Equal(OtherBundleId, resolved?.TableId);
             });
     }
 

@@ -51,8 +51,8 @@ public static partial class RecordPatches
     /// clause names a dependency's table.
     /// <para><b>A bare clause resolved only through the global namespace or a <c>using</c> is
     /// undecided</b> (<c>AlsoDependency</c>): the compiler takes the own namespace first, and a
-    /// dependency table carries no namespace here, so the runner cannot see that the own namespace
-    /// holds one. It then keeps the dependency's table too, a superset as before #5289 and never
+    /// dependency table's namespace is not read here (#5293 item 2), so the runner cannot see that
+    /// the own namespace holds one. It then keeps the dependency's table too, a superset as before #5289 and never
     /// lost from the table the extension extends (docs/tableextension-binding.md).</para>
     /// </summary>
     private static SourceTargets SourceTableIdsTargetedBy(int extensionId, TableExtensionTarget ext)

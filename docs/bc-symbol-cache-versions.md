@@ -189,6 +189,15 @@ v1 and v2 predate this record.
   46 was confirmed free immediately before pushing: `origin/main` read 45, and a sweep of every
   remote `agent/*` branch carrying this file found none above 45.
 
+- **v47**: a dependency's table carries the `Namespaces` tree path it sat under in
+  `ParsedTable.Namespace` (null at the root), `Usings` still null (#5224). The same trap as v35
+  through v46: `ParsedTable.Namespace` already existed and held null for a symbol-read table, so
+  `PayloadShape` cannot see the value change, and a warm box would replay a Base Application
+  table with no namespace, which `RecordPatches.ResolveInFileScope` reads as "not in the writer's
+  own namespace".
+
+  47 was confirmed free immediately before pushing: see the PR body for what `origin/main` read.
+
 ## Changes that deliberately did not bump
 
 - No CacheVersion bump of its own for PageSymbol.TableView (#2820), deliberately — the numbered bumps above belong to other changes (v28 to #2518, v29 to #2973), and this one rides whatever the current integer is without moving it. That member is reachable from CachePayload, so PayloadShape (issue #2335, merged as #2856) already gives it a different cache key than any payload written without it — the stale-entry hazard every entry in the version history describes is closed by construction, and bumping as well would only be ceremony. CacheVersion means what RecordShapeFingerprint's own summary says it means: the PARSE changed while the SHAPE did not, which no structural hash can see — v28 and v29 are both exactly that case, and this change is the other one. Verified rather than assumed: a cold run of this build wrote fresh entries and a warm second run read them back, on the SHARED ~/.cache/al-runner/bc-symbols with no --cache isolation, and the precompiled-page corpus arm (Base App page 1710) passed in both.

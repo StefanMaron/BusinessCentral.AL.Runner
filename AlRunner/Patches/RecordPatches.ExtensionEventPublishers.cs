@@ -124,7 +124,7 @@ public static partial class RecordPatches
                     EnsureBcSymbolExtensionIndex();
                     if (TryGetInAppGroupScope("table", _parsedTables, baseId, out var parsed))
                         return ExtensionIdsForTable(parsed).ToList();
-                    // Not parsed yet: a dependency's table, which carries no namespace (#5289).
+                    // Not parsed yet: a dependency's table, whose namespace the extends match does not read (#5293).
                     var tableName = DependencyTableName(baseId);
                     return tableName != null
                            && _extensionIdsByBaseTable.TryGetValue(tableName.ToLowerInvariant(), out var extIds)

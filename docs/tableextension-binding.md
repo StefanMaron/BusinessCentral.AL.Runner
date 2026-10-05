@@ -22,8 +22,9 @@ the clause names:
 
 A dependency's table is extended when the clause names **no** source table, and also when a bare
 clause reaches a source table only through the global namespace or a `using` (see "Undecided
-clauses"). A dependency's table carries no namespace in the symbol cache, so the namespace written
-in front of a dependency's name is not compared.
+clauses"). A dependency's table carries its namespace in the symbol cache since #5224, but this
+match does not read it yet (#5293 item 2), so the namespace written in front of a dependency's
+name is not compared.
 
 ## Undecided clauses
 
@@ -57,13 +58,13 @@ by id.
 - A **precompiled** dependency's tableextension states a name only (its symbol has no namespace), so
   it is registered with no target and keeps matching every table of that name, source or dependency.
   The page twin is #5288 item 3.
-- A **dependency table's** own namespace is unknown, so two dependency tables sharing a name are not
-  told apart, and a bare clause is not checked against the `using`s when the table is a dependency's.
-  Reading it needs `BcAppSymbolCache` to carry the namespace, which changes the symbol payload and
-  needs a cache version bump (#5288 item 2 for pages).
+- A **dependency table's** namespace is carried (#5224), but the `extends` match does not read it, so
+  two dependency tables sharing a name are not told apart, and a bare clause is not checked against
+  the `using`s when the table is a dependency's (#5293 item 2; #5288 item 2 for pages, which still
+  carry none).
 - An undecided clause (above) still attaches to the source table when the compiler bound the
-  dependency's. The compiler's own target would remove that (#5296). #5224 is the relation-name
-  twin of the scoping gap, not this one.
+  dependency's. The compiler's own target would remove that (#5296). #5224 fixed the relation-name
+  twin of the scoping gap, a table's own names rather than an `extends` clause.
 
 ## Measurement
 

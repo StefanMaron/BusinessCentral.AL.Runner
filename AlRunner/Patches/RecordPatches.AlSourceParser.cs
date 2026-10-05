@@ -1798,8 +1798,10 @@ internal record ParsedColumnFilter(string FieldName, ParsedColumnFilterKind Kind
 /// <c>TryParseTableFile</c>) or no app.json was found above it. #3600's table-metadata-source
 /// guard uses this to tell a same-app tableextension from a cross-app one; see
 /// <see cref="RecordPatches._extensionSourceInfo"/>.</param>
-/// <param name="Namespace">The namespace the declaring file states, null for the global one.
-/// Only meaningful when <paramref name="Usings"/> is non-null (#4133).</param>
+/// <param name="Namespace">The namespace the table sits in, null for the global one: the file's
+/// stated namespace for a table parsed from AL source (#4133), the <c>Namespaces</c> tree path of
+/// the symbol file for a dependency's table (#5224). Read the two with <paramref name="Usings"/> in
+/// mind: only a source table has a scope to resolve names in.</param>
 /// <param name="Usings">The namespaces the declaring file imports with <c>using</c>. Non-null
 /// exactly when the table was parsed from AL source, which is what lets a name it writes be
 /// resolved in that file's scope; null for a table read from a dependency's symbols, whose
