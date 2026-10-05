@@ -1,0 +1,18 @@
+[
+  {
+    "codeunitId": 60061,
+    "CodeunitName": "Test Record SystemId",
+    "Method": "Record_Modify_WithNoFieldChanged_LeavesSystemModifiedAt",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/5352",
+    "Note": "The runner's Modify prepend stamps SystemModifiedAt/By unconditionally; BC's SQL layer stamps only when a field changed. Green on every required cloud leg (BC 27.0 to 28.5) and on the official Windows container (BC 28.4) of corpus PR 545. Added by agent stma-auto-8."
+  },
+  {
+    "codeunitId": 60061,
+    "CodeunitName": "Test Record SystemId",
+    "Method": "Record_Modify_FieldAssignedItsCurrentValue_LeavesSystemModifiedAt",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/5352",
+    "Note": "Same defect as Record_Modify_WithNoFieldChanged_LeavesSystemModifiedAt: assigning a field the value it already holds leaves nothing to modify, so BC does not stamp. Green on the same legs of corpus PR 545. Added by agent stma-auto-8."
+  }
+]
