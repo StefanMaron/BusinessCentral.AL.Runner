@@ -32,7 +32,11 @@ the BC runtime environment:
   so AL's own referential checks resolve them: one row in Company (2000000006)
   for `CompanyName()` and one in User (2000000120) for `UserId()` /
   `UserSecurityId()`, with the User Property (2000000121) companion row BC
-  creates alongside every user. One consequence worth knowing: Microsoft AL that
+  creates alongside every user. Only that company's data exists: the record store is
+  not partitioned per company, so a company the test inserts is opened by BC's own
+  `Company.Rename` cascade (which updates the session company's rows, #5071) but
+  `Record.ChangeCompany` still refuses it rather than share the session company's
+  rows (#5349). One consequence worth knowing: Microsoft AL that
   skips a check while the User table is entirely empty — `User Selection
   .ValidateUserName` is the common one — now runs that check, so a made-up user
   name is refused the way real BC refuses it. The Session virtual table
