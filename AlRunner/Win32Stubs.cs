@@ -198,13 +198,10 @@ internal static class Win32Stubs
         if (!string.IsNullOrEmpty(soOverride))
         {
             if (!File.Exists(soOverride))
-            {
-                var missing = new InvalidOperationException(
+                throw new InvalidOperationException(
                     $"Win32Stubs: AL_RUNNER_WIN32_STUBS_SO is set to '{soOverride}' but that file does not exist. "
-                    + "Unset it to build the shim from source, or point it at a valid prebuilt libwin32_stubs.so.");
-                missing.Data[OverrideMissingMarker] = true;
-                throw missing;
-            }
+                    + "Unset it to build the shim from source, or point it at a valid prebuilt libwin32_stubs.so.")
+                { Data = { [OverrideMissingMarker] = true } };
             return Loaded(NativeLibrary.Load(soOverride));
         }
 

@@ -166,7 +166,7 @@ An entry may therefore declare the BC majors it describes:
   duplicate refusal.
 
 The match audit counts a scoped-away entry with the ones it did not audit ("scoped to another
-suite or BC major, not audited here"), never as matched.
+suite, not audited here", with " or BC major" added when one of them is major-scoped), never as matched.
 
 ## Layout
 

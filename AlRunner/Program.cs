@@ -5352,7 +5352,9 @@ if (expectationsRequireMatch)
                 + $"{(audited == 1 ? "y" : "ies")} in scope for this run matched a discovered test"
                 + (outOfScope.Count == 0
                     ? "."
-                    : $"; {outOfScope.Count} scoped to another suite or BC major, not audited here ("
+                    : $"; {outOfScope.Count} scoped to another suite"
+                      + (outOfScope.Any(e => e.BcMajors is { Count: > 0 }) ? " or BC major" : "")
+                      + ", not audited here ("
                       + string.Join(", ", outOfScope.Select(e => $"{e.CodeunitName}.{e.Method}"))
                       + ")."));
         }
