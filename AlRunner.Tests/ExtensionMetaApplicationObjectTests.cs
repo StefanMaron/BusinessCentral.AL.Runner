@@ -89,6 +89,39 @@ public abstract class {kind}{id} : {clrBase}
             self: null!, kind, id, requireCompiled: true, emitVersion: 0));
     }
 
+    [SkippableFact]
+    public void ExtensionsOfDifferentKindsSharingOneId_GetSeparateObjects()
+    {
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+
+        // AL numbers each object kind separately, so a tableextension, a pageextension and a
+        // reportextension may all be 61744. One object per (kind, id) means each reads its own kind;
+        // an id-only key would hand the first-resolved kind's object to the other two.
+        const int id = 61744;
+        CompileAndLoad($@"
+public abstract class TableExtension{id} : Microsoft.Dynamics.Nav.Runtime.Extensions.NavRecordExtension
+{{
+    protected TableExtension{id}(Microsoft.Dynamics.Nav.Runtime.ITreeObject parent, int id) : base(parent, id) {{ }}
+}}
+public abstract class PageExtension{id} : Microsoft.Dynamics.Nav.Runtime.Extensions.NavFormExtension
+{{
+    protected PageExtension{id}(Microsoft.Dynamics.Nav.Runtime.ITreeObject parent, int id) : base(parent, id, null, null) {{ }}
+}}
+public abstract class ReportExtension{id} : Microsoft.Dynamics.Nav.Runtime.Extensions.NavReportExtension
+{{
+    protected ReportExtension{id}(Microsoft.Dynamics.Nav.Runtime.ITreeObject parent, int id) : base(parent, id) {{ }}
+}}");
+
+        var kinds = new[] { ObjectType.TableExtension, ObjectType.PageExtension, ObjectType.ReportExtension };
+        var metas = kinds.Select(k => RecordPatches.NCLMetadata_GetMetaApplicationObjectByType(
+            self: null!, k, id, requireCompiled: true, emitVersion: 0)).ToArray();
+
+        for (var i = 0; i < kinds.Length; i++)
+            Assert.Equal((kinds[i], id), IdentityOf(metas[i]));
+        Assert.Equal(3, metas.Distinct().Count());
+    }
+
     [SkippableTheory]
     [InlineData(ObjectType.TableExtension)]
     [InlineData(ObjectType.PageExtension)]

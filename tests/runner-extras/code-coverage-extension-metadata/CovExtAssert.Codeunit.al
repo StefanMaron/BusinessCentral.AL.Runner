@@ -8,6 +8,12 @@ codeunit 66700 "Cov Ext Assert"
             Error('Expected ''%1'' but got ''%2'': %3', Expected, Actual, Msg);
     end;
 
+    procedure IsTrue(Condition: Boolean; Msg: Text)
+    begin
+        if not Condition then
+            Error('Expected TRUE: %1', Msg);
+    end;
+
     procedure IsFalse(Condition: Boolean; Msg: Text)
     begin
         if Condition then

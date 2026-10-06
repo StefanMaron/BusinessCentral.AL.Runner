@@ -104,22 +104,34 @@ codeunit 66703 "Cov Ext Tests"
     var
         Assert: Codeunit "Cov Ext Assert";
 
+    local procedure HitCodeLines(var CodeCoverage: Record "Code Coverage"; Id: Integer): Integer
+    begin
+        CodeCoverage.SetRange("Object ID", Id);
+        CodeCoverage.SetRange("Line Type", CodeCoverage."Line Type"::Code);
+        CodeCoverage.SetFilter("No. of Hits", '>0');
+        exit(CodeCoverage.Count());
+    end;
+
     [Test]
     procedure TableExtensionProcedure_WhileRecording_ReturnsItsResult()
     var
         Rec: Record "Cov Ext Tbl";
+        CodeCoverage: Record "Code Coverage";
         Result: Integer;
     begin
         CodeCoverageLog(true, false);
         Result := Rec.Twice(21);
         CodeCoverageLog(false, false);
         Assert.AreEqual(42, Result, 'the tableextension procedure must run while recording');
+        CodeCoverage.SetRange("Object Type", CodeCoverage."Object Type"::TableExtension);
+        Assert.IsTrue(HitCodeLines(CodeCoverage, 66702) > 0, 'the tableextension must have a Code line with hits');
     end;
 
     [Test]
     procedure PageExtensionProcedure_WhileRecording_Runs()
     var
         Probe: Codeunit "Cov Ext Probe";
+        CodeCoverage: Record "Code Coverage";
         CovPage: TestPage "Cov Ext Page";
     begin
         Probe.Mark('');
@@ -128,18 +140,23 @@ codeunit 66703 "Cov Ext Tests"
         CovPage.Close();
         CodeCoverageLog(false, false);
         Assert.AreEqual('page-ext-ran', Probe.Read(), 'the pageextension trigger and procedure must run while recording');
+        CodeCoverage.SetRange("Object Type", CodeCoverage."Object Type"::PageExtension);
+        Assert.IsTrue(HitCodeLines(CodeCoverage, 66706) > 0, 'the pageextension must have a Code line with hits');
     end;
 
     [Test]
     procedure ReportExtensionProcedure_WhileRecording_Runs()
     var
         Probe: Codeunit "Cov Ext Probe";
+        CodeCoverage: Record "Code Coverage";
     begin
         Probe.Mark('');
         CodeCoverageLog(true, false);
         Report.Run(Report::"Cov Ext Report");
         CodeCoverageLog(false, false);
         Assert.AreEqual('report-ext-ran', Probe.Read(), 'the reportextension trigger and procedure must run while recording');
+        CodeCoverage.SetRange("Object Type", CodeCoverage."Object Type"::ReportExtension);
+        Assert.IsTrue(HitCodeLines(CodeCoverage, 66708) > 0, 'the reportextension must have a Code line with hits');
     end;
 
     [Test]
