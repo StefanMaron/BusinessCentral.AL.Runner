@@ -854,19 +854,26 @@ jobs:
         # disguised as flakiness.
         #
         # This one DOES still name a single app on purpose, and it is not the #2984
-        # defect wearing a second hat: `--test Codeunit6020` narrows the run to one
-        # named codeunit, so this step is not a coverage gate and adding a corpus app
-        # cannot make it miss anything. It also passes only the platform-apps cache,
+        # defect wearing a second hat: `--test` narrows each run to one named codeunit
+        # (60206 and 60207, the two xmlport test codeunits), so this step is not a
+        # coverage gate and adding a corpus app cannot make it miss anything. The ids
+        # are spelled out: the earlier prefix `Codeunit6020` also selected 60204, the
+        # cross-app interface test, which needs its fixture bundle and fails here on
+        # BC 29 (#5386). It also passes only the platform-apps cache,
         # so pointing it at every corpus app would make it depend on each app's
         # dependency closure resolving from that one cache. The gate that must
         # enumerate is the corpus step above, whose count the compare step guards.
         if: ${{ always() }}
         run: |
-          dotnet run --no-build --project AlRunner -c Release -p:_BCVersion="$BC_VERSION" --framework "$TFM" -- \
-              tests/al-language/tests/al-language \
-              --package-cache "$HOME/.al-runner/platform-apps" \
-              --test "Codeunit6020" \
-              --strict
+          rc=0
+          for cu in 60206 60207; do
+            dotnet run --no-build --project AlRunner -c Release -p:_BCVersion="$BC_VERSION" --framework "$TFM" -- \
+                tests/al-language/tests/al-language \
+                --package-cache "$HOME/.al-runner/platform-apps" \
+                --test "Codeunit$cu" \
+                --strict || rc=$?
+          done
+          exit "$rc"
 
       - name: Run al-language isolation probes under their own isolation
         # #4826. A corpus app in scripts/corpus-app-dirs.py's ISOLATION_PROBES measures one
