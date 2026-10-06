@@ -28,11 +28,26 @@ internal static partial class ProgramSupport
         return map;
     }
 
+    // #5081: one resolved dependency as the fingerprint names it — identity, path AND the package's
+    // bytes, because a package rebuilt at the same version and path still compiles the dependent
+    // against different symbols. Null when the bytes cannot be identified (the shared "unknown"
+    // sentinel would match every other unidentifiable package); the memo is the one every other
+    // content-keyed term fills, so a package already hashed costs a stat, not a read.
+    internal static string? DependencyFingerprintTerm(AppManifest manifest, string appPath,
+        Func<string, string>? contentHashOf = null)
+    {
+        var hash = (contentHashOf ?? AlRunner.Infrastructure.RunnerFingerprint.ComputeFileContentHashMemoized)(appPath);
+        if (string.IsNullOrEmpty(hash) || hash == AlRunner.Infrastructure.RunnerFingerprint.UnknownContentHash)
+            return null;
+        return $"{manifest.AppId}|{manifest.Version}|{Path.GetFullPath(appPath)}|{hash}";
+    }
+
     // #5079: what a bundle's own module was compiled from — every .al file by path relative to
-    // the bundle root and content, app.json, and the resolved dependencies. Null when a file could
-    // not be read, so an incomplete answer never matches another directory's.
+    // the bundle root and content, app.json, and the resolved dependencies (DependencyFingerprintTerm).
+    // Null when a file or a dependency package could not be read, so an incomplete answer never
+    // matches another directory's.
     internal static string? BundleSourceFingerprint(string bucketRoot, IReadOnlyList<string> folders,
-        Dictionary<string, string> fileHashes, IEnumerable<string> dependencyTerms)
+        Dictionary<string, string> fileHashes, IEnumerable<string?> dependencyTerms)
     {
         var files = folders.Where(Directory.Exists)
             .SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Files(Path.GetFullPath(d), "*.al"))
@@ -50,7 +65,11 @@ internal static partial class ProgramSupport
         }
         catch (IOException) { return null; }
         catch (UnauthorizedAccessException) { return null; }
-        foreach (var d in dependencyTerms) sb.Append("dep:").Append(d).Append('\n');
+        foreach (var d in dependencyTerms)
+        {
+            if (d == null) return null;
+            sb.Append("dep:").Append(d).Append('\n');
+        }
         return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(sb.ToString())));
     }
 

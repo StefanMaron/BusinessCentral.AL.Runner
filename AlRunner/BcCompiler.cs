@@ -1790,9 +1790,10 @@ public sealed partial class BcCompiler
     /// that reads them.
     ///
     /// Everything the package loader does serve keeps the pre-#2678 rule exactly: added or
-    /// changed key → rebuild and re-warm; removed key → reuse (subset).
+    /// changed key → rebuild and re-warm; removed key → reuse (subset). A key is
+    /// <c>AppPath@Version@ContentHash</c> since #5081.
     /// </summary>
-    private static HashSet<string> PackageServedDepKeys(
+    internal static HashSet<string> PackageServedDepKeys(
         IReadOnlyList<(AppManifest Manifest, string AppPath)>? deps,
         List<PackageScanEntry> scanInventory)
     {
@@ -1807,9 +1808,21 @@ public sealed partial class BcCompiler
             // either; fall back to the raw string so it is compared consistently rather than
             // silently dropped from every subsequent comparison.
             try { full = Path.GetFullPath(d.AppPath); } catch { full = d.AppPath; }
-            if (served.Contains(full)) keys.Add(full + "@" + d.Manifest.Version);
+            if (served.Contains(full)) keys.Add(full + "@" + d.Manifest.Version + "@" + PackageContentTerm(full));
         }
         return keys;
+    }
+
+    // #5081: a package rebuilt at the same path and version still holds different symbols, and the
+    // loader reads each .app once, so the key names the bytes too. Memoized: a package already
+    // hashed for another key costs a stat. One that cannot be identified gets a key no later call
+    // repeats, so the loader is rebuilt rather than trusted.
+    private static string PackageContentTerm(string appPath)
+    {
+        var hash = AlRunner.Infrastructure.RunnerFingerprint.ComputeFileContentHashMemoized(appPath);
+        return string.IsNullOrEmpty(hash) || hash == AlRunner.Infrastructure.RunnerFingerprint.UnknownContentHash
+            ? "unreadable-" + Guid.NewGuid().ToString("N")
+            : hash;
     }
 
     /// <summary>
