@@ -111,7 +111,7 @@ public sealed class DependencyResolvedClosureCacheKeyTests : IDisposable
     private void InstallDependency()
         => File.WriteAllBytes(Path.Combine(_packages, "repro_closure-key-dep_1.0.0.0.app"), BuildDependency());
 
-    private (string Output, int Exit) Run(bool depMetadata)
+    private (string Output, int Exit) Run()
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner")));
         args.Append(TestBuildConfig.BcVersionArg);
@@ -124,11 +124,8 @@ public sealed class DependencyResolvedClosureCacheKeyTests : IDisposable
             RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
         };
-        if (depMetadata)
-        {
-            psi.Environment["AL_RUNNER_DEP_METADATA_FROM_BC"] = "closure-key-dep";
-            psi.Environment["AL_RUNNER_TRACE_DEP_METADATA"] = "1";
-        }
+        psi.Environment["AL_RUNNER_DEP_METADATA_FROM_BC"] = "closure-key-dep";
+        psi.Environment["AL_RUNNER_TRACE_DEP_METADATA"] = "1";
         var sb = new StringBuilder();
         using var p = Process.Start(psi)!;
         p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
@@ -163,59 +160,43 @@ public sealed class DependencyResolvedClosureCacheKeyTests : IDisposable
     private int CompiledDepEntries() =>
         Directory.GetFiles(Path.Combine(_cache, "compiled-deps"), "*.dll").Length;
 
+    /// <summary>
+    /// One pass through both caches: the dependency's compiled DLL (a procedure returning the library's
+    /// enum ordinal, which the compile bakes in) and BC's document for its table (a relation naming the
+    /// field id the library declared). A run that resolved library 2.0 must compile both afresh, and a
+    /// run back on 1.0 must hit what the first run wrote.
+    /// </summary>
     [SkippableFact]
-    public void LibraryVersionChanged_OneCacheRoot_CompiledDepsRecompilesAgainstTheRunsLibrary()
+    public void LibraryVersionChanged_OneCacheRoot_BothCachesRecompileAgainstTheRunsLibrary()
     {
         TestArtifacts.SkipIfMissing();
         InstallDependency();
 
         InstallLibrary("1.0.0.0", secondOrdinal: 7, codeFieldId: 1);
         WriteBundle(expected: 7);
-        var first = Run(depMetadata: false);
+        var first = Run();
         AssertPassed(first, "run 1 (library 1.0, Second = 7)");
         AssertOutput(first, "source-cache MISS", "run 1");
-
-        InstallLibrary("2.0.0.0", secondOrdinal: 9, codeFieldId: 3);
-        WriteBundle(expected: 9);
-        var second = Run(depMetadata: false);
-        AssertPassed(second, "run 2 (library 2.0, Second = 9)");
-        Assert.DoesNotContain("source-cache HIT: closure-key-dep", second.Output);
-
-        InstallLibrary("1.0.0.0", secondOrdinal: 7, codeFieldId: 1);
-        WriteBundle(expected: 7);
-        var third = Run(depMetadata: false);
-        AssertPassed(third, "run 3 (library 1.0 again)");
-        AssertOutput(third, "source-cache HIT: closure-key-dep", "run 3");
-
-        Assert.Equal(2, CompiledDepEntries());
-    }
-
-    [SkippableFact]
-    public void LibraryVersionChanged_OneCacheRoot_DepMetadataRecompilesAgainstTheRunsLibrary()
-    {
-        TestArtifacts.SkipIfMissing();
-        InstallDependency();
-
-        InstallLibrary("1.0.0.0", secondOrdinal: 7, codeFieldId: 1);
-        WriteBundle(expected: 7);
-        var first = Run(depMetadata: true);
-        AssertPassed(first, "run 1 (library 1.0, Second = 7)");
         AssertOutput(first, "[dep-metadata] WROTE closure-key-dep", "run 1");
 
         InstallLibrary("2.0.0.0", secondOrdinal: 9, codeFieldId: 3);
         WriteBundle(expected: 9);
-        var second = Run(depMetadata: true);
+        var second = Run();
+        // The replayed DLL answers 7 here, so the run itself fails before any key is read.
         AssertPassed(second, "run 2 (library 2.0, Second = 9)");
+        Assert.DoesNotContain("source-cache HIT: closure-key-dep", second.Output);
         AssertOutput(second, "[dep-metadata] WROTE closure-key-dep", "run 2");
         Assert.DoesNotContain("[dep-metadata] cache HIT closure-key-dep", second.Output);
 
         InstallLibrary("1.0.0.0", secondOrdinal: 7, codeFieldId: 1);
         WriteBundle(expected: 7);
-        var third = Run(depMetadata: true);
+        var third = Run();
         AssertPassed(third, "run 3 (library 1.0 again)");
+        AssertOutput(third, "source-cache HIT: closure-key-dep", "run 3");
         AssertOutput(third, "[dep-metadata] cache HIT closure-key-dep", "run 3");
 
-        // One document per library: the relation names the field id each library declared.
+        // Exactly one entry per library in each cache, each holding its own library's answer.
+        Assert.Equal(2, CompiledDepEntries());
         Assert.Equal(new[] { "1", "3" }, RelatedFieldIdsInEntries());
     }
 
