@@ -206,9 +206,13 @@ public static partial class RecordPatches
     /// </summary>
     internal static void ThrowIfNoRecordTypeAndNoStub(Type? recordType, Type? stubNavRecordType, int tableId)
     {
-        if (recordType == null && stubNavRecordType == null)
+        if (!RecordTypeOrStubAvailable(recordType, stubNavRecordType))
             throw new InvalidOperationException($"no loaded type Record{tableId} found");
     }
+
+    /// <summary>The one predicate of the gate: a record class, or a BC that answers StubNavRecord without one.</summary>
+    internal static bool RecordTypeOrStubAvailable(Type? recordType, Type? stubNavRecordType)
+        => recordType != null || stubNavRecordType != null;
 
     private static NavRecord? BuildBaseNavRecord(
         object metaTableSelf, ITreeObject? parent, int tableId, bool isTemporary,

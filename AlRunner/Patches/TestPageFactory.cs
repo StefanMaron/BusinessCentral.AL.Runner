@@ -113,7 +113,7 @@ internal static class TestPageFactory
         why = null;
         var metaTable = RecordPatches.GetOrBuildNCLMetaTable(tableId);
         var recordType = RecordPatches.FindRecordType(tableId);
-        if (metaTable == null || (recordType == null && RecordPatches.StubNavRecordType == null))
+        if (metaTable == null || !RecordPatches.RecordTypeOrStubAvailable(recordType, RecordPatches.StubNavRecordType))
         {
             why = $"source table {tableId} has no runtime record type here";
             return null;

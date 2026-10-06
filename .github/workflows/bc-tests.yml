@@ -736,6 +736,9 @@ jobs:
           # exactly ONE test app however many are listed — the child process drains
           # the here-string from stdin and the loop ends after one pass, leg still
           # green (measured on corpus run 33996414648).
+          # The symbols the corpus's own ci.yml gives this leg (BC27PLUS, BC28PLUS from 28, BC29PLUS from 29);
+          # without them every `#if BC29PLUS` test compiles its 27/28 branch here (#5382).
+          CORPUS_SYMBOLS=$(python3 scripts/corpus-version-symbols.py "$BC_VERSION")
           mapfile -t CORPUS_APPS < <(python3 scripts/corpus-app-dirs.py tests/al-language)
           if [ "${#CORPUS_APPS[@]}" -eq 0 ]; then
             echo "::error::scripts/corpus-app-dirs.py produced no corpus app directories — refusing to report a green leg for a run that would execute nothing"
@@ -746,6 +749,7 @@ jobs:
           start=$SECONDS
           dotnet run --no-build --project AlRunner -c Release -p:_BCVersion="$BC_VERSION" --framework "$TFM" -- \
               "${CORPUS_APPS[@]}" \
+              --preprocessor-symbols "$CORPUS_SYMBOLS" \
               --package-cache "$HOME/.al-runner/platform-apps" \
               --package-cache "$HOME/.al-runner/test-apps" \
               --strict \
@@ -865,10 +869,14 @@ jobs:
         # enumerate is the corpus step above, whose count the compare step guards.
         if: ${{ always() }}
         run: |
+          # The symbols the corpus's own ci.yml gives this leg (BC27PLUS, BC28PLUS from 28, BC29PLUS from 29);
+          # without them every `#if BC29PLUS` test compiles its 27/28 branch here (#5382).
+          CORPUS_SYMBOLS=$(python3 scripts/corpus-version-symbols.py "$BC_VERSION")
           rc=0
           for cu in 60206 60207; do
             dotnet run --no-build --project AlRunner -c Release -p:_BCVersion="$BC_VERSION" --framework "$TFM" -- \
                 tests/al-language/tests/al-language \
+                --preprocessor-symbols "$CORPUS_SYMBOLS" \
                 --package-cache "$HOME/.al-runner/platform-apps" \
                 --test "Codeunit$cu" \
                 --strict || rc=$?
@@ -884,6 +892,9 @@ jobs:
         # No probe in the resolved corpus is legitimate (a ref that predates them) and passes.
         if: ${{ always() }}
         run: |
+          # The symbols the corpus's own ci.yml gives this leg (BC27PLUS, BC28PLUS from 28, BC29PLUS from 29);
+          # without them every `#if BC29PLUS` test compiles its 27/28 branch here (#5382).
+          CORPUS_SYMBOLS=$(python3 scripts/corpus-version-symbols.py "$BC_VERSION")
           mapfile -t PROBES < <(python3 scripts/corpus-app-dirs.py --isolation-probes tests/al-language)
           rc=0
           for line in "${PROBES[@]}"; do
@@ -892,6 +903,7 @@ jobs:
             prc=0
             dotnet run --no-build --project AlRunner -c Release -p:_BCVersion="$BC_VERSION" --framework "$TFM" -- \
                 "$dir" \
+                --preprocessor-symbols "$CORPUS_SYMBOLS" \
                 --package-cache "$HOME/.al-runner/platform-apps" \
                 --package-cache "$HOME/.al-runner/test-apps" \
                 --isolation "$iso" \

@@ -1338,17 +1338,6 @@ public static partial class RecordPatches
         // set (body identical on 28.5 and 29.0). BC 29's compiler emits that class only for tables
         // with code, so most System Application tables have none there.
         var recordType = FindRecordType(id);
-        if (recordType == null && StubNavRecordType == null)
-            throw new InvalidOperationException(
-                $"NavRecordHandle.CreateTarget: no loaded type Record{id} found");
-        ConstructorInfo? ctor = null;
-        if (recordType != null)
-        {
-            ctor = _concreteRecordCtors.GetOrAdd(recordType,
-                t => Array.Find(t.GetConstructors(), c => c.GetParameters().Length == 6));
-            if (ctor == null)
-                throw new InvalidOperationException($"Record{id} has no 6-arg constructor");
-        }
 
         // Construct Record{ID}(parent, metaTable, isTemporary, sharedTable, companyName, securityFiltering)
         //
@@ -1361,12 +1350,7 @@ public static partial class RecordPatches
         NavRecord rec;
         try
         {
-            rec = ctor != null
-                ? (NavRecord)ctor.Invoke(new object?[] { self, metaTable, isTemp, null, null,
-                    SecurityFiltering.Validated })
-                : BuildBaseNavRecord(metaTable, self, id, isTemp, null, string.Empty, SecurityFiltering.Validated)
-                    ?? throw new InvalidOperationException(
-                        $"NavRecordHandle.CreateTarget: no loaded type Record{id} and NavRecord has no 7-arg constructor to build a plain record");
+            rec = NewRecordInstance(recordType, self, metaTable, id, isTemp, SecurityFiltering.Validated, StubNavRecordType);
         }
         catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null)
         {

@@ -47,4 +47,16 @@ public sealed class PlainRecordFallbackGateTests
         RecordPatches.ThrowIfNoRecordTypeAndNoStub(typeof(object), null, 5471);
         RecordPatches.ThrowIfNoRecordTypeAndNoStub(typeof(object), typeof(object), 5471);
     }
+
+    [Theory]
+    [InlineData(false, false, false)]   // neither: the loud error (BC 27/28 with a dropped table)
+    [InlineData(true, false, true)]
+    [InlineData(false, true, true)]     // BC 29: no class, but BC answers StubNavRecord
+    [InlineData(true, true, true)]
+    public void ThePredicateTheThreeSitesShare(bool hasRecordClass, bool hasStub, bool expected)
+    {
+        // CreateTarget and RecordRef.Open reach it through NewRecordInstance, TestPageFactory calls it directly.
+        Assert.Equal(expected, RecordPatches.RecordTypeOrStubAvailable(
+            hasRecordClass ? typeof(object) : null, hasStub ? typeof(object) : null));
+    }
 }
