@@ -117,8 +117,9 @@ it failed with `FileLoadException` for each.
 Now a non-directory file the variant carries is linked from the variant instead of the install, and a file
 only the variant carries is linked too. A file the variant lacks still comes from the install, so a
 variant that ships only the entry set (every BC 27 and 28 one) mirrors exactly as before. The pack step
-(`bc-tests.yml` `pack`, `publish.yml`) stages the variant's full `*.dll` set when its framework differs from
-the tool's, and only then. Pinned by
+(`bc-tests.yml` `pack`, `publish.yml`) stages the variant's `*.dll` set when its framework differs from
+the tool's, and only then — leaving out any file byte-identical to a same-framework variant's copy
+(Mono.Cecil, Spectre.Console), which the mirror reaches through the install anyway. Pinned by
 `NclShadowRuntimeTests.MirrorInstallDirectory_WithEntrySource_AVariantsOwnDependencyBeatsTheInstallsCopy`.
 
 ## Publishing Ncl.dll (#5018, #5019)

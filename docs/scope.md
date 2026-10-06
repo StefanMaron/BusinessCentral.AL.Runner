@@ -295,6 +295,9 @@ against BC — the failure mode that got `MockImage` reverted in
 `docs/limitations.md` forbids shipping an `Image` implementation. Media content that is *not*
 an image stores normally; see `AlRunner/Patches/MediaPatches.cs`, whose `media-image-decode`
 refusal is the same boundary reached from the Media/MediaSet side.
+On BC 29 the same decision is made by `NavMediaImageSkia.TryProbe` (SkiaSharp, whose native library BC ships only
+for Windows, [#3322](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3322)); `MediaPatches` answers it
+the same way: no image signature means not an image and the content stores, an image is refused by name.
 
 **Running the affected AL on a Windows host works**, because the refusal fires on the
 exception .NET actually raised rather than on a list of type names — there is nothing to
