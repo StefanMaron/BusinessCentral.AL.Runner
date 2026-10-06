@@ -1594,10 +1594,20 @@ jobs:
             cp -r "./variant-build-$full/Win32Stubs" "./variants-staging/$full/Win32Stubs"
             if [ "$(tfm_of -p:_BCVersion="$full")" != "$TOOL_TFM" ]; then
               echo "BC $full runs on a different framework than the tool ($TOOL_TFM): staging its dependency closure too"
-              for f in "./variant-build-$full"/*.dll; do cp -n "$f" "./variants-staging/$full/"; done
+              # Only what differs from the tool's own closure: a file byte-identical to the copy a
+              # same-framework variant carries (Mono.Cecil, Spectre.Console) is reached through the
+              # shadow-dir mirror anyway, so shipping it again only grows the package (#5382).
+              for f in "./variant-build-$full"/*.dll; do
+                if [ -f "./variant-ref/$(basename "$f")" ] && cmp -s "$f" "./variant-ref/$(basename "$f")"; then continue; fi
+                cp -n "$f" "./variants-staging/$full/"
+              done
+            else
+              mkdir -p ./variant-ref
+              for f in "./variant-build-$full"/*.dll; do cp -n "$f" ./variant-ref/; done
             fi
             rm -rf "./variant-build-$full"
           done
+          rm -rf ./variant-ref
           echo "Staged variants:"
           ls -la ./variants-staging
 

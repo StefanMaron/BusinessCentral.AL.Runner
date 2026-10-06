@@ -18,7 +18,12 @@ pkg="${1:?usage: check-nupkg-contents.sh <path-to-nupkg> [size-ceiling-bytes]}"
 # Bytes. The fixed package is ~15 MB compressed; the ceiling leaves headroom for
 # legitimate growth (new PackageReferences, more Win32-stub RIDs, …) while still
 # catching a many-MB regression like Aspose/Graph/BusinessCentral being re-added.
-size_ceiling_bytes="${2:-31457280}" # 30 MiB
+# 36 MiB since #5382. The BC 29 engine variant is the first on another framework (net10.0), so it ships
+# its own dependency closure; its Roslyn 5.3 copies alone are ~3.5 MB compressed. Measured on the PR's
+# pack job: 30,114,571 bytes on main, 37,238,722 with the whole closure staged, ~0.5 MB less with the
+# files identical to the tool's own left out. A per-minor variant is ~2 MB, so this is one more variant
+# plus that closure, not a regrown dependency.
+size_ceiling_bytes="${2:-37748736}" # 36 MiB
 
 actual_size=$(stat -c%s "$pkg")
 echo "nupkg size: $actual_size bytes ($((actual_size / 1024 / 1024)) MiB), ceiling: $size_ceiling_bytes bytes"
