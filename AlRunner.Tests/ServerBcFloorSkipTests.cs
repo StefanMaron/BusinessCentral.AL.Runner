@@ -14,7 +14,7 @@ namespace AlRunner.Tests;
 /// gate cannot go green by accident. The skip must also be VISIBLE in the response
 /// (<c>warnings</c> on the summary), because a silent skip reads as a pass.
 /// </summary>
-public class ServerBcFloorSkipTests
+public class ServerBcFloorSkipTests : IClassFixture<ServerBcFloorSkipTests.SharedServer>
 {
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
@@ -28,12 +28,42 @@ public class ServerBcFloorSkipTests
 
     private sealed record Served(int Exit, int Passed, int Failed, int Total, List<string> Tests, List<string> Warnings, string Text);
 
-    private static async Task<List<Served>> ServeEach(string scratch, params string[][] requests)
+    /// <summary>
+    /// One server for every fact of the class, started on first use so a box without artifacts
+    /// skips before spawning anything. The facts differ only in the request they send, so each
+    /// still gets its own requests and its own assertions; what they share is the process, which
+    /// is also how a warm server is used.
+    /// </summary>
+    public sealed class SharedServer : IAsyncLifetime
     {
-        var args = new List<string> { "--cache", Path.Combine(scratch, "al-out-server") };
-        var platformApps = TestArtifacts.PlatformAppsDir();
-        if (Directory.Exists(platformApps)) { args.Add("--package-cache"); args.Add(platformApps); }
-        await using var server = await CliServer.StartAsync(args);
+        private CliServer? _server;
+        private string _scratch = "";
+
+        public Task InitializeAsync() => Task.CompletedTask;
+
+        public async Task<CliServer> GetAsync()
+        {
+            if (_server != null) return _server;
+            _scratch = TestScratch.Dir("server-bc-floor");
+            var args = new List<string> { "--cache", Path.Combine(_scratch, "al-out-server") };
+            var platformApps = TestArtifacts.PlatformAppsDir();
+            if (Directory.Exists(platformApps)) { args.Add("--package-cache"); args.Add(platformApps); }
+            return _server = await CliServer.StartAsync(args);
+        }
+
+        public async Task DisposeAsync()
+        {
+            if (_server != null) await _server.DisposeAsync();
+        }
+    }
+
+    private readonly SharedServer _shared;
+
+    public ServerBcFloorSkipTests(SharedServer shared) => _shared = shared;
+
+    private async Task<List<Served>> ServeEach(params string[][] requests)
+    {
+        var server = await _shared.GetAsync();
         var served = new List<Served>();
         foreach (var sourcePaths in requests)
         {
@@ -102,7 +132,7 @@ public class ServerBcFloorSkipTests
         Assert.Contains("PASS  " + HealthyTest, cli, StringComparison.Ordinal);
         Assert.DoesNotContain(FutureTest, cli, StringComparison.Ordinal);
 
-        var s = Assert.Single(await ServeEach(scratch, new[] { Fixture() }));
+        var s = Assert.Single(await ServeEach(new[] { Fixture() }));
         Assert.True(s.Exit == 0, s.Text);
         Assert.True(s.Passed == 1 && s.Failed == 0 && s.Total == 1, s.Text);
         Assert.Equal(new[] { HealthyTest }, s.Tests);
@@ -114,9 +144,8 @@ public class ServerBcFloorSkipTests
     public async Task EachAppListedAsItsOwnSourcePath_AppDeclaringANewerBc_IsSkippedAndReported()
     {
         TestArtifacts.SkipIfMissing();
-        var scratch = TestScratch.Dir("server-bc-floor-own-entries");
 
-        var s = Assert.Single(await ServeEach(scratch, new[] { Fixture("healthy-suite"), Fixture("future-suite") }));
+        var s = Assert.Single(await ServeEach(new[] { Fixture("healthy-suite"), Fixture("future-suite") }));
         Assert.True(s.Exit == 0, s.Text);
         Assert.True(s.Passed == 1 && s.Failed == 0 && s.Total == 1, s.Text);
         Assert.Equal(new[] { HealthyTest }, s.Tests);
@@ -133,9 +162,8 @@ public class ServerBcFloorSkipTests
     public async Task OnlyANewerBcApp_RunsNothing_ReportsTheSkipEveryRequest_AndAHealthyAppReportsNone()
     {
         TestArtifacts.SkipIfMissing();
-        var scratch = TestScratch.Dir("server-bc-floor-only-future");
 
-        var served = await ServeEach(scratch,
+        var served = await ServeEach(
             new[] { Fixture("future-suite") },
             new[] { Fixture("future-suite") },
             new[] { Fixture("healthy-suite") });
