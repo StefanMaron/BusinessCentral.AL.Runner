@@ -768,8 +768,8 @@ fail where it passed, and a changed test can fail for want of state another test
 give it (a reader run alone finds no sequence). A test with no record counts as both.
 
 A test that ran to completion but is unknown because its statements could not be attributed
-to an object (for example statements in a file declaring several objects, #5003) still keeps
-its record (#5059): session-state, event and table keys name objects by id, not by file, so
+to an object (for example statements in a sibling source app that no module of the request
+tracks, #5059) still keeps its record: session-state, event and table keys name objects by id, not by file, so
 the record is complete. It is still selected on every request; the record only narrows which
 earlier writers it brings when nothing changed. A test that timed out, was skipped or has no
 result keeps no record, and brings every earlier writer.
@@ -989,8 +989,8 @@ without triggers that gains an `OnOpenPage` (a whole-object change) selects the 
 that opened it. A changed `Page` no longer forces a full run.
 
 An object's key comes from its class, so an object declared in a file with several
-objects keys too, instead of making the test unknown; a change to such a file still
-forces a full run, as before (#5003).
+objects keys too, instead of making the test unknown (#5003, see "affectedOnly and
+files declaring several objects").
 
 A full run is forced, with a `reason`, when the tests using a changed object cannot be
 told apart:
@@ -1175,6 +1175,29 @@ names it returned, not by how many.
   which it already reads), nothing against a recompile.
 - **Limit**: the fingerprint is taken when the compile ends. A file edited during the
   compile is recorded in its edited state against a DLL compiled from the old one.
+
+#### affectedOnly and files declaring several objects
+
+The change model tracks one object per `.al` file (`ObjectByPath`), so a file declaring
+several objects is in no map of file to object. Until #5003 a statement executed in such a
+file made its test unknown, and the test reran on every request whatever changed, so a
+project that keeps several objects per file got no narrowing for any test reaching them.
+
+Now each recorded statement carries the object whose scope ran it, and a statement in a
+file the baseline names as declaring several objects (`RadBaseline.MultiObjectPaths`) is
+keyed by that object, the same `Kind|id:N` key a tracked file's identity gives. The shapes
+pinned: two codeunits, a codeunit and a table, a table and its tableextension, a page and
+its pageextension, objects behind a preprocessor symbol, and the objects of a dependency
+bundle's file.
+
+What this does not do is tell the objects of one file apart when the file changes. Touching
+a file that declared several objects, by any edit (including one that leaves a single
+object, or a split into several files), makes the change model fall back to a full compile
+and a full run: the fast path, the peeks and the persisted baseline (`ChangedSince`) all
+treat it as unattributable. That is what makes keying by the owning object safe: the keys
+of a multi-object file are never intersected with a narrower change set. Selecting only the
+tests of the one object that changed needs the change model to track an object per file,
+which is a larger change than the attribution (#5374).
 
 #### affectedOnly and packaged dependencies
 

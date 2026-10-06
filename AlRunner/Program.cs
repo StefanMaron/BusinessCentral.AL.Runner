@@ -7902,8 +7902,7 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
 // (bypassing the normal one-line-processed-at-a-time queue entirely), while every
 // other command still goes through `mainQueue` and is processed sequentially by
 // this method exactly as before. See `outputLock`/`activeRunCts` below.
-static string ToAffectedObjectKey(AffectedObjectId id)
-    => $"{id.Kind}|{(id.Id.HasValue ? "id:" + id.Id.Value : "name:" + id.Name)}";
+static string ToAffectedObjectKey(AffectedObjectId id) => AlRunner.Infrastructure.AffectedObjectKeys.Of(id);
 
 static string ToAffectedObjectDisplay(AffectedObjectId id)
     => id.Id.HasValue
@@ -8605,9 +8604,6 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 if (UsedObjectOf(type) is { } o)
                     longLivedObjectKeys.Add(AlRunner.Infrastructure.AffectedEventSelection.LongLivedObjectKey(o.Key));
 
-            // The key of an AL object named by its class label and id, as a tracked file's identity keys it.
-            string ObjectKeyOf(string label, int id)
-                => ToAffectedObjectKey(new AffectedObjectId(label == "CodeUnit" ? "Codeunit" : label, id, ""));
             // The key and file of an AL object class from this request's sources; null outside them.
             // The class names its object, so a file declaring several objects (#5003) still keys.
             (string Key, string Path)? UsedObjectOf(Type objectType)
@@ -8616,7 +8612,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 if (id == 0 || !selectionSourceMap.TryGetValue((label, id), out var path)) return null;
                 return (requestWideTrackedObjectsByPath.TryGetValue(path, out var identity)
                     ? ToAffectedObjectKey(identity)
-                    : ObjectKeyOf(label, id), path);
+                    : AlRunner.Infrastructure.AffectedObjectKeys.OfObjectClass(label, id), path);
             }
             // #4988: the event side of the baseline, stored whenever the coverage is.
             var recordedThisRequest = new List<string>();
@@ -8759,12 +8755,10 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                     // False when the file is in neither map (not a tracked file of this request) and is not packaged.
                     bool Cover(AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord statement)
                     {
-                        if (requestWideTrackedObjectsByPath.TryGetValue(statement.FilePath, out var identity))
-                            AddKeys(ToAffectedObjectKey(identity), statement.ScopeName);
-                        else if (requestWideMultiObjectPaths.Contains(statement.FilePath) && statement.ObjectId != 0)
-                            AddKeys(ObjectKeyOf(statement.ObjectLabel, statement.ObjectId), statement.ScopeName);
-                        else
+                        if (AlRunner.Infrastructure.AffectedObjectKeys.OfStatement(
+                                statement, requestWideTrackedObjectsByPath, requestWideMultiObjectPaths) is not { } objectKey)
                             return AlRunner.Infrastructure.DependencyPackageFingerprint.IsUnderAny(statement.FilePath, packagedSourceRoots);
+                        AddKeys(objectKey, statement.ScopeName);
                         return true;
                     }
                     void AddKeys(string objKey, string? scopeName)

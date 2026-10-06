@@ -260,7 +260,7 @@ public class ServerAffectedSelectionSharedSetupTests : IClassFixture<SharedCliSe
 
     // #4826 + #5050 together, under Test isolation: a SingleInstance store written in one codeunit and
     // read in two others, one of which also carries an AL global set by an earlier test of its own.
-    // One object per file (#5003).
+    // One object per file.
     private static string SiStore(string put) => """
         codeunit 61834 "SI Store SX"
         {

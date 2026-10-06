@@ -73,7 +73,7 @@ public class ServerAffectedSelectionSessionStateTests : IClassFixture<SharedCliS
         """;
 
     // The issue's shape: a SingleInstance store written from one test codeunit, read from another.
-    // One object per file: a file declaring several maps its statements to no single object (#5003).
+    // One object per file, a project's usual layout; a file declaring several is pinned in ServerAffectedSelectionMultiObjectFileTests.
     internal static string Store(string put = "Stored := V;") => """
         codeunit 61910 "SS Store"
         {

@@ -354,4 +354,151 @@ public class ServerAffectedSelectionMultiObjectFileTests : IClassFixture<SharedC
 
         AssertRan(await Send(server, bundle), "unchanged again");
     }
+
+    /// <summary>
+    /// A split of the multi-object file, the issue's own second measurement, edits one file and adds
+    /// another. The objects it moves are not told apart from the ones left behind, so it runs
+    /// everything; the request after it is narrow again.
+    /// </summary>
+    [SkippableFact]
+    public async Task SplittingAMultiObjectFile_RunsEverything_ThenNarrowsAgain()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = Bundle("al-runner-server-affected-multi-object-split", "000000000003");
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
+        Assert.True((await Send(server, bundle)).ForcedFull);
+        AssertRan(await Send(server, bundle), "unchanged");
+
+        File.WriteAllText(Path.Combine(bundle, "SameKind.Codeunit.al"), SameKind[..SameKind.IndexOf("codeunit 62402", StringComparison.Ordinal)]);
+        File.WriteAllText(Path.Combine(bundle, "SameKindTwo.Codeunit.al"), SameKind[SameKind.IndexOf("codeunit 62402", StringComparison.Ordinal)..]);
+        var split = await Send(server, bundle);
+        Assert.True(split.ForcedFull, split.Raw);
+        Assert.Contains("several objects", split.Reason, StringComparison.Ordinal);
+        AssertRan(split, "split", AllTests);
+        Assert.True(split.Tests.Values.All(t => t.Status == "pass"), split.Raw);
+
+        AssertRan(await Send(server, bundle), "unchanged after the split");
+    }
+
+    private static string DependencyBundle(string root, int helperValue = 3)
+    {
+        var dir = Path.Combine(root, "dep");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "app.json"), """
+        {
+          "id": "c5003000-0000-4a11-9111-0000000000d1",
+          "name": "Multi Object Dependency",
+          "publisher": "AL Runner",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "idRanges": [ { "from": 62450, "to": 62459 } ],
+          "runtime": "14.0"
+        }
+        """);
+        File.WriteAllText(Path.Combine(dir, "Dep.al"), $$"""
+        codeunit 62450 "MO Dep One"
+        {
+            procedure Value(): Integer
+            begin
+                exit(1);
+            end;
+        }
+
+        codeunit 62451 "MO Dep Two"
+        {
+            procedure Value(): Integer
+            begin
+                exit({{helperValue}});
+            end;
+        }
+        """);
+        return dir;
+    }
+
+    private static string DependentTestBundle(string root)
+    {
+        var dir = Path.Combine(root, "test-app");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "app.json"), """
+        {
+          "id": "c5003000-0000-4a11-9111-0000000000d2",
+          "name": "Multi Object Dependent Tests",
+          "publisher": "AL Runner",
+          "version": "1.0.0.0",
+          "dependencies": [
+            { "id": "c5003000-0000-4a11-9111-0000000000d1", "name": "Multi Object Dependency",
+              "publisher": "AL Runner", "version": "1.0.0.0" }
+          ],
+          "idRanges": [ { "from": 62460, "to": 62469 } ],
+          "runtime": "14.0"
+        }
+        """);
+        File.WriteAllText(Path.Combine(dir, "Tests.al"), """
+        codeunit 62460 "MO Dep Tests"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure ReadsDependencyHelper()
+            var
+                H: Codeunit "MO Dep Two";
+            begin
+                if H.Value() <> 3 then
+                    Error('DEP-%1', H.Value());
+            end;
+        }
+        """);
+        return dir;
+    }
+
+    /// <summary>
+    /// The same attribution across bundles (#2535's shape): a test in the dependent bundle ran code
+    /// in the dependency bundle's multi-object file. Unchanged it is skipped; edit that file and the
+    /// test runs the new code.
+    /// </summary>
+    [SkippableFact]
+    public async Task DependencyBundleMultiObjectFile_IsAttributedToTheDependentTest()
+    {
+        TestArtifacts.SkipIfMissing();
+        var root = TestScratch.Dir("al-runner-server-affected-multi-object-dep");
+        Directory.CreateDirectory(root);
+        var dependency = DependencyBundle(root);
+        var tests = DependentTestBundle(root);
+        var server = await _fixture.GetAsync(new[] { "--no-cache" });
+
+        var baseline = await Send(server, dependency, tests);
+        Assert.True(baseline.ForcedFull, baseline.Raw);
+        AssertRan(baseline, "baseline", "ReadsDependencyHelper");
+        Assert.Equal("pass", baseline.Tests["ReadsDependencyHelper"].Status);
+
+        var unchanged = await Send(server, dependency, tests);
+        Assert.False(unchanged.ForcedFull, unchanged.Raw);
+        AssertRan(unchanged, "unchanged");
+
+        DependencyBundle(root, helperValue: 4);
+        var edited = await Send(server, dependency, tests);
+        AssertRan(edited, "dependency edit", "ReadsDependencyHelper");
+        Assert.Equal("fail", edited.Tests["ReadsDependencyHelper"].Status);
+        Assert.Contains("DEP-4", edited.Tests["ReadsDependencyHelper"].Line, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The baseline a server persisted, read by a restarted one: the multi-object tests keep their
+    /// record, so the first request after the restart skips them too.
+    /// </summary>
+    [SkippableFact]
+    public async Task PersistedBaseline_KeepsTheMultiObjectRecordAcrossARestart()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = Bundle("al-runner-server-affected-multi-object-restart", "000000000004");
+        var cache = TestScratch.Dir("al-runner-server-affected-multi-object-restart-cache");
+
+        await using (var recorder = await CliServer.StartAsync(new[] { "--cache", cache }))
+            Assert.True((await Send(recorder, bundle)).ForcedFull);
+
+        await using var restarted = await CliServer.StartAsync(new[] { "--cache", cache });
+        var unchanged = await Send(restarted, bundle);
+        Assert.False(unchanged.ForcedFull, $"the persisted baseline must let the first request narrow: {unchanged.Raw}");
+        AssertRan(unchanged, "restarted");
+    }
 }
