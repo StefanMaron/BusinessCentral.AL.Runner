@@ -159,4 +159,33 @@ public class ServerAffectedSelectionCompileInputTests
         Assert.DoesNotContain("\"status\":\"pass\"", deleted.Raw, StringComparison.Ordinal);
         Assert.Contains("AL1081", deleted.Raw, StringComparison.Ordinal);
     }
+
+    private static async Task<Observed> SendFresh(string cache, string bundle)
+    {
+        await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--cache", cache });
+        return await Send(server, bundle);
+    }
+
+    // #4979's path: an edit made while no server runs, so only the persisted baseline can name it.
+    [SkippableFact]
+    public async Task NextServer_LayoutEditedWhileNoServerRan_RunsEverythingAndSaysWhichFileChanged()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = Bundle("al-runner-server-affected-compile-input-persist", "000000000002");
+        var cache = TestScratch.Dir("al-runner-server-affected-compile-input-persist-cache");
+
+        var baseline = await SendFresh(cache, bundle);
+        Assert.True(baseline.ForcedFull, baseline.Raw);
+
+        var unchanged = await SendFresh(cache, bundle);
+        Assert.False(unchanged.ForcedFull, unchanged.Raw);
+        Assert.True(unchanged.Ran.Length == 0, unchanged.Raw);
+
+        File.WriteAllText(Path.Combine(bundle, "Layouts", "A.rdlc"), "<Report>A v2</Report>");
+        var edited = await SendFresh(cache, bundle);
+        Assert.True(edited.ForcedFull, edited.Raw);
+        Assert.Equal(new[] { "BuildsReportA", "BuildsReportB", "Unrelated" }, edited.Ran);
+        Assert.Contains("reads changed", edited.Reason, StringComparison.Ordinal);
+        Assert.Contains("A.rdlc", edited.Reason, StringComparison.Ordinal);
+    }
 }
