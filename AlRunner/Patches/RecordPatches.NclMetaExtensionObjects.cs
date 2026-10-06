@@ -4,6 +4,8 @@
 using System.Collections.Concurrent;
 using System.Reflection;
 using AlRunner.Infrastructure;
+using Microsoft.Dynamics.Nav.Apps.Runtime;
+using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
 
 namespace AlRunner.Patches;
@@ -13,7 +15,7 @@ public static partial class RecordPatches
     // One object per (extension kind, id), never replaced: it carries the MethodNumberCounter that
     // gives each of the extension's methods its coverage scope id, and BC keeps that counter for the
     // object's lifetime (CodeCoveragePatches.EnsureMethodNumberCounter).
-    private static readonly ConcurrentDictionary<(ObjectType Kind, int Id), object> _metaExtensionObjects = new();
+    private static readonly ConcurrentDictionary<(int Kind, int Id), object> _metaExtensionObjects = new();
 
     private static void ClearMetaExtensionObjects() => _metaExtensionObjects.Clear();
 
@@ -33,16 +35,16 @@ public static partial class RecordPatches
     {
         if (ExtensionKindShape(kind) is not var (ncl, factory, clrPrefix, clrBase))
             return null;
-        if (_metaExtensionObjects.TryGetValue((kind, id), out var cached))
+        if (_metaExtensionObjects.TryGetValue(((int)kind, id), out var cached))
             return cached;
         var clrType = FindExtensionClrType(clrPrefix, clrBase, id);
         if (clrType == null)
             return null;
 
-        var nclAsm = typeof(Microsoft.Dynamics.Nav.Runtime.NCLMetadata).Assembly;
-        var create = nclAsm.GetType(ncl)?.GetMethod(factory, BindingFlags.NonPublic | BindingFlags.Static)
-            ?? throw new BcShapeGapException("extension metadata for code coverage (#5384)", $"{ncl}.{factory}",
-                "internal static factory not found");
+        var create = BcShape.RequiredMethod(ncl, factory, BindingFlags.NonPublic | BindingFlags.Static,
+            "extension metadata for code coverage (#5384)", $"{ncl.Name}.{factory}",
+            "without it a call into an extension procedure fails while code coverage is recording",
+            new[] { typeof(INCLMetaApplicationObjectLoader), typeof(int), typeof(NavAppRuntimeMetadata) });
         // The base constructor refuses a null owning app. Same owner BC's delta retriever states for a
         // source-compiled extension (NavReportSync.ReportExtensionOwningApp): the app its CLR type
         // was registered under, an empty id when the runner does not know it.
@@ -50,19 +52,19 @@ public static partial class RecordPatches
         var owner = InstallExecutionContext.CreateRuntimeMetadata(appId ?? Guid.Empty, clrPrefix + id,
             string.Empty, "1.0.0.0", appId is { } g ? AppPackageIdentity.RuntimePackageIdFor(g) : Guid.Empty);
         var meta = create.Invoke(null, new object?[] { RunnerMetaApplicationObjectLoader.Instance, id, owner })
-            ?? throw new BcShapeGapException("extension metadata for code coverage (#5384)", $"{ncl}.{factory}",
+            ?? throw new BcShapeGapException("extension metadata for code coverage (#5384)", $"{ncl.Name}.{factory}",
                 "factory returned null");
-        return _metaExtensionObjects.GetOrAdd((kind, id), meta);
+        return _metaExtensionObjects.GetOrAdd(((int)kind, id), meta);
     }
 
-    private static (string Ncl, string Factory, string ClrPrefix, string ClrBase)? ExtensionKindShape(ObjectType kind)
+    private static (Type Ncl, string Factory, string ClrPrefix, string ClrBase)? ExtensionKindShape(ObjectType kind)
         => kind switch
         {
-            ObjectType.TableExtension => ("Microsoft.Dynamics.Nav.Runtime.NCLTableExtension",
+            ObjectType.TableExtension => (typeof(NCLTableExtension),
                 "CreateEmptyNCLTableExtension", "TableExtension", "NavRecordExtension"),
-            ObjectType.PageExtension => ("Microsoft.Dynamics.Nav.Runtime.NCLPageExtension",
+            ObjectType.PageExtension => (typeof(NCLPageExtension),
                 "CreateEmptyNCLPageExtension", "PageExtension", "NavFormExtension"),
-            ObjectType.ReportExtension => ("Microsoft.Dynamics.Nav.Runtime.NCLReportExtension",
+            ObjectType.ReportExtension => (typeof(NCLReportExtension),
                 "CreateEmptyNCLReportExtension", "ReportExtension", "NavReportExtension"),
             _ => null,
         };
