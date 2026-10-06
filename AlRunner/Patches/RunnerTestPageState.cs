@@ -116,7 +116,8 @@ public static class RunnerTestPageState
                 // Guarded on IsUnpositioned too, same reason as RunnerTestClientSession.GetPage
                 // (corpus CU60848 RunModal_OpensOnTheRecordSetByTheCaller): a record the caller
                 // already positioned on a specific row must not be silently reset to the
-                // table's own first row.
+                // table's own first row. A reopen arrives with the buffer blanked (MarkOpened above,
+                // #5393), so it positions on the first row like a first open.
                 live.MoveFirstDuringOpen();
             // A page that opened with no row load (an empty view, a new record, a caller-positioned
             // row) still has its control expressions evaluated at open (#4920).
