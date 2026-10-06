@@ -21,6 +21,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **affected:** key metadata virtual tables when an object is added or removed
 - **server:** honour a served app's declared BC floor like the CLI
 - **metadata:** name a precompiled codeunit's event publisher by its AL name, not its C# method name
 - **testpage:** a Provider-linked part follows its Provider and reads blank when no row matches
