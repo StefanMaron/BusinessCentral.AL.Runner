@@ -233,6 +233,13 @@ jobs:
           VERSIONS_JSON: ${{ needs.test.outputs.versions-json }}
         run: |
           mkdir -p ./variants-staging
+          # The packaged tool's own target framework, and each variant's, both read from the project
+          # (RunnerTfm in Directory.Build.props). A variant on ANOTHER framework (BC 29 on net10.0,
+          # entered by re-exec from the net8.0 tool) cannot share the tool's dependency closure: it
+          # binds newer builds of some assemblies than the tool ships (Roslyn 5.3, ConfigurationManager
+          # 10), so it ships its own — the shadow-dir mirror prefers a variant's copy of a name.
+          tfm_of() { dotnet msbuild AlRunner/AlRunner.csproj -getProperty:TargetFramework -nologo "$@" | tr -d '[:space:]'; }
+          TOOL_TFM=$(tfm_of)
           for full in $(echo "$VERSIONS_JSON" | python3 -c "import json,sys; [print(v) for v in json.load(sys.stdin)]"); do
             echo "Building engine variant for BC $full..."
             dotnet build AlRunner/ \
@@ -254,6 +261,10 @@ jobs:
             # from AppContext.BaseDirectory/Win32Stubs/ at runtime, so it must ship in
             # every variant dir too (see NclShadowRuntime.MustCopyDirectoryNames).
             cp -r "./variant-build-$full/Win32Stubs" "./variants-staging/$full/Win32Stubs"
+            if [ "$(tfm_of -p:_BCVersion="$full")" != "$TOOL_TFM" ]; then
+              echo "BC $full runs on a different framework than the tool ($TOOL_TFM): staging its dependency closure too"
+              for f in "./variant-build-$full"/*.dll; do cp -n "$f" "./variants-staging/$full/"; done
+            fi
             rm -rf "./variant-build-$full"
           done
           echo "Staged variants:"

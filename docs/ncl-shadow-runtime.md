@@ -105,6 +105,22 @@ deleting** rather than relying on the delete failing.
   so it is healed in place; if the heal cannot complete, `PublishShadowDir` falls back to
   running from the `.building.*` temp dir, as it did before.
 
+## An engine variant's own files win (#5382)
+
+`MirrorInstallDirectory(origFull, shadowDir, entrySource)` takes the entry assembly set from the variant
+directory and, for every other name, used to link the install's copy. Variants shared the install's
+dependency closure outright, which holds while every one runs on the install's runtime. BC 29's engine runs
+on .NET 10 and is entered from a .NET 8 install; it binds `System.Configuration.ConfigurationManager`
+10.0.0.0 and `Microsoft.CodeAnalysis` 5.3.0.0, above the 8.0 and 4.14 copies the install ships, and entering
+it failed with `FileLoadException` for each.
+
+Now a non-directory file the variant carries is linked from the variant instead of the install, and a file
+only the variant carries is linked too. A file the variant lacks still comes from the install, so a
+variant that ships only the entry set (every BC 27 and 28 one) mirrors exactly as before. The pack step
+(`bc-tests.yml` `pack`, `publish.yml`) stages the variant's full `*.dll` set when its framework differs from
+the tool's, and only then. Pinned by
+`NclShadowRuntimeTests.MirrorInstallDirectory_WithEntrySource_AVariantsOwnDependencyBeatsTheInstallsCopy`.
+
 ## Publishing Ncl.dll (#5018, #5019)
 
 `NclCecilRewrite.RewriteInPlace` runs at every start and publishes the Cecil-rewritten Ncl.dll

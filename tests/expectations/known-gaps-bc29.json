@@ -99,17 +99,6 @@
     "Note": "Media and MediaSet ImportStream call SkiaSharp's SKCodec on BC 29 and the type initializer throws: BC 29's service-tier artifact ships only the Windows libSkiaSharp.dll. Passes on BC 27 and 28."
   },
   {
-    "codeunitId": 60204,
-    "CodeunitName": "Test Cross App Dispatch",
-    "Method": "CrossApp_Interface_CrossAppDispatch_ReturnsConcreteValue",
-    "Mode": "expect-fail-known-gap",
-    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/5386",
-    "BcMajors": [
-      29
-    ],
-    "Note": "On BC 29 the caller (compiled against the fixture .app's SymbolReference.json) and the implementer (the fixture compiled from its embedded source) use different interface ids. Measured: 2062702008 against 1607674637. Passes on BC 27 and 28."
-  },
-  {
     "codeunitId": 60443,
     "CodeunitName": "CFM Validation Tests",
     "Method": "Record_CalcFields_Sum_IntegerSourceIntoBigInteger_Throws",

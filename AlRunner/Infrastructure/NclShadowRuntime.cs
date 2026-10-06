@@ -825,7 +825,19 @@ public static class NclShadowRuntime
             }
             else
             {
-                LinkOrCopy(entry, target, isDirectory: Directory.Exists(entry));
+                // A file the VARIANT carries wins over the install's own copy of the same name. Variants
+                // used to share the install's dependency closure outright, which holds while every one
+                // runs on the install's runtime. BC 29's engine runs on .NET 10 and binds Roslyn 5.3 and
+                // .NET 10 builds of assemblies the net8 install ships older copies of (measured entering
+                // a 29 variant from an assembled install: FileLoadException for Microsoft.CodeAnalysis
+                // 5.3.0.0), so a variant that ships its own closure files must be mirrored with them.
+                var variantCopy = entrySource != null && !Directory.Exists(entry)
+                    ? Path.Combine(entrySource, name)
+                    : null;
+                if (variantCopy != null && File.Exists(variantCopy))
+                    LinkOrCopy(variantCopy, target, isDirectory: false);
+                else
+                    LinkOrCopy(entry, target, isDirectory: Directory.Exists(entry));
             }
         }
 
@@ -840,6 +852,16 @@ public static class NclShadowRuntime
                 var target = Path.Combine(shadowDir, name);
                 if (File.Exists(source) && !File.Exists(target))
                     File.Copy(source, target, overwrite: true);
+            }
+
+            // And any other file the variant ships that the install has no copy of at all (a package only
+            // the variant's framework needs), which the pass above cannot have linked.
+            foreach (var file in Directory.EnumerateFiles(entrySource))
+            {
+                var name = Path.GetFileName(file);
+                var target = Path.Combine(shadowDir, name);
+                if (!File.Exists(target) && !Directory.Exists(target) && !IsBookkeepingName(name))
+                    LinkOrCopy(file, target, isDirectory: false);
             }
         }
     }

@@ -1553,8 +1553,31 @@ public static partial class RecordPatches
             "TableExtension" => FindTableExtensionType(id),
             "Report"   => FindClrTypeByName($"Report{id}"),
             "CodeUnit" => FindClrTypeByName($"Codeunit{id}"),
-            _          => FindRecordType(id),
+            // A table with no emitted Record{id} class answers BC's own StubNavRecord: BC 29's compiler
+            // skips non-executable tables and NCLMetaTable.LoadClrType returns typeof(StubNavRecord)
+            // for them (body decompiled on 29.0.54011.55816; BC 28.5 has no such branch, every table
+            // had a class). Answering null here is not inert, for the reason on the Page arm: a
+            // subscriber to a table event resolved no publisher type, so a manually bound subscriber to
+            // User's OnBeforeDelete never ran (corpus 61208/61210 on the OnPrem app).
+            _          => FindRecordType(id) ?? StubNavRecordType,
         };
+    }
+
+    private static Type? _stubNavRecordType;
+    private static bool _stubNavRecordTypeResolved;
+
+    /// <summary>BC's <c>StubNavRecord</c> (BC 29 and later), or null on a build that has none.</summary>
+    internal static Type? StubNavRecordType
+    {
+        get
+        {
+            if (!_stubNavRecordTypeResolved)
+            {
+                _stubNavRecordType = typeof(NavRecord).Assembly.GetType("Microsoft.Dynamics.Nav.Runtime.StubNavRecord");
+                _stubNavRecordTypeResolved = true;
+            }
+            return _stubNavRecordType;
+        }
     }
 
     // Metadata-backed lookup — see FindRecordTypeIn in RecordPatches.NclMetaTableBuilder.cs.

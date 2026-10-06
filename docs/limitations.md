@@ -702,10 +702,16 @@ an explicit `--bc-version 29.x` there exits 2 and names the runtime to install
 `shared/Microsoft.NETCore.App` directory; if that cannot be read the variant is assumed runnable and the host's
 own message stands.
 
-Not measured: a BC 29 run from a packed install on a .NET-8-plus-10 machine (the packed layout, the variant's
-dependency closure, and the signed Windows package). The pieces were measured separately — a net10.0 build
-against BC 29.0.54011.55816 runs the al-language corpus, and a variant directory is entered by `dotnet exec` —
-but the assembled package was not run.
+**Measured, and what it is not.** An install assembled the way the pack step stages it — the BC 28.5
+build as the top-level entry point, `variants/<build>/` for 28.5 and 29.0 — ran a fixture under
+`--bc-version 29.0.54011.55816`, `--bc-version 28.5.54151.55132` and with no flag (which picked BC 29, as
+the .NET 10 runtime is installed on that machine), and the whole al-language corpus under BC 29 from it.
+What it took, and why the staging step copies the closure for a variant on another framework: the shadow
+directory used to mirror every non-entry file from the install, and the net8.0 install ships
+`System.Configuration.ConfigurationManager` 8.0 and Roslyn 4.14, below the 10.0.0.0 and 5.3.0.0 that BC 29
+binds (`FileLoadException` in `ServerUserSettings` and in `Microsoft.CodeAnalysis`, each seen entering the
+variant). A variant's own copy of a file now wins over the install's. It was **not** run from the signed
+Windows package, from `dotnet tool install`, or on a machine without .NET 10.
 
 ## System Application codeunits — scope policy
 
