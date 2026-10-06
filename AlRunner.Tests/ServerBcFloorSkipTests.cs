@@ -222,6 +222,25 @@ public sealed class DropAppsBelowBcFloorTests : IDisposable
         Assert.StartsWith("[skip] Future One: declares BC >= 999.0.0.0, running ", line, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The boundary: a floor EQUAL to the running BC is met, so the app is kept; one revision above
+    /// is not. Read from the running version itself, so it holds whichever BC the process selected.
+    /// </summary>
+    [Fact]
+    public void AFloorEqualToTheRunningBc_IsKept_AndOneRevisionAboveIsDropped()
+    {
+        var running = AlRunner.Infrastructure.BcArtifacts.SelectedVersion;
+        var above = new Version(running.Major, running.Minor, Math.Max(running.Build, 0), Math.Max(running.Revision, 0) + 1);
+        var equal = Dir("equal", Manifest("00000000-0000-0000-0000-000000051376", "Equal", running.ToString()));
+        var oneAbove = Dir("above", Manifest("00000000-0000-0000-0000-000000051377", "Above", above.ToString()));
+
+        var kept = ProgramSupport.DropAppsBelowBcFloor(new[] { equal, oneAbove }, out var skipped);
+
+        Assert.Equal(new[] { equal }, kept);
+        var line = Assert.Single(skipped);
+        Assert.StartsWith($"[skip] Above: declares BC >= {above}, running {running}", line, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void NothingDeclaringAFloorAboveTheRunningBc_KeepsEverythingAndReportsNothing()
     {
