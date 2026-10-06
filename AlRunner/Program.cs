@@ -3764,6 +3764,7 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
         string? cachePath = null;
         string? sidecarPath = null;
         string? querySidecarPath = null;
+        string? inputsPath = null;   // #5368: what the compile read besides .al; AlCacheInputs
         // #5238: held from a cache MISS to the publish below, so `--jobs` workers sharing this
         // bundle compile it once between them. Null when nothing was missed or nothing is cached.
         AlRunner.Infrastructure.CacheCompileLock? compileGate = null;
@@ -3819,12 +3820,13 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
             cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
             sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
             querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
+            inputsPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheInputs.Suffix);
             uncacheableMarker = AlRunner.Infrastructure.UncacheableCompile.MarkerPath(alCacheDir, cacheKey);
             void ReadCompleteEntry(bool reportIncomplete)
             {
                 if (AlRunner.Infrastructure.AlCacheSidecars.IsCompleteEntry(
                         File.Exists(cachePath), File.Exists(sidecarPath),
-                        bundleDeclaresQuery, File.Exists(querySidecarPath)))
+                        bundleDeclaresQuery, File.Exists(querySidecarPath), File.Exists(inputsPath)))
                 {
                     try
                     {
@@ -3834,6 +3836,23 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                         // Validate the PE image explicitly so a torn/truncated entry is rejected
                         // here as a MISS instead of reaching Assembly.Load downstream (issue #1810).
                         AlRunner.Infrastructure.AlCacheSidecars.ValidateCachedAssemblyBytes(cachedBytes, cachePath);
+                        // #5368: the key says the .al files match; the record says the layouts,
+                        // resources and translations the compile read match too, and that this DLL
+                        // and these sidecars are the pair that was published together.
+                        var verdict = AlRunner.Infrastructure.AlCacheInputs.VerifyEntry(
+                            inputsPath, appGroup.SuiteDir, cachedBytes, sidecarPath,
+                            bundleDeclaresQuery ? querySidecarPath : null);
+                        if (!verdict.IsValid)
+                        {
+                            if (verdict.State == AlRunner.Infrastructure.AlCacheInputs.State.InputChanged)
+                            {
+                                if (AlRunner.Log.Verbose)
+                                    Console.Error.WriteLine($"  [cache] entry not used — compile input changed since it was published: {verdict.Detail}");
+                            }
+                            else if (reportIncomplete)
+                                Console.Error.WriteLine($"  [cache] entry not used — {verdict.Detail} — treating as MISS");
+                            cachedBytes = null;
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -3843,7 +3862,9 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                 }
                 else if (reportIncomplete && File.Exists(cachePath))
                 {
-                    var missing = !File.Exists(sidecarPath) ? sidecarPath : querySidecarPath;
+                    var missing = !File.Exists(sidecarPath) ? sidecarPath
+                        : bundleDeclaresQuery && !File.Exists(querySidecarPath) ? querySidecarPath
+                        : inputsPath;
                     Console.Error.WriteLine($"  [cache] DLL present but sidecar missing — treating as MISS ({missing})");
                 }
             }
@@ -3978,6 +3999,7 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
             IReadOnlyList<EmittedSource> sources = Array.Empty<EmittedSource>();
             string? emitManifestAppJsonPath = null;   // the app.json that compile read (#4076)
             IReadOnlyList<string> alDiagnostics = Array.Empty<string>();
+            IReadOnlyDictionary<string, string>? compileInputs = null;   // #5368: what this compile read besides .al
             // --tdd only (issue #1997): count of objects the TDD-EXCLUDED branch below
             // deliberately kept `sources` short by. The PARTIAL-EMIT-DROP guard further
             // down flags any declared-vs-emitted gap as a SILENT drop — under --tdd that
@@ -4105,6 +4127,7 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                     sources = emitOutput.Sources;
                     emitManifestAppJsonPath = emitOutput.ManifestAppJsonPath;
                     alDiagnostics = emitOutput.Diagnostics;
+                    compileInputs = emitOutput.CompileInputs;
                     // --tdd (issue #2001): collect regardless of whether anything ended up
                     // excluded afterward — generation can fully resolve an object with NO
                     // exclusion remaining, and that case still belongs in criterion 8's list.
@@ -4338,17 +4361,36 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                             // Sidecar: persist the AlEnumMetadataRegistry side-effect that
                             // emit just populated. Without this, cache HIT replays the DLL
                             // but leaves the registry empty → enum tests fail.
+                            string enumHash = "";
                             int written = AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
-                                sidecarPath!, tmp => SaveEnumRegistrySidecar(tmp));
+                                sidecarPath!, tmp =>
+                                {
+                                    var count = SaveEnumRegistrySidecar(tmp);
+                                    enumHash = AlRunner.Infrastructure.AlCacheInputs.HashFile(tmp);
+                                    return count;
+                                });
                             // Same for the query symbols emit just serialized — without
                             // this the next HIT has no MetaQuery design (see
                             // AlCacheSidecars).
                             var qsrc = BcCompiler.LastBundleQuerySymbolsPath;
+                            string? queryHash = null;
                             if (qsrc != null && File.Exists(qsrc))
                                 AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
-                                    querySidecarPath!, tmp => File.Copy(qsrc, tmp, overwrite: true));
+                                    querySidecarPath!, tmp =>
+                                    {
+                                        File.Copy(qsrc, tmp, overwrite: true);
+                                        queryHash = AlRunner.Infrastructure.AlCacheInputs.HashFile(tmp);
+                                    });
                             AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
                                 cachePath, tmp => File.WriteAllBytes(tmp, assemblyBytes));
+                            // #5368: the record goes LAST. It is the entry's commit point now, not the
+                            // DLL: an entry is overwritten under its own key when an input changed, and
+                            // until this rename lands the old record names the old DLL and sidecars, so a
+                            // reader holding any mix of old and new files gets a mismatch, a MISS.
+                            AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
+                                inputsPath!, tmp => AlRunner.Infrastructure.AlCacheInputs.Write(
+                                    tmp, appGroup.SuiteDir, compileInputs,
+                                    AlRunner.Infrastructure.AlCacheInputs.Hashes(assemblyBytes, enumHash, queryHash)));
                             cacheOutcome?.Published();
                             // Issue #2239: same category as [cache] HIT/MISS above — cache
                             // population detail, not a result. Observed printing
@@ -6601,7 +6643,7 @@ return strictExitCode ? computedExitCode : 0;
             // caller cares about — nothing changed for THIS bundle's contribution to
             // the request, exactly like an AL-output cache hit.
             bool cached = reusedAsm != null;
-            string? cacheKey = null, cachePath = null, sidecarPath = null, querySidecarPath = null;
+            string? cacheKey = null, cachePath = null, sidecarPath = null, querySidecarPath = null, inputsPath = null;
             bool? cacheGateDeclaresQuery = null;
             // #5034: a tdd request neither reads nor writes the cache, as a --tdd CLI run does not —
             // a HIT skips the Emit that generates members and reports the excluded objects' tests.
@@ -6638,9 +6680,10 @@ return strictExitCode ? computedExitCode : 0;
                 cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
                 sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
                 querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
+                inputsPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheInputs.Suffix);
                 var cacheEntryComplete = AlRunner.Infrastructure.AlCacheSidecars.IsCompleteEntry(
                     File.Exists(cachePath), File.Exists(sidecarPath),
-                    bundleDeclaresQuery, File.Exists(querySidecarPath));
+                    bundleDeclaresQuery, File.Exists(querySidecarPath), File.Exists(inputsPath));
                 // #4971/#4972: a HIT loads code without moving the change model's baseline, so under
                 // selection it is taken only when that baseline was compiled from this exact source.
                 if (cacheEntryComplete && pinLoadToChangeModel
@@ -6660,13 +6703,27 @@ return strictExitCode ? computedExitCode : 0;
                         // DLL is not a read error, so validate the PE image explicitly before
                         // trusting it.
                         AlRunner.Infrastructure.AlCacheSidecars.ValidateCachedAssemblyBytes(bytes, cachePath);
-                        LoadEnumRegistrySidecar(sidecarPath);
-                        if (bundleDeclaresQuery)
-                            AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(querySidecarPath,
-                                BcCompiler.ReadManifestContextSensitiveHelpUrl(bucketRoot, allPaths));
-                        assemblyBytes = bytes;
-                        cached = true;
-                        AlRunner.Infrastructure.PhaseLog.NoteCacheHit();
+                        // #5368: the same record check as the CLI's HIT (see ReadCompleteEntry there).
+                        var verdict = AlRunner.Infrastructure.AlCacheInputs.VerifyEntry(
+                            inputsPath, bucketRoot, bytes, sidecarPath, bundleDeclaresQuery ? querySidecarPath : null);
+                        if (!verdict.IsValid)
+                        {
+                            Console.Error.WriteLine(
+                                $"  [server] {moduleName}: [cache] entry not used — "
+                                + (verdict.State == AlRunner.Infrastructure.AlCacheInputs.State.InputChanged
+                                    ? $"compile input changed since it was published: {verdict.Detail}"
+                                    : verdict.Detail));
+                        }
+                        else
+                        {
+                            LoadEnumRegistrySidecar(sidecarPath);
+                            if (bundleDeclaresQuery)
+                                AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(querySidecarPath,
+                                    BcCompiler.ReadManifestContextSensitiveHelpUrl(bucketRoot, allPaths));
+                            assemblyBytes = bytes;
+                            cached = true;
+                            AlRunner.Infrastructure.PhaseLog.NoteCacheHit();
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -6707,6 +6764,7 @@ return strictExitCode ? computedExitCode : 0;
                 IReadOnlyList<string> excludedObjects;
                 IReadOnlyList<string> excludedObjectDiagnostics;
                 IReadOnlyList<TddExcludedObjectDetail> excludedDetails = Array.Empty<TddExcludedObjectDetail>();
+                IReadOnlyDictionary<string, string>? compileInputs = null;   // #5368
                 var et = System.Diagnostics.Stopwatch.StartNew();
                 var generationBeforeEmit = emitter.RadBaselineGeneration(moduleName);
                 try
@@ -6748,6 +6806,7 @@ return strictExitCode ? computedExitCode : 0;
                     }
                     sources = emitOutput.Sources;
                     alDiagnostics = emitOutput.Diagnostics;
+                    compileInputs = emitOutput.CompileInputs;
                     excludedObjects = emitOutput.ExcludedObjects;
                     excludedObjectDiagnostics = emitOutput.ExcludedObjectDiagnostics ?? Array.Empty<string>();
                     excludedDetails = emitOutput.ExcludedObjectDetails ?? Array.Empty<TddExcludedObjectDetail>();
@@ -6927,14 +6986,29 @@ return strictExitCode ? computedExitCode : 0;
                     {
                         // Same atomic, sidecars-first-DLL-last publish as the CLI path above
                         // (issue #1810) — see the comment there for why the ordering matters.
+                        string enumHash = "";
                         AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
-                            sidecarPath!, tmp => SaveEnumRegistrySidecar(tmp));
+                            sidecarPath!, tmp =>
+                            {
+                                SaveEnumRegistrySidecar(tmp);
+                                enumHash = AlRunner.Infrastructure.AlCacheInputs.HashFile(tmp);
+                            });
                         var qsrc = BcCompiler.LastBundleQuerySymbolsPath;
+                        string? queryHash = null;
                         if (qsrc != null && File.Exists(qsrc))
                             AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
-                                querySidecarPath!, tmp => File.Copy(qsrc, tmp, overwrite: true));
+                                querySidecarPath!, tmp =>
+                                {
+                                    File.Copy(qsrc, tmp, overwrite: true);
+                                    queryHash = AlRunner.Infrastructure.AlCacheInputs.HashFile(tmp);
+                                });
                         AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
                             cachePath, tmp => File.WriteAllBytes(tmp, assemblyBytes));
+                        // #5368: the record last, as the CLI publish above does.
+                        AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
+                            inputsPath!, tmp => AlRunner.Infrastructure.AlCacheInputs.Write(
+                                tmp, bucketRoot, compileInputs,
+                                AlRunner.Infrastructure.AlCacheInputs.Hashes(assemblyBytes, enumHash, queryHash)));
                     }
                     catch (Exception ex) { Console.Error.WriteLine($"  [cache] write failed: {ex.Message}"); }
                 }

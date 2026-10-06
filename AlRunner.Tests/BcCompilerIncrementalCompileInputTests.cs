@@ -226,6 +226,29 @@ public sealed class BcCompilerIncrementalCompileInputTests : IDisposable
         Assert.Empty(changed!);
     }
 
+    // #5368: the AL-output cache records these beside the entry it publishes, so Emit has to hand them out.
+    [SkippableFact]
+    public void Emit_ReportsTheFingerprintOfEveryNonAlFileTheCompileRead_AndNoneWithoutAnAppRoot()
+    {
+        Ready();
+        WriteBundle();
+
+        var output = new BcCompiler().Emit(new[] { _root }, Module + "Inputs", appRootDir: _root);
+
+        var inputs = output.CompileInputs;
+        Assert.NotNull(inputs);
+        foreach (var read in new[] { Path.Combine("Layouts", "A.rdlc"), Path.Combine("Layouts", "B.docx"), Path.Combine("js", "a.js"),
+                     Path.Combine("Sub", "C.rdlc"), Path.Combine("Translations", "CompileInput.da-DK.xlf") })
+            Assert.Contains(CompileFileReads.FilePrefix + Path.Combine(_root, read), inputs!.Keys);
+        Assert.DoesNotContain(inputs!.Keys, k => k.Contains("notes.txt", StringComparison.Ordinal));
+        // What it holds is what a later fingerprint of the same files answers.
+        Assert.Equal(
+            CompileFileReads.Fingerprint(_root, inputs.Keys).OrderBy(kv => kv.Key, StringComparer.Ordinal),
+            inputs.OrderBy(kv => kv.Key, StringComparer.Ordinal));
+
+        Assert.Null(new BcCompiler().Emit(new[] { _root }, Module + "NoRoot").CompileInputs);
+    }
+
     [SkippableFact]
     public void PeekChangedObjects_AndScopes_SeeAnEditedLayout()
     {

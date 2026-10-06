@@ -11,7 +11,7 @@ internal sealed class CompileFileReads
 {
     internal const string FilePrefix = "file:";
     private const string ListPrefix = "list:";
-    private const string DirPrefix = "dir:";
+    internal const string DirPrefix = "dir:";
     private const string Missing = "<missing>";
 
     private readonly object _lock = new();
@@ -71,7 +71,10 @@ internal sealed class CompileFileReads
                 listing ??= new NavCA.RelativeFileSystem(appRootDir);
                 try
                 {
+                    // Names relative to the app root: the same tree under another directory lists the same
+                    // (#5368, a cache entry moves with its bundle). A rename is a change, a count is not the identity.
                     var names = (directory.Length == 0 ? listing.GetFiles(pattern) : listing.GetFiles(directory, pattern))
+                        .Select(n => (Path.IsPathRooted(n) ? Path.GetRelativePath(appRootDir, n) : n).Replace('\\', '/'))
                         .OrderBy(n => n, StringComparer.Ordinal);
                     result[key] = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(string.Join("\n", names))));
                 }
