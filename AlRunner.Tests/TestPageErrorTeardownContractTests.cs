@@ -104,9 +104,9 @@ public sealed class TestPageErrorTeardownContractTests
             "during the page-construction-time initial position -- otherwise a swallowed " +
             "first-row failure (MarkOpened's own blanket catch{}) would leave the page silently, " +
             "permanently unusable from the AL test's own point of view.");
-        Assert.True(WritesField(m, "_tornDown"),
-            "Loaded(bool)'s catch must set _tornDown so later calls on the same TestPage " +
-            "variable refuse instead of silently proceeding.");
+        Assert.True(Calls(m, "TearDown"),
+            "Loaded(bool)'s catch must call TearDown() (the _tornDown flag paired with BC's detach) " +
+            "so later calls on the same TestPage variable refuse instead of silently proceeding.");
         Assert.True(Calls(m, "MakeTestPageNotOpenException"),
             "Loaded(bool)'s catch must construct BC's own not-open exception instead of letting " +
             "the trigger's own error text propagate.");
@@ -150,20 +150,20 @@ public sealed class TestPageErrorTeardownContractTests
             "replacement.");
     }
 
-    // _tornDown must be distinct from _opened: real BC's Close() THROWS "not open" after
-    // teardown rather than silently no-opping the way it would for a page that was simply never
-    // opened (NavTestPageBase.Close() only forwards into this class when IsOpened() is true --
-    // itself driven by _opened). If Loaded()'s catch cleared _opened instead of a separate flag,
-    // Close() would stop being dispatched here at all and could never raise the "not open" error
-    // this fix exists to produce.
+    // TearDown() pairs the _tornDown flag with MarkDetached(), which is what BC's own guards read: a
+    // detached page answers IsOpened() false, so NavTestPageBase.Open() lets the variable open again
+    // (#5388), and CheckPageOpened() raises "The TestPage is not open." for every call, including a
+    // control read before the teardown (#5390) and Close() -- BC's ALClose is CheckPageOpened() then
+    // Close(). Clearing _opened alone makes Close() a silent no-op (measured), so the pairing is the
+    // contract; the AL-level proof is TestPageTeardownReopenTests.
     [Fact]
-    public void TornDown_IsDistinctFromOpened()
+    public void TearDown_PairsTheTornDownFlagWithBcsDetach()
     {
         var type = LiveNavTestPageType();
-        var m = Method(type, "Loaded");
-        Assert.False(WritesField(m, "_opened"),
-            "Loaded(bool) must not write _opened -- teardown is tracked by the separate " +
-            "_tornDown flag so Close() still forwards into this class and can raise \"The " +
-            "TestPage is not open.\" instead of silently no-opping.");
+        var m = Method(type, "TearDown");
+        Assert.True(WritesField(m, "_tornDown"), "TearDown() must set _tornDown.");
+        Assert.True(Calls(m, "MarkDetached"),
+            "TearDown() must detach the page (MarkDetached): without it Open() refuses a torn-down " +
+            "variable, and a control read before the teardown keeps answering.");
     }
 }

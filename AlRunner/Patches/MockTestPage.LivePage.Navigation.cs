@@ -521,10 +521,10 @@ internal partial class LiveNavTestPage
             // (.claude/rules/loud-failures.md).
             catch (NavBaseException ex)
             {
-                // See _suppressTeardownOnLoad: the page-construction-time initial position is
-                // not a teardown-worthy call. Let the original exception propagate unmodified,
-                // exactly as it did before this fix (into a blanket `catch {}` at the call site).
-                if (_suppressTeardownOnLoad) throw;
+                // The open itself (see _suppressTeardownOnLoad): the trigger's own error is what the
+                // open raises, and the page is torn down all the same, so a later call raises "not
+                // open" and the variable opens again (#5388, corpus 69640 probe).
+                if (_suppressTeardownOnLoad) { TearDown(); throw; }
 
                 // Real BC (measured 27.5/28.3/28.4, issue #2656): an unhandled AL error here
                 // tears the TestPage down. The original error's own text never reaches the AL
@@ -533,7 +533,7 @@ internal partial class LiveNavTestPage
                 // diagnostic data (see MakeTestPageNotOpenException); it is not AL-visible
                 // (asserterror / GetLastErrorText only see the outer message), matching what
                 // real BC surfaces.
-                _tornDown = true;
+                TearDown();
                 throw MakeTestPageNotOpenException(ex);
             }
             SnapshotBeforeImage();

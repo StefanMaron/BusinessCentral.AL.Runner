@@ -26,37 +26,29 @@ internal partial class LiveNavTestPage
     // is after the test's assertions have already read the table. See RunnerTestPageState.
     private bool _opened;
 
-    // Set when an unhandled error propagates out of the page's own record-positioning
-    // trigger (OnAfterGetRecord) while this TestPage is already open — see Loaded() below.
-    //
-    // Measured against a real BC service tier (27.5, 28.3, 28.4; issue #2656): an unhandled
-    // error raised there tears down the TestPage's underlying client session. Every
-    // subsequent call on the SAME TestPage variable then raises BC's own
-    // "The TestPage is not open." — not the trigger's own error text — including the
-    // navigation call itself, Close(), and a plain field read. Deliberately distinct from
-    // _opened (which BC's own NavTestPageBase.Open()/Close() guards read): a torn-down page
-    // must still make Close() forward into this class (real BC's Close() THROWS after
-    // teardown, it does not silently no-op the way it would for a page that was simply never
-    // opened), so _opened stays true and this flag alone gates the refusal.
-    //
-    // This is NOT a blanket "any unhandled trigger error tears the page down" rule — measured
-    // the same way, an unhandled error from OnValidate (field validation) or OnAction
-    // (action invocation) propagates with its own error text and leaves the page open. Only
-    // Loaded() (the record-positioning trigger) sets this flag.
+    // Set when an unhandled error propagates out of a row load (OnAfterGetRecord, #2656, or a
+    // control expression, #4920): BC tears the TestPage's client session down, and every later call on
+    // the SAME variable raises "The TestPage is not open." (measured on 27.5, 28.3, 28.4, then every
+    // cloud leg and the Windows nightly: corpus 69600, 69640). Not a blanket "any trigger error tears
+    // the page down": an error from OnValidate or OnAction propagates with its own text and leaves
+    // the page open. See TearDown for what the flag is paired with.
     private bool _tornDown;
 
-    // Set only around the page-construction-time initial positioning call (MarkOpened /
-    // RunnerTestClientSession.GetPage's own MoveFirst()). MarkOpened's caller wraps it in a
-    // blanket `catch { }` that would swallow whatever Loaded() throws there; GetPage's is not
-    // similarly guarded on the runner side (its caller is precompiled BC dispatch via
-    // TestClientProxy<ITestPage>.Proxy, not audited here). Either way, teardown must not apply
-    // during this call: the page never finished a first successful position, so treating a
-    // failure there as "the page tore down" would leave every LATER, otherwise-unrelated call
-    // on a freshly-adopted page wrongly answering "The TestPage is not open." -- for MarkOpened
-    // specifically, that would follow a failure that never became AL-visible in the first
-    // place (a pre-existing, separate gap: real BC's OpenView() propagates that first row's own
-    // trigger error, catchable by asserterror, rather than swallowing it -- not this issue's
-    // scope).
+    // The page's own teardown: every later call raises "The TestPage is not open." (_tornDown),
+    // and BC's own guards read the same answer: IsOpened() is false and CheckPageOpened()
+    // raises, so a control read before the teardown raises as well as one never read (#5390)
+    // and Open() passes, so the variable opens again (#5388). BC's ALClose is CheckPageOpened()
+    // then Close(), so a detached page refuses Close() and nothing turns it into a no-op.
+    // A subpage part keeps the flag alone: no measurement says what BC answers for a part.
+    private void TearDown()
+    {
+        _tornDown = true;
+        if (this is not LiveNavTestPart) MarkDetached();
+    }
+
+    // Set only around the open's own row load (MarkOpened's MoveFirst, RunnerTestClientSession.GetPage's):
+    // an error there propagates as the trigger's own text instead of BC's "The TestPage is not open.",
+    // which is what a later MOVE reports. The page is torn down either way.
     private bool _suppressTeardownOnLoad;
 
     // Whether the row the page stands on has had its control expressions evaluated: set by Loaded,
@@ -87,7 +79,7 @@ internal partial class LiveNavTestPage
         // fault must not be relabelled as a BC error.
         catch (NavBaseException ex)
         {
-            _tornDown = true;
+            TearDown();
             if (duringOpen) throw;
             throw MakeTestPageNotOpenException(ex);
         }
@@ -199,11 +191,33 @@ internal partial class LiveNavTestPage
     /// </summary>
     internal void MarkOpened(Microsoft.Dynamics.Nav.Types.Metadata.ViewMode viewMode)
     {
+        if (_markedOpenBefore) BlankBufferForReopen();
+        _markedOpenBefore = true;
         _opened = true;
         _detached = false;
+        _tornDown = false;
         _rowExpressionsRaised = false;
         _staticEditableOverride = viewMode != Microsoft.Dynamics.Nav.Types.Metadata.ViewMode.View
                                   && (_page?.PageEditable ?? true);
+    }
+
+    // A reopened variable is a fresh page: BC opens it on the first row, not where the closed one
+    // stood (#5393). The runner keeps one record for the variable, so a reopen starts from the blank
+    // buffer a first open finds, which is also what makes MarkOpened position the open.
+    private bool _markedOpenBefore;
+
+    // What the closed page stood on is not the new page's: the buffer is blank, as a first open finds
+    // it, with the filters kept (an open applies its own again). Without it MoveFirst finds no row on
+    // an empty table and the open evaluates the old row's expressions. A part is left alone, its rows
+    // follow its host.
+    private void BlankBufferForReopen()
+    {
+        if (this is LiveNavTestPart || _record is not { } record) return;
+        record.ALInit();
+        var primaryKey = record.MetaTable?.PrimaryKey;
+        if (primaryKey != null)
+            for (var i = 0; i < primaryKey.KeyFieldCount; i++)
+                record.ClearFieldValue(primaryKey.KeyFieldsList[i].FieldNo);
     }
 
     // Set only by MarkOpened — i.e. only for a page the TEST opened, where the open MODE is
