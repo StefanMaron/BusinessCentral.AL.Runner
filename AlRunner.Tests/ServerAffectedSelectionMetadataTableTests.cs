@@ -125,6 +125,24 @@ public class ServerAffectedSelectionMetadataTableTests
         }
         """;
 
+    // Its global record of a metadata table is built with the codeunit instance, before any test starts.
+    private const string GlobalTests = """
+        codeunit 60798 "MetaSel Global Tests SX"
+        {
+            Subtype = Test;
+
+            var
+                G: Record "Table Metadata";
+
+            [Test]
+            procedure ReadsHeldGlobal()
+            begin
+                if G.Get(60796) then
+                    Error('PROBE-GLOBAL');
+            end;
+        }
+        """;
+
     private static readonly string[] All =
     {
         "ReadsAllObj", "ReadsAllObjWithCaption", "ReadsCodeunitMetadata", "ReadsPageControlField", "ReadsTableMetadata", "Unrelated",
@@ -247,5 +265,19 @@ public class ServerAffectedSelectionMetadataTableTests
         // A change inside one procedure moves no row of any metadata table: only its callers run.
         Write(bundle, "Unrelated.Codeunit.al", Unrelated("exit(7 + 0);"));
         AssertSelected(await Send(server, bundle), new[] { "Unrelated" });
+
+        // A metadata table only a test codeunit's global holds: which of its tests read it is not recorded.
+        Write(bundle, "GlobalTests.Codeunit.al", GlobalTests);
+        Assert.Contains("ReadsHeldGlobal", (await Send(server, bundle)).Ran);
+        Write(bundle, "NewTab.Table.al", NewTable);
+        var held = await Send(server, bundle);
+        Assert.True(held.ForcedFull, held.Raw);
+        Assert.Contains("a record of metadata table 2000000136 was held outside any one test", held.Reason, StringComparison.Ordinal);
+        Assert.Equal(All.Concat(new[] { "ReadsHeldGlobal" }).OrderBy(x => x, StringComparer.Ordinal), held.Ran);
+        foreach (var (t, probe) in new[] { ("ReadsTableMetadata", "PROBE-TABLEMETA"), ("ReadsHeldGlobal", "PROBE-GLOBAL") })
+        {
+            Assert.True(held.Status[t] == "fail", $"{t}: {held.Raw}");
+            Assert.Contains(probe, held.Line[t], StringComparison.Ordinal);
+        }
     }
 }
