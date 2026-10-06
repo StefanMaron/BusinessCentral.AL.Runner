@@ -347,15 +347,22 @@ internal sealed partial class RunnerPageInstance
     }
 
     /// <summary>The control's AL name, <c>field(&lt;Name&gt;; …)</c>, from the page's own control
-    /// tree, a precompiled page's symbol file, or a source pageextension's delta; null when none
-    /// declares it (#3458).</summary>
+    /// tree, a precompiled page's symbol file, a source pageextension's delta, or (on a request
+    /// page) its precompiled report's symbol file; null when none declares it (#3458, #4919).</summary>
     internal string? TryGetControlName(int controlId)
     {
         var name = ControlDefinition(controlId)?.Name;
-        return !string.IsNullOrEmpty(name) ? name
-            : RecordPatches.TryGetDependencyControlName(_pageId, controlId)
-              ?? RecordPatches.SourcePageExtensionControlName(_pageId, controlId);
+        return !string.IsNullOrEmpty(name) ? name : DeclaredControlName(_pageId, IsRequestPage, controlId);
     }
+
+    /// <summary>The name a symbol file or an extension's delta gives the control, for a control
+    /// with no ControlDefinition. A request page's id space is its REPORT's, so a page-symbol
+    /// lookup with that id would read an unrelated page (#4919).</summary>
+    internal static string? DeclaredControlName(int pageOrReportId, bool isRequestPage, int controlId)
+        => isRequestPage
+            ? RecordPatches.TryGetDependencyRequestPageControl(pageOrReportId, controlId)?.Name is { Length: > 0 } requestName ? requestName : null
+            : RecordPatches.TryGetDependencyControlName(pageOrReportId, controlId)
+              ?? RecordPatches.SourcePageExtensionControlName(pageOrReportId, controlId);
 
     private string? DependencyControlCaption(int controlId)
         => IsRequestPage
