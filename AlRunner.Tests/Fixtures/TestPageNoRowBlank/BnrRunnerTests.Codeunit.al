@@ -300,4 +300,66 @@ codeunit 73400 "BNR Runner Tests"
         Assert.AreEqual(5, Card.QInt.AsInteger(), 'typed read of the new row');
         Assert.AreEqual('X', Card.HeaderNo.Value, 'the new row reads its key');
     end;
+
+    [Test]
+    procedure NoRow_Action_TempListInsertAndFind_ShowsTheRow()
+    var
+        Card: TestPage "BNR Temp List";
+    begin
+        Initialize();
+        Card.OpenView();
+        Assert.AreEqual('', Card.QInt.Value, 'no row before the action');
+        Card.InsertFind.Invoke();
+        Assert.AreEqual('T', Card.HeaderNo.Value, 'the row the action inserted is shown');
+        Assert.AreEqual('7', Card.QInt.Value, 'its value');
+        Assert.AreEqual(7, Card.QInt.AsInteger(), 'and its typed read');
+    end;
+
+    [Test]
+    procedure NoRow_Action_TempListInsertFindUpdate_ShowsTheRow()
+    var
+        Card: TestPage "BNR Temp List";
+    begin
+        Initialize();
+        Card.OpenView();
+        Card.InsertFindUpdate.Invoke();
+        Assert.AreEqual('7', Card.QInt.Value, 'the row is shown after CurrPage.Update');
+    end;
+
+    [Test]
+    procedure NoRow_Action_TempListInsertOnly_ShowsTheRow()
+    var
+        Card: TestPage "BNR Temp List";
+    begin
+        Initialize();
+        Card.OpenView();
+        Card.InsertOnly.Invoke();
+        Assert.AreEqual('7', Card.QInt.Value, 'the inserted row is shown');
+    end;
+
+    [Test]
+    procedure NoRow_Action_TempListFieldsOnly_StaysBlank()
+    var
+        Card: TestPage "BNR Temp List";
+    begin
+        Initialize();
+        Card.OpenView();
+        Card.FieldsOnly.Invoke();
+        Assert.AreEqual('', Card.QInt.Value, 'a buffer change that put no row into the rowset shows nothing');
+        Assert.AreEqual('', Card.QTxt.Value, 'text');
+        Assert.AreEqual(0, Card.QInt.AsInteger(), 'typed');
+    end;
+
+    [Test]
+    procedure NoRow_Action_GetOfARowTheFilterHides_StaysBlank()
+    var
+        Card: TestPage "BNR Get List";
+    begin
+        Initialize();
+        InsertFullLine('H1', 10);
+        Card.OpenView();
+        Card.GetRow.Invoke();
+        Assert.AreEqual('', Card.QInt.Value, 'Rec is on a stored row the page filters out');
+        Assert.AreEqual('', Card.QTxt.Value, 'text');
+    end;
 }

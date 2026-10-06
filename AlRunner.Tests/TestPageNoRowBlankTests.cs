@@ -37,6 +37,11 @@ public sealed class TestPageNoRowBlankTests
         r.AssertPassed("Codeunit73400.NoRow_Contrast_EditableListOverAnEmptyTable_ShowsTheDraftLine_ReadingItsDefaults");
         r.AssertPassed("Codeunit73400.NoRow_Contrast_PartUnderAnEditableHostWithNoLines_ShowsTheDraftLine_ReadingItsDefaults");
         r.AssertPassed("Codeunit73400.NoRow_Contrast_NewRowOnAnEmptyEditableList_ReadsTheValuesWrittenToIt");
+        r.AssertPassed("Codeunit73400.NoRow_Action_TempListInsertAndFind_ShowsTheRow");
+        r.AssertPassed("Codeunit73400.NoRow_Action_TempListInsertFindUpdate_ShowsTheRow");
+        r.AssertPassed("Codeunit73400.NoRow_Action_TempListInsertOnly_ShowsTheRow");
+        r.AssertPassed("Codeunit73400.NoRow_Action_TempListFieldsOnly_StaysBlank");
+        r.AssertPassed("Codeunit73400.NoRow_Action_GetOfARowTheFilterHides_StaysBlank");
 
         r.AssertNoFailures();
     }

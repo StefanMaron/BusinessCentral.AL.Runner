@@ -59,6 +59,7 @@ internal partial class LiveNavTestPage
             if (wasOnNewRowLine) _newRowLineRecordStarted = true;
             EnterNewRowLine(record);
         }
+        RememberBlankedBuffer(record);
         return Loaded(found);
     }
 
@@ -108,6 +109,7 @@ internal partial class LiveNavTestPage
                     ?? record.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult();
         _noRowShown = !found;
         if (!found) EnterNewRowLine(record);
+        RememberBlankedBuffer(record);
         return Loaded(found);
     }
 
@@ -208,11 +210,41 @@ internal partial class LiveNavTestPage
     // Set when the rowset is empty and nothing stands in for a row; see NoRowShown.
     private bool _noRowShown;
 
+    // The buffer as it stood when the page last found no row. Page code that positions or changes
+    // Rec afterwards (an action's Insert + FindFirst, Get, CurrPage.Update) makes the page show that
+    // row, and BC shows it; the flag alone is a latch from a past miss (#5358, Navigate).
+    private Dictionary<int, object?>? _noRowBuffer;
+
+    private protected void RememberBlankedBuffer(NavRecord record)
+        => _noRowBuffer = _noRowShown ? TestPageWriteBuffer.Values(record) : null;
+
     /// <summary>
-    /// The page shows no row: its rowset is empty and neither the draft line nor a started new row
-    /// stands in for one. A control reads blank then, whatever its type (#5358).
+    /// The page shows no row: its rowset was empty at the last move, neither the draft line nor a
+    /// started new row stands in for one, and page code has not since put a row into the rowset
+    /// and positioned Rec on it. A control reads blank then, whatever its type (#5358).
+    ///
+    /// <para>Page code that only changes the buffer (field assignments, or a Get of a row the page
+    /// filters out) shows nothing; an action that inserts a row the page's filters let through and
+    /// positions Rec on it shows that row. Corpus 69947's probe (cloud legs and Windows): the
+    /// Navigate shape, a temporary-source list filled by an action, is why this is not a latch.
+    /// Both halves are read now, not remembered: the buffer against <see cref="_noRowBuffer"/>, and
+    /// whether the page's rowset has rows.</para>
     /// </summary>
-    internal bool NoRowShown => _noRowShown && !_onNewRowLine;
+    internal bool NoRowShown
+        => _noRowShown && !_onNewRowLine && _record != null && _noRowBuffer != null
+           && (TestPageWriteBuffer.IsUnchangedSince(_record, _noRowBuffer) || !RowsetHasRows(_record));
+
+    private static bool RowsetHasRows(NavRecord record)
+    {
+        var session = record.ParentSession;
+        if (session == null) return true;
+        // A copy carrying the page's filters, sharing a temporary table's rows: asking IsEmpty on
+        // Rec itself would be the same answer, but a probe cannot disturb Rec's position or filters.
+        using var probe = new NavRecord(session, record.TableID, SecurityFiltering.Ignored,
+                                        isTemporary: record.IsTemporary);
+        probe.ALCopy(record, shareTableHandle: record.IsTemporary);
+        return !probe.ALIsEmpty;
+    }
 
     // ONE NEW-RECORD STEP PER DRAFT-LINE ROW (issue #3029). Set the moment the platform's
     // new-record step has run for the draft line the cursor is on, and cleared whenever that
@@ -356,12 +388,15 @@ internal partial class LiveNavTestPage
     private protected void BlankBufferWhenNoRowIsShown(NavRecord record)
     {
         _noRowShown = true;
-        if (_onNewRowLine) return;
-        record.ALInit();
-        var primaryKey = record.MetaTable?.PrimaryKey;
-        if (primaryKey == null) return;
-        for (var i = 0; i < primaryKey.KeyFieldCount; i++)
-            record.ClearFieldValue(primaryKey.KeyFieldsList[i].FieldNo);
+        if (!_onNewRowLine)
+        {
+            record.ALInit();
+            var primaryKey = record.MetaTable?.PrimaryKey;
+            if (primaryKey != null)
+                for (var i = 0; i < primaryKey.KeyFieldCount; i++)
+                    record.ClearFieldValue(primaryKey.KeyFieldsList[i].FieldNo);
+        }
+        RememberBlankedBuffer(record);
     }
 
     /// <summary>
