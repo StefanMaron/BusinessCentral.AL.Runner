@@ -144,6 +144,26 @@ public sealed class BcCompilerIncrementalCompileInputTests : IDisposable
         Assert.Equal(new[] { new AffectedObjectId("Report", 90504, "CI Report C") }, changed);
     }
 
+    // The delta compile re-reads only what it recompiled, so its own reads have to reach the next baseline.
+    [SkippableFact]
+    public void LayoutOfAReportAddedByAnIncrementalCycle_IsAnInputOfTheNextCycle()
+    {
+        Ready();
+        WriteBundle();
+        var compiler = Baseline();
+
+        Write("Layouts/D.rdlc", "<Report>D v1</Report>");
+        Write("ReportD.al", Report(90505, "CI Report D", "RDLC", "Layouts/D.rdlc"));
+        var added = Cycle(compiler, out var addReason, out _);
+        Assert.True(added != null, $"an added report must stay on the fast path: {addReason}");
+
+        Write("Layouts/D.rdlc", "<Report>D v2</Report>");
+
+        var output = Cycle(compiler, out var reason, out var changed);
+        Assert.True(output != null, $"a layout edit must stay on the fast path: {reason}");
+        Assert.Equal(new[] { new AffectedObjectId("Report", 90505, "CI Report D") }, changed);
+    }
+
     [SkippableFact]
     public void EditedControlAddInResource_IsAChangeToTheControlAddIn()
     {
