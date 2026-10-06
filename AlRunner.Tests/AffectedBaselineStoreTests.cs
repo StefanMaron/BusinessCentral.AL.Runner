@@ -68,6 +68,28 @@ public class AffectedBaselineStoreTests
         Assert.Contains("no snapshot of module V2_b", missingModule.ForceFullReason);
     }
 
+    /// <summary>
+    /// #5003: tests that ran a file declaring several objects are recorded against their objects, and
+    /// the snapshot names that file nowhere in its object table. Left alone it changes nothing;
+    /// changed, nothing says which of its objects, so everything runs.
+    /// </summary>
+    [Fact]
+    public void AFileThatDeclaredSeveralObjects_ChangesNothingUntouched_AndForcesAFullRunWhenChanged()
+    {
+        var recorded = Snapshot(
+            new() { ["/b/Helper.al"] = "H1", ["/b/Tests.al"] = "T1", ["/b/Multi.al"] = "M1" },
+            Recorded().ObjectByPath);
+        var stored = new Dictionary<string, AffectedModuleSnapshot> { ["V2_b"] = recorded };
+
+        var untouched = AffectedBaselineStore.ChangedSince(stored, new[] { "V2_b" }, _ => recorded);
+        Assert.Null(untouched.ForceFullReason);
+        Assert.Empty(untouched.Changed);
+
+        var edited = AffectedBaselineStore.ChangedSince(stored, new[] { "V2_b" }, _ => Snapshot(
+            new() { ["/b/Helper.al"] = "H1", ["/b/Tests.al"] = "T1", ["/b/Multi.al"] = "M2" }, Recorded().ObjectByPath));
+        Assert.Contains("'/b/Multi.al' changed and was not a single-object file", edited.ForceFullReason);
+    }
+
     private static AffectedBaseline Sample() => new(
         new Dictionary<string, AffectedModuleSnapshot> { ["V2_b"] = Recorded() },
         new Dictionary<string, AffectedBundleBaseline>

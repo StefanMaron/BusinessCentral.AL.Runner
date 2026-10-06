@@ -44,8 +44,8 @@ public class ServerAffectedSelectionUnknownRecordTests : IClassFixture<SharedCli
         }
         """;
 
-    // Unknown only because its own statements sit in a file declaring two objects, which maps to no
-    // single object (#5003). If #5003 lands, move the reader to another unattributable shape.
+    // Unknown only because it calls into a sibling source app the request does not name: that app's
+    // statements sit in a file no module of the request tracks, and no package fingerprint covers it.
     private const string UnmappableReader = """
         codeunit 61903 "SU Reader"
         {
@@ -55,16 +55,25 @@ public class ServerAffectedSelectionUnknownRecordTests : IClassFixture<SharedCli
             procedure ReadsStore()
             var
                 S: Codeunit "SS Store";
+                D: Codeunit "SU Dep Helper";
             begin
+                D.Nothing();
                 if S.Get() <> 42 then
                     Error('READS-%1', S.Get());
             end;
         }
+        """;
 
-        codeunit 61904 "SU Other"
+    // The sibling app UnmappableReader and TriggerReader call into: a folder beside the bundle, named
+    // as a dependency by app.json and not as a source path of the request.
+    private const string DepHelper = """
+        codeunit 61920 "SU Dep Helper"
         {
             procedure Nothing()
+            var
+                X: Integer;
             begin
+                X := 1;
             end;
         }
         """;
@@ -150,16 +159,11 @@ public class ServerAffectedSelectionUnknownRecordTests : IClassFixture<SharedCli
             procedure InsertsRow()
             var
                 R: Record "SU Rows";
+                D: Codeunit "SU Dep Helper";
             begin
+                D.Nothing();
                 R.PK := 1;
                 R.Insert();
-            end;
-        }
-
-        codeunit 61909 "SU Trigger Other"
-        {
-            procedure Nothing()
-            begin
             end;
         }
         """;
@@ -193,15 +197,33 @@ public class ServerAffectedSelectionUnknownRecordTests : IClassFixture<SharedCli
 
     private static string Bundle(string prefix, string appIdSuffix, string reader, bool systemSymbols = false)
     {
-        var dir = TestScratch.Dir(prefix);
+        var root = TestScratch.Dir(prefix);
+        var dir = Path.Combine(root, "Tests");
         Directory.CreateDirectory(dir);
+        var dep = Path.Combine(root, "Dep");
+        Directory.CreateDirectory(dep);
+        File.WriteAllText(Path.Combine(dep, "app.json"), $$"""
+        {
+          "id": "c5059000-0000-4a11-9111-1{{appIdSuffix[1..]}}",
+          "name": "Unknown Record SU Dep {{appIdSuffix}}",
+          "publisher": "AL Runner",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "idRanges": [ { "from": 61920, "to": 61929 } ],
+          "runtime": "14.0"
+        }
+        """);
+        File.WriteAllText(Path.Combine(dep, "Helper.Codeunit.al"), DepHelper);
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         {
           "id": "c5059000-0000-4a11-9111-{{appIdSuffix}}",
           "name": "Unknown Record SU {{appIdSuffix}}",
           "publisher": "AL Runner",
           "version": "1.0.0.0",
-          "dependencies": [],
+          "dependencies": [
+            { "id": "c5059000-0000-4a11-9111-1{{appIdSuffix[1..]}}", "name": "Unknown Record SU Dep {{appIdSuffix}}",
+              "publisher": "AL Runner", "version": "1.0.0.0" }
+          ],
           {{(systemSymbols ? "\"platform\": \"1.0.0.0\"," : "")}}
           "idRanges": [ { "from": 61900, "to": 61919 } ],
           "runtime": "14.0"

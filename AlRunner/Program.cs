@@ -7902,8 +7902,7 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
 // (bypassing the normal one-line-processed-at-a-time queue entirely), while every
 // other command still goes through `mainQueue` and is processed sequentially by
 // this method exactly as before. See `outputLock`/`activeRunCts` below.
-static string ToAffectedObjectKey(AffectedObjectId id)
-    => $"{id.Kind}|{(id.Id.HasValue ? "id:" + id.Id.Value : "name:" + id.Name)}";
+static string ToAffectedObjectKey(AffectedObjectId id) => AlRunner.Infrastructure.AffectedObjectKeys.Of(id);
 
 static string ToAffectedObjectDisplay(AffectedObjectId id)
     => id.Id.HasValue
@@ -8568,12 +8567,17 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 .ToDictionary(m => m, m => emitter.RadBaselineGeneration(m), StringComparer.Ordinal);
 
             var requestWideTrackedObjectsByPath = new Dictionary<string, AffectedObjectId>(StringComparer.Ordinal);
+            // #5003: files declaring several objects are in no map above; a statement there is keyed by the
+            // object whose scope ran it. A change to such a file falls back to a full run (BcCompiler.Incremental).
+            var requestWideMultiObjectPaths = new HashSet<string>(StringComparer.Ordinal);
             foreach (var trackedModuleName in requestModuleByBundle.Values.Distinct(StringComparer.Ordinal))
             {
                 var m = emitter.TryGetTrackedObjectsByPath(trackedModuleName);
                 if (m == null) continue;
                 foreach (var kv in m)
                     requestWideTrackedObjectsByPath[kv.Key] = kv.Value;
+                if (emitter.TryGetMultiObjectPaths(trackedModuleName) is { } multiObjectPaths)
+                    requestWideMultiObjectPaths.UnionWith(multiObjectPaths);
             }
 
             var extensionsOfTable = new Dictionary<int, List<int>>();
@@ -8608,7 +8612,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 if (id == 0 || !selectionSourceMap.TryGetValue((label, id), out var path)) return null;
                 return (requestWideTrackedObjectsByPath.TryGetValue(path, out var identity)
                     ? ToAffectedObjectKey(identity)
-                    : ToAffectedObjectKey(new AffectedObjectId(label == "CodeUnit" ? "Codeunit" : label, id, "")), path);
+                    : AlRunner.Infrastructure.AffectedObjectKeys.OfObjectClass(label, id), path);
             }
             // #4988: the event side of the baseline, stored whenever the coverage is.
             var recordedThisRequest = new List<string>();
@@ -8748,12 +8752,13 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
 
                     var coveredObjects = new HashSet<string>(StringComparer.Ordinal);
                     var unmappable = false;
-                    // False when the file maps to no single object (#5003) and is not packaged.
-                    bool Cover(string filePath, string? scopeName)
+                    // False when the file is in neither map (not a tracked file of this request) and is not packaged.
+                    bool Cover(AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord statement)
                     {
-                        if (!requestWideTrackedObjectsByPath.TryGetValue(filePath, out var identity))
-                            return AlRunner.Infrastructure.DependencyPackageFingerprint.IsUnderAny(filePath, packagedSourceRoots);
-                        AddKeys(ToAffectedObjectKey(identity), scopeName);
+                        if (AlRunner.Infrastructure.AffectedObjectKeys.OfStatement(
+                                statement, requestWideTrackedObjectsByPath, requestWideMultiObjectPaths) is not { } objectKey)
+                            return AlRunner.Infrastructure.DependencyPackageFingerprint.IsUnderAny(statement.FilePath, packagedSourceRoots);
+                        AddKeys(objectKey, statement.ScopeName);
                         return true;
                     }
                     void AddKeys(string objKey, string? scopeName)
@@ -8773,7 +8778,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                             dependencyKeys.Add(k);
                     }
                     foreach (var s in statements ?? Enumerable.Empty<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>())
-                        if (!Cover(s.FilePath, s.ScopeName)) { unmappable = true; break; }
+                        if (!Cover(s)) { unmappable = true; break; }
                     if (used != null && !unmappable)
                     {
                         // Outside this request's sources, or packaged: no source key, as a statement there has none.

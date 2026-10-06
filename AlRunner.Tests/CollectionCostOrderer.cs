@@ -539,6 +539,10 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // #5059/#5069: six server starts and fourteen requests. CI 53.7s (BC 27.5) and 51.5s (BC 28.5) on main run
             // 37161245486, the lower leg rounded down (#5311).
             ["ServerAffectedSelectionUnknownRecordTests"] = 51,
+            // #5003: three server starts (one shared, two for the restart fact) and eighteen requests. 25s and 36s on two
+            // local Debug runs; the figure is an ESTIMATE, the higher local one rounded up to 45 for a CI leg, to be
+            // replaced by the first CI leg's figure.
+            ["ServerAffectedSelectionMultiObjectFileTests"] = 45,
             // #5028: twelve server starts and thirteen requests. CI 156.3s (BC 27.5) and 151.8s (BC 28.5) on main run
             // 37161245486, the lower leg rounded down (#5311).
             ["ServerAffectedSelectionEnvironmentDriftTests"] = 151,
