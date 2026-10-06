@@ -21,7 +21,7 @@ public sealed class AlCacheSidecarsTests
         // The exact broken state: DLL + enum sidecar present, query symbols absent.
         Assert.False(AlCacheSidecars.IsCompleteEntry(
             dllExists: true, enumSidecarExists: true,
-            bundleDeclaresQuery: true, querySidecarExists: false));
+            bundleDeclaresQuery: true, querySidecarExists: false, inputsRecordExists: true));
     }
 
     [Fact]
@@ -29,7 +29,7 @@ public sealed class AlCacheSidecarsTests
     {
         Assert.True(AlCacheSidecars.IsCompleteEntry(
             dllExists: true, enumSidecarExists: true,
-            bundleDeclaresQuery: true, querySidecarExists: true));
+            bundleDeclaresQuery: true, querySidecarExists: true, inputsRecordExists: true));
     }
 
     [Fact]
@@ -39,14 +39,23 @@ public sealed class AlCacheSidecarsTests
         // unconditionally would permanently defeat the cache for every other bundle.
         Assert.True(AlCacheSidecars.IsCompleteEntry(
             dllExists: true, enumSidecarExists: true,
-            bundleDeclaresQuery: false, querySidecarExists: false));
+            bundleDeclaresQuery: false, querySidecarExists: false, inputsRecordExists: true));
     }
 
     [Fact]
     public void MissingDllOrEnumSidecar_IsNeverServable()
     {
-        Assert.False(AlCacheSidecars.IsCompleteEntry(false, true, false, true));
-        Assert.False(AlCacheSidecars.IsCompleteEntry(true, false, false, true));
+        Assert.False(AlCacheSidecars.IsCompleteEntry(false, true, false, true, true));
+        Assert.False(AlCacheSidecars.IsCompleteEntry(true, false, false, true, true));
+    }
+
+    // #5368: an entry with no record of what its compile read cannot say a layout is unchanged, so it
+    // is not servable however complete the rest of it is (an entry an earlier runner wrote).
+    [Fact]
+    public void EntryWithoutAnInputsRecord_IsNeverServable_WhateverElseItHas()
+    {
+        Assert.False(AlCacheSidecars.IsCompleteEntry(true, true, false, false, inputsRecordExists: false));
+        Assert.False(AlCacheSidecars.IsCompleteEntry(true, true, true, true, inputsRecordExists: false));
     }
 
     // Negative direction for issue #1810: a truncated <key>.dll next to otherwise-valid

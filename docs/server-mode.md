@@ -1138,8 +1138,43 @@ the file, since the store does not keep which object names it.
 Two tests pin the population: every member of BC's `IFileSystem` is a recorded read or
 is named as not one, and every `WithFileSystem` in the runner gets the recording file
 system from `ReportLayoutFileSystem.Build`
-(`AlRunner.Tests/CompileInputPopulationTests.cs`). The AL-output cache key (which
-decides a warm start) still hashes only `.al` and `app.json`; see #5368.
+(`AlRunner.Tests/CompileInputPopulationTests.cs`). The AL-output cache (which decides a
+warm start) checks the same files on a HIT, as the next section describes.
+
+#### The AL-output cache and files the compile reads
+
+The AL-output cache key is computed before any compile, from the `.al` files and `app.json`,
+so it cannot name a layout, a ControlAddIn resource or a Translations file. Until #5368 a
+change to only one of those was a HIT: a deleted layout, which a cold compile refuses with
+`AL1081`, kept passing.
+
+Every entry now carries `<key>.inputs.json`. The compile's own file system records what BC
+asked for (`CompileFileReads`, the same population as above), `BcEmitOutput.CompileInputs`
+carries the fingerprints out of `Emit`, and the publish writes them into the record. A HIT
+fingerprints the same files again and compares: any difference is a MISS, the bundle compiles
+and the entry is republished under the same key. A file that was absent when the compile
+looked and exists now is a difference too (`<missing>`), and a listing is compared by the
+names it returned, not by how many.
+
+- **The record is the entry's commit point.** It names the SHA-256 of the DLL and of the
+  sidecars it was published with and is published last, after them. An entry is overwritten
+  under its own key when an input changed, so a reader can meet the new DLL beside the old
+  record, or the old DLL beside a new sidecar; both fail the comparison and read as a MISS.
+  A reader never needs a lock for this, and two runs with different layouts on one cache root
+  take turns recompiling rather than serving each other's DLL.
+- **An entry without a record is incomplete**, as one without an enum sidecar is
+  (`AlCacheSidecars.IsCompleteEntry`), and the cache schema moved to `v15`, so an entry an
+  earlier runner wrote is not looked up at all and none is ever replayed unchecked.
+- **Paths are stored relative to the app root** when they are inside it, so a cache that
+  moves with its bundle, or a bundle checked out elsewhere, still answers.
+- **Both entry points use it**: the CLI's bundle loop and `--server`'s `RunBundleForServer`
+  (the two callers of `ComputeAlCacheKey`). `--tdd` neither reads nor writes this cache.
+  A source dependency's compiled-deps cache is keyed by the package's own bytes, which
+  contain its layouts, so it needs no record (the resolved-closure question is #5053).
+- **A HIT costs one read of each recorded file** (plus hashing the DLL and the sidecars,
+  which it already reads), nothing against a recompile.
+- **Limit**: the fingerprint is taken when the compile ends. A file edited during the
+  compile is recorded in its edited state against a DLL compiled from the old one.
 
 #### affectedOnly and packaged dependencies
 

@@ -122,7 +122,7 @@ rather than the snapshot's.
 
 Consequences worth knowing before changing any of this:
 
-- The bundle sidecar's shape is part of the AL-output cache key (`schema:v14`,
+- The bundle sidecar's shape is part of the AL-output cache key (`schema:v15`,
   `AlRunner/ProgramSupport/Dependencies.cs`). A cache entry written under an older schema
   carries no `objectMetadata` array, and serving it would produce an empty registry on warm
   runs only.

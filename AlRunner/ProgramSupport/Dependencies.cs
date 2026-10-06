@@ -730,7 +730,12 @@ internal static partial class ProgramSupport
         //        runner fingerprint on the next line already forces a miss across a runner
         //        rebuild; this line is what makes the sidecar-shape change explicit rather
         //        than incidental.)
-        WriteLine("schema:v14");
+        //    v15 (issue #5368): every entry also has `<key>.inputs.json`, the record of the
+        //        layouts, ControlAddIn resources and translations its compile read, which a HIT
+        //        checks (AlCacheInputs). Without it the key says nothing about those files, so a
+        //        v14 entry would be served for a changed or deleted layout — the defect itself.
+        //        v14 entries carry no record and must not be served under the new shape.
+        WriteLine("schema:v15");
         WriteLine($"tdd:{(AlRunner.BcCompiler.IsTddMode() ? "1" : "0")}");
         // #4697: scope-class and inline-scope DLLs differ in shape for the same source.
         WriteLine(AlRunner.BcCompiler.RunnerEmitModeCacheTerm);

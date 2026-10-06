@@ -26,11 +26,14 @@ public static class AlCacheSidecars
 
     /// <summary>
     /// True when a cache entry carries every artifact a HIT needs. A bundle declaring an
-    /// AL query additionally requires its query-symbols sidecar.
+    /// AL query additionally requires its query-symbols sidecar. The inputs record
+    /// (<see cref="AlCacheInputs"/>) is always required: an entry without one has no record of
+    /// what its compile read, so nothing can say it still answers for those files (#5368).
     /// </summary>
     public static bool IsCompleteEntry(
-        bool dllExists, bool enumSidecarExists, bool bundleDeclaresQuery, bool querySidecarExists)
-        => dllExists && enumSidecarExists && (!bundleDeclaresQuery || querySidecarExists);
+        bool dllExists, bool enumSidecarExists, bool bundleDeclaresQuery, bool querySidecarExists,
+        bool inputsRecordExists)
+        => dllExists && enumSidecarExists && (!bundleDeclaresQuery || querySidecarExists) && inputsRecordExists;
 
     /// <summary>
     /// Rejects a cache-entry DLL that is present but truncated or otherwise not a loadable

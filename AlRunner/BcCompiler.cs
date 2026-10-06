@@ -127,7 +127,11 @@ public sealed record BcEmitOutput(
     // #5161: members --tdd generated into ANOTHER bundle that this compile's [Test]s reach through
     // that bundle's procedures (a test library), each with those tests as DependentTests. Null
     // outside --tdd and when nothing was generated into another bundle.
-    IReadOnlyList<TddGeneratedMember>? TddReachedMembers = null);
+    IReadOnlyList<TddGeneratedMember>? TddReachedMembers = null,
+    // #5368: the fingerprint of every non-.al file this compile read (CompileFileReads), keyed by
+    // absolute path. The AL-output cache records it beside the entry it publishes. Null when the
+    // compile had no app root, and for an incremental output, which publishes nothing.
+    IReadOnlyDictionary<string, string>? CompileInputs = null);
 
 public sealed partial class BcCompiler
 {
@@ -2521,7 +2525,10 @@ public sealed partial class BcCompiler
         var emitOutput = new BcEmitOutput(
             outputter.Captured, alDiags, excludedObjects, _tddMode ? excludedObjectDetails : null,
             _tddMode ? tddGeneratedMembers : null, excludedObjectDiagnostics, excludedObjectDetails,
-            ManifestAppJsonPath: manifestAppJsonPath, TddReachedMembers: tddReachedMembers);
+            ManifestAppJsonPath: manifestAppJsonPath, TddReachedMembers: tddReachedMembers,
+            CompileInputs: compileReads == null || appRootDir == null
+                ? null
+                : CompileFileReads.Fingerprint(appRootDir, compileReads.Keys));
 
         // #1902: only a CLEAN success (nothing excluded, every source captured) is trustworthy
         // as a RAD baseline — a module that only compiled after dropping broken objects must
