@@ -395,6 +395,12 @@ RESOLVE_STEP = "Resolve BC versions"
 DOTNET_STUB = """#!/bin/sh
 # `dotnet run --project tools/DownloadArtifacts -- resolve-version <prefix> dummy`.
 # Stubbed so the matrix resolves without a network round trip; only REQ is under test.
+#
+# `dotnet msbuild ... -getProperty:TargetFramework` (the leg's target framework, read from the
+# project since #5382) is NOT stubbed: it answers from the real project and the real props, never
+# from a copy of the BC-major rule written here, so the guard cannot agree with a rule it restates.
+# It is passed to the real dotnet, found before this stub went on PATH.
+if [ "$1" = "msbuild" ]; then exec "@REAL_DOTNET@" "$@"; fi
 want=0
 for a in "$@"; do
   if [ "$want" = "1" ]; then echo "$a.99999.12345"; exit 0; fi
@@ -437,12 +443,16 @@ def resolved_matrix(event: str) -> tuple[list[dict] | None, str]:
                       "cannot be measured rather than being satisfied")
     if not shutil.which("bash"):
         return None, "no bash on PATH, so the resolve script cannot be executed"
+    real_dotnet = shutil.which("dotnet")
+    if not real_dotnet:
+        return None, ("no dotnet on PATH: the resolve script reads each leg's target framework from "
+                      "the project with `dotnet msbuild`, which cannot be stubbed honestly")
     with tempfile.TemporaryDirectory() as tmp:
         binned = os.path.join(tmp, "bin")
         os.mkdir(binned)
         stub = os.path.join(binned, "dotnet")
         with open(stub, "w", encoding="utf-8") as fh:
-            fh.write(DOTNET_STUB)
+            fh.write(DOTNET_STUB.replace("@REAL_DOTNET@", real_dotnet))
         os.chmod(stub, 0o755)
         out = os.path.join(tmp, "github_output")
         open(out, "w", encoding="utf-8").close()

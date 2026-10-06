@@ -65,6 +65,19 @@ public sealed class SystemFieldMetadataOracleTests
     /// </summary>
     private static Dictionary<int, object> BcPlatformFields()
     {
+        var result = AllBcPlatformFields();
+        // BC 29 added four FlowField members to AuditFields (SystemCreatedByUserName ... ids
+        // 2000000005-2000000008). The runner builds six platform fields, so the claim under test is
+        // "the runner's six agree with BC's six"; the four BC 29 adds are a separate gap (#5389), not
+        // a disagreement about these. Keeping them out of the oracle is what keeps this about the six;
+        // BcPlatformFields_BeyondTheSixAreOnlyTheKnownBc29AuditFlowFields fails on any other.
+        foreach (var id in result.Keys.Where(IsBc29AuditFlowField).ToList()) result.Remove(id);
+        return result;
+    }
+
+    /// <summary>Every platform MetaField BC's helper exposes, unfiltered.</summary>
+    private static Dictionary<int, object> AllBcPlatformFields()
+    {
         var helper = SystemFieldsHelperType();
         const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static;
         var result = new Dictionary<int, object>();
@@ -84,6 +97,8 @@ public sealed class SystemFieldMetadataOracleTests
         Absorb("AuditFields");
         return result;
     }
+
+    private static bool IsBc29AuditFlowField(int id) => id is >= 2000000005 and <= 2000000008;
 
     /// <summary>
     /// The runner's own six, read off a real built table. Table 2000000001 is not usable here
@@ -135,6 +150,24 @@ public sealed class SystemFieldMetadataOracleTests
             null
         });
         return tableId;
+    }
+
+    /// <summary>
+    /// What the oracle filter above lets through is exactly the six, and what it removes is exactly
+    /// the four BC 29 audit FlowFields. A fifth field BC adds later is neither: it fails here, by id,
+    /// instead of being dropped from the comparison unseen.
+    /// </summary>
+    [SkippableFact]
+    public void BcPlatformFields_BeyondTheSixAreOnlyTheKnownBc29AuditFlowFields()
+    {
+        Skip.IfNot(_engine.Ready, _engine.SkipReason);
+
+        var six = new[] { TimestampId, SystemIdId, SystemCreatedAtId, SystemCreatedById, SystemModifiedAtId, SystemModifiedById };
+        var unknown = AllBcPlatformFields().Keys.Where(id => !six.Contains(id) && !IsBc29AuditFlowField(id)).ToList();
+
+        Assert.True(unknown.Count == 0,
+            $"BC declares platform field(s) {string.Join(", ", unknown)} that this test knows nothing about");
+        Assert.Equal(six.OrderBy(i => i), BcPlatformFields().Keys.OrderBy(i => i));
     }
 
     /// <summary>

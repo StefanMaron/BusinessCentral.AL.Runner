@@ -162,8 +162,23 @@ internal static class Win32Stubs
         // real cause never surfaces. Let it propagate — it comes back to the P/Invoke
         // call site as a TypeInitializationException / DllNotFoundException whose
         // InnerException/Message is this exact, actionable text.
-        return GetOrBuild(library);
+        try { return GetOrBuild(library); }
+        catch (InvalidOperationException ex) when (ex.Data.Contains(OverrideMissingMarker) && _soOverrideForTests.Value is null)
+        {
+            // An AL_RUNNER_WIN32_STUBS_SO naming a file that is not there is a configuration
+            // error, and the exception above does not reach the user on every BC build: BC 28 hits a
+            // second Win32 import after NavEnvironment's constructor has fallen back to a skeleton and
+            // the process dies there, but BC 29 reaches none, so the same bad variable would finish the
+            // run with a degraded environment and a passing exit code. Abort at the first resolve, with
+            // the message, so the outcome does not depend on what a BC build imports next. Never under
+            // the test seam, whose per-flow value is a fixture and must not kill the test host.
+            Console.Error.WriteLine(ex.Message);
+            Environment.FailFast(ex.Message, ex);
+            throw;
+        }
     }
+
+    private const string OverrideMissingMarker = "Win32Stubs.OverrideFileMissing";
 
     /// <summary>internal (not private) purely so <c>AlRunner.Tests</c> can exercise the
     /// AL_RUNNER_WIN32_STUBS_SO override / no-compiler paths directly, via
@@ -183,9 +198,13 @@ internal static class Win32Stubs
         if (!string.IsNullOrEmpty(soOverride))
         {
             if (!File.Exists(soOverride))
-                throw new InvalidOperationException(
+            {
+                var missing = new InvalidOperationException(
                     $"Win32Stubs: AL_RUNNER_WIN32_STUBS_SO is set to '{soOverride}' but that file does not exist. "
                     + "Unset it to build the shim from source, or point it at a valid prebuilt libwin32_stubs.so.");
+                missing.Data[OverrideMissingMarker] = true;
+                throw missing;
+            }
             return Loaded(NativeLibrary.Load(soOverride));
         }
 

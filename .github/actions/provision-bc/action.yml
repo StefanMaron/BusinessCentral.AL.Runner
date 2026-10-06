@@ -28,6 +28,7 @@ runs:
         dotnet-version: |
           8.0.x
           9.0.x
+          10.0.x
 
     - name: Build (auto-downloads BC ${{ inputs.bc-version }} DLLs)
       shell: bash

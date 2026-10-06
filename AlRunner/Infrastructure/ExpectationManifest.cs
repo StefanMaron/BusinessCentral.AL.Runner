@@ -66,9 +66,26 @@ public sealed record ExpectationEntry(
     string SourceFile,          // the .json this entry came from, for diagnostics
     // #3347: the suite roots that can cover this entry, or empty = every run.
     // See ExpectationManifest.FindUnmatchedEntries and docs/expectations.md#suites--which-runs-are-answerable-for-an-entry-3347.
-    IReadOnlyList<string>? Suites = null)
+    IReadOnlyList<string>? Suites = null,
+    // The BC majors this entry describes, or null = every major. A test can behave differently on
+    // one BC major (a surface BC 29 changed, a gap that exists only against its engine), and an
+    // entry that is true there is false on every other leg of the same run set. See
+    // ExpectationManifest.ActiveBcMajor and docs/expectations.md#bcmajors--entries-that-hold-on-one-bc-major.
+    IReadOnlyList<int>? BcMajors = null)
 {
     public bool MatchesAll => Method == "*";
+
+    /// <summary>
+    /// True when this entry describes a run against <paramref name="bcMajor"/>. An unscoped entry
+    /// describes every run; a scoped one describes only the majors it names, and a run that cannot
+    /// say which major it measures (<c>null</c>) is not one of them — a claim about BC 29 is not
+    /// made on a run that does not know it is on BC 29.
+    /// </summary>
+    public bool AppliesToBcMajor(int? bcMajor)
+    {
+        if (BcMajors == null || BcMajors.Count == 0) return true;
+        return bcMajor is { } m && BcMajors.Contains(m);
+    }
 
     /// <summary>
     /// True when a run over <paramref name="runRoots"/> could have loaded this entry's test,
@@ -158,8 +175,16 @@ public sealed record UnmatchedExpectation(ExpectationEntry Entry, string Diagnos
 /// </summary>
 public sealed class ExpectationManifest
 {
-    // (codeunitName, method) → entry. Method "*" entries stored under method = "*".
-    private readonly Dictionary<(string Codeunit, string Method), ExpectationEntry> _byName;
+    // (codeunitName, method) → entries. Method "*" entries stored under method = "*". More than one
+    // only when each is scoped to a disjoint set of BC majors (see LoadFromDirectory).
+    private readonly Dictionary<(string Codeunit, string Method), List<ExpectationEntry>> _byName;
+
+    /// <summary>
+    /// The BC major this run measures, set once the runner has selected its BC version. Entries
+    /// scoped to other majors (<see cref="ExpectationEntry.BcMajors"/>) are not consulted and not
+    /// audited. Null until set: only unscoped entries apply then.
+    /// </summary>
+    public int? ActiveBcMajor { get; set; }
 
     public IReadOnlyList<ExpectationEntry> Entries { get; }
 
@@ -178,7 +203,8 @@ public sealed class ExpectationManifest
         // test and fail the run with exit 5 for an entry that is entirely correct.
         _byName = entries
             .Where(e => e.Mode != ExpectationMode.AcceptPartialCompanyInit)
-            .ToDictionary(e => (e.CodeunitName, e.Method), e => e);
+            .GroupBy(e => (e.CodeunitName, e.Method))
+            .ToDictionary(g => g.Key, g => g.ToList());
         CompanyInitAcceptances = entries
             .Where(e => e.Mode == ExpectationMode.AcceptPartialCompanyInit)
             .ToList();
@@ -282,7 +308,8 @@ public sealed class ExpectationManifest
     /// </summary>
     public IReadOnlyList<ExpectationEntry> EntriesOutOfScopeFor(IReadOnlyList<string>? runRoots)
         => Entries
-            .Where(e => e.Mode != ExpectationMode.AcceptPartialCompanyInit && !e.IsAnsweredBy(runRoots))
+            .Where(e => e.Mode != ExpectationMode.AcceptPartialCompanyInit
+                        && (!e.IsAnsweredBy(runRoots) || !e.AppliesToBcMajor(ActiveBcMajor)))
             .ToList();
 
     /// <inheritdoc cref="FindUnmatchedEntries()"/>
@@ -306,6 +333,8 @@ public sealed class ExpectationManifest
             // #3347: this run does not cover the suite the entry names, so it has no standing
             // to call the entry unmatched. The run that DOES cover it still audits it.
             if (!entry.IsAnsweredBy(runRoots)) continue;
+            // An entry for another BC major describes a different run; the run on that major audits it.
+            if (!entry.AppliesToBcMajor(ActiveBcMajor)) continue;
             // Mirrors LookupExpectation: entries may be written against the AL object
             // name OR the CLR type name, and "*" matches every test method.
             var named = discovered
@@ -364,8 +393,10 @@ public sealed class ExpectationManifest
     /// </summary>
     public ExpectationEntry? Lookup(string codeunitName, string method)
     {
-        if (_byName.TryGetValue((codeunitName, method), out var exact)) return exact;
-        if (_byName.TryGetValue((codeunitName, "*"), out var wildcard)) return wildcard;
+        if (_byName.TryGetValue((codeunitName, method), out var exact)
+            && exact.FirstOrDefault(e => e.AppliesToBcMajor(ActiveBcMajor)) is { } e1) return e1;
+        if (_byName.TryGetValue((codeunitName, "*"), out var wildcard)
+            && wildcard.FirstOrDefault(e => e.AppliesToBcMajor(ActiveBcMajor)) is { } e2) return e2;
         return null;
     }
 
@@ -381,7 +412,6 @@ public sealed class ExpectationManifest
             return new ExpectationManifest(Array.Empty<ExpectationEntry>());
 
         var entries = new List<ExpectationEntry>();
-        var dupeCheck = new HashSet<(string, string, string)>();   // (cu, method, file)
 
         foreach (var path in Directory.EnumerateFiles(manifestDir, "*.json").OrderBy(p => p))
         {
@@ -389,8 +419,11 @@ public sealed class ExpectationManifest
             var fileEntries = LoadFile(path, rel);
             foreach (var entry in fileEntries)
             {
-                var key = (entry.CodeunitName, entry.Method, entry.SourceFile);
-                if (!dupeCheck.Add(key))
+                // Two entries for one (codeunit, method) are legitimate only when each says which BC
+                // majors it describes and the sets do not overlap: then at most one applies to a run.
+                var clash = entries.Any(o => o.CodeunitName == entry.CodeunitName && o.Method == entry.Method
+                    && o.SourceFile == entry.SourceFile && !DisjointBcMajors(o, entry));
+                if (clash)
                     throw new InvalidOperationException(
                         $"Duplicate expectation in {rel}: {entry.CodeunitName}.{entry.Method}");
                 entries.Add(entry);
@@ -400,7 +433,7 @@ public sealed class ExpectationManifest
         // Cross-file duplicate check: same (codeunit, method) declared in two files.
         var crossDupes = entries
             .GroupBy(e => (e.CodeunitName, e.Method))
-            .Where(g => g.Count() > 1)
+            .Where(g => g.SelectMany((a, i) => g.Skip(i + 1).Where(b => !DisjointBcMajors(a, b))).Any())
             .ToList();
         if (crossDupes.Count > 0)
         {
@@ -412,6 +445,9 @@ public sealed class ExpectationManifest
 
         return new ExpectationManifest(entries);
     }
+
+    private static bool DisjointBcMajors(ExpectationEntry a, ExpectationEntry b)
+        => a.BcMajors is { Count: > 0 } && b.BcMajors is { Count: > 0 } && !a.BcMajors.Intersect(b.BcMajors).Any();
 
     /// <summary>
     /// The file-name prefix each mode lives under in <c>tests/expectations/</c> (#3114). A
@@ -550,6 +586,27 @@ public sealed class ExpectationManifest
             return list;
         }
 
+        IReadOnlyList<int>? OptIntArray(string name)
+        {
+            if (!el.TryGetProperty(name, out var v)) return null;
+            if (v.ValueKind != JsonValueKind.Array)
+                throw new InvalidOperationException(
+                    $"{relName}[{idx}]: '{name}' must be a JSON array of BC major version numbers, e.g. [29]");
+            var list = new List<int>();
+            foreach (var item in v.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Number || !item.TryGetInt32(out var n) || n < 1)
+                    throw new InvalidOperationException(
+                        $"{relName}[{idx}]: every '{name}' element must be a BC major version number >= 1");
+                if (!list.Contains(n)) list.Add(n);
+            }
+            if (list.Count == 0)
+                throw new InvalidOperationException(
+                    $"{relName}[{idx}]: '{name}' is present but empty. An empty scope would make the entry "
+                    + "apply to no BC major at all — omit the field to apply it to every major.");
+            return list;
+        }
+
         var codeunitId = ReqInt("codeunitId");
         var codeunitName = Req("CodeunitName");
         var method = Req("Method");
@@ -561,6 +618,8 @@ public sealed class ExpectationManifest
         // #3347. Which suite roots can cover this entry. Optional; absent = every run, which
         // is what every entry written before #3347 means and gets.
         var suites = OptStringArray("Suites");
+        // Which BC majors the entry describes. Optional; absent = every major.
+        var bcMajors = OptIntArray("BcMajors");
 
         var mode = modeRaw switch
         {
@@ -625,7 +684,7 @@ public sealed class ExpectationManifest
         }
 
         return new ExpectationEntry(
-            codeunitId, codeunitName, method, mode, reason, issue, docAnchor, note, relName, suites);
+            codeunitId, codeunitName, method, mode, reason, issue, docAnchor, note, relName, suites, bcMajors);
     }
 
     /// <summary>

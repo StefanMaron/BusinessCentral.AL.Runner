@@ -141,6 +141,33 @@ Counting a skipped entry as matched would be the vacuous green the message exist
 rule out, and naming them is what makes a scope that quietly exempts an entry from
 *every* run visible in the log of the run that should have owned it.
 
+### `BcMajors` — entries that hold on one BC major
+
+The manifest directory is shared by every BC leg, and a test can behave differently on one
+major: a surface BC 29 changed, a gap that exists only against its engine. Without a scope,
+such an entry is right on one leg and wrong on all the others — it fails every leg that
+passes the test with "remove the entry".
+
+An entry may therefore declare the BC majors it describes:
+
+```json
+"BcMajors": [29]
+```
+
+- **Absent** — the entry applies to every major, which is what every older entry means.
+- **Present** — the entry is consulted and audited only by a run against one of those
+  majors. `ExpectationManifest.ActiveBcMajor` is set from the selected BC version
+  (`Program.cs`, right after `BcArtifacts.SelectVersion`); until it is set, a scoped entry
+  does not apply, because a run that does not know it is on BC 29 makes no claim about BC 29.
+- **Present but empty**, or with a value below 1 — refused at load, for the same reason an
+  empty `Suites` is: an empty scope would apply to no run and read as tracked.
+- **Two entries for one (codeunit, method)** are accepted only when each names majors and the
+  sets do not overlap, so at most one applies to any run. Anything else is the existing
+  duplicate refusal.
+
+The match audit counts a scoped-away entry with the ones it did not audit ("scoped to another
+suite or BC major, not audited here"), never as matched.
+
 ## Layout
 
 ```
@@ -189,6 +216,7 @@ rather than replace it.
                                                    // optional otherwise
 
     // Optional
+    "BcMajors": [29],                              // BC majors the entry describes; absent = all
     "Note": "BC service tier renders PDF via report engine; runner is in-process only."
   }
 ]

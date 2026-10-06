@@ -37,6 +37,11 @@ codeunit without failing the full-corpus leg that could never load it. It is not
 exemption: the run that owns the suite still audits the entry in full. See
 [`docs/expectations.md`](../../docs/expectations.md#suites--which-runs-are-answerable-for-an-entry-3347).
 
+An entry may also carry `"BcMajors": [29]`, the BC majors it describes. Absent, it
+applies on every major. Present, it is consulted and audited only by a run against one of
+those majors, so a gap that exists only against one BC engine does not turn the other
+legs red. See [`docs/expectations.md`](../../docs/expectations.md#bcmajors--entries-that-hold-on-one-bc-major).
+
 The file prefix and the entry's `Mode` must agree — the prefix is what a human
 scanning the directory reads. Moving an entry between modes means moving it
 between files. `AlRunner.Tests/ExpectationFilePrefixTests.cs` checks every entry

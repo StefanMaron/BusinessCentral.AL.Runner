@@ -180,27 +180,40 @@ public static class ArtifactDownloader
         // cannot be read loses to one that can; a full tie keeps the first listed, as before.
         foreach (var group in tied)
         {
-            (string Name, int Method, long CompSize, long Offset, int Depth) best = group[0];
-            byte[]? bestData = null;
-            Version? bestVersion = null;
-            foreach (var c in group)
-            {
-                var data = ExtractEntry(http, artifactUrl, totalSize, c.Name, c.Method, c.CompSize, c.Offset, logf);
-                if (data == null) continue;
-                var v = ReadAssemblyVersion(data);
-                if (bestData == null || (v != null && (bestVersion == null || v > bestVersion)))
-                {
-                    best = c; bestData = data; bestVersion = v;
-                }
-            }
-            if (bestData == null) continue;
-            File.WriteAllBytes(Path.Combine(outputDir, Path.GetFileName(best.Name)), bestData);
-            totalBytes += bestData.Length;
+            var images = group
+                .Select(c => ExtractEntry(http, artifactUrl, totalSize, c.Name, c.Method, c.CompSize, c.Offset, logf))
+                .ToList();
+            var pick = IndexOfNewestAssembly(images);
+            if (pick < 0) continue;
+            File.WriteAllBytes(Path.Combine(outputDir, Path.GetFileName(group[pick].Name)), images[pick]!);
+            totalBytes += images[pick]!.Length;
             extracted++;
         }
 
         logf($"Downloaded {extracted} DLLs ({totalBytes / 1048576} MB) to {outputDir}");
         return extracted > 0 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// Which of several images of one file name to keep: the highest AssemblyVersion, the first
+    /// listed among equals, and a copy whose version cannot be read losing to one that can. -1 when
+    /// no image was extracted at all.
+    /// </summary>
+    internal static int IndexOfNewestAssembly(IReadOnlyList<byte[]?> images)
+    {
+        int best = -1;
+        Version? bestVersion = null;
+        for (int i = 0; i < images.Count; i++)
+        {
+            if (images[i] is not { } image) continue;
+            var v = ReadAssemblyVersion(image);
+            if (best < 0 || (v != null && (bestVersion == null || v > bestVersion)))
+            {
+                best = i;
+                bestVersion = v;
+            }
+        }
+        return best;
     }
 
     /// <summary>The AssemblyVersion of a managed DLL image; null when it is not one.</summary>

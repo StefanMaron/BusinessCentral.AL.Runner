@@ -24,6 +24,7 @@ jobs:
           dotnet-version: |
             8.0.x
             9.0.x
+            10.0.x
       - name: Which .NET SDKs does this runner have? (#4200)
         # One line that turns MSB4068 into a diagnosis. Without it the build's real
         # SDK requirement is invisible: the declared version is not necessarily the

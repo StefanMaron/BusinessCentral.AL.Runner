@@ -271,6 +271,7 @@ jobs:
           dotnet-version: |
             8.0.x
             9.0.x
+            10.0.x
       - name: Which .NET SDKs does this runner have? (#4200)
         # One line that turns MSB4068 into a diagnosis. Without it the build's real
         # SDK requirement is invisible: the declared version is not necessarily the
@@ -490,6 +491,13 @@ jobs:
             exit 1
           fi
           bak="$HOME/.al-runner/test-data/$BC_VERSION/BusinessCentral-W1.bak"
+          # The framework this build was compiled for: net10.0 from BC 29, net8.0 before it. Read
+          # from the project, never restated, and before the cd below because it names the project.
+          TFM=$(dotnet msbuild "$GITHUB_WORKSPACE/AlRunner/AlRunner.csproj" -getProperty:TargetFramework -p:_BCVersion="$BC_VERSION" -nologo | tr -d '[:space:]')
+          if [ -z "$TFM" ]; then
+            echo "::error::could not read the TargetFramework for BC $BC_VERSION"
+            exit 1
+          fi
           # cwd OUTSIDE the checkout: the runner auto-probes ./tests/expectations from cwd as
           # a fallback (ExpectationsDirectoryResolution.cs), and the corpus manifest has no
           # business reclassifying a Microsoft bucket.
@@ -524,7 +532,7 @@ jobs:
             fi
             echo "::group::[$i/$total] $bucket"
             start=$SECONDS
-            "$GITHUB_WORKSPACE/AlRunner/bin/Release/net8.0/al-runner" "${args[@]}" 2>&1 \
+            "$GITHUB_WORKSPACE/AlRunner/bin/Release/$TFM/al-runner" "${args[@]}" 2>&1 \
               | tee "$out/run.log"
             rc=${PIPESTATUS[0]}
             elapsed=$(( SECONDS - start ))

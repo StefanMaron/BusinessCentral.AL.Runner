@@ -671,6 +671,42 @@ want to unit test the logic around HTTP calls.
 
 ---
 
+## BC 29 and later run on .NET 10
+
+BC 29's service tier is a .NET 10 product: `Microsoft.Dynamics.Nav.Ncl.dll` and its companions carry
+`TargetFrameworkAttribute` `.NETCoreApp,Version=v10.0` and reference `System.Runtime 10.0.0.0`, and its
+`Microsoft.Dynamics.Nav.Server.runtimeconfig.json` lists `Microsoft.NETCore.App` and
+`Microsoft.AspNetCore.App` 10.0.0. A .NET 8 process cannot bind them. BC 27 and 28 stay on .NET 8:
+`AlRunner/AlRunner.csproj` records why net9/net10 were dropped for them (BCL drift in `BitArray`, among
+others).
+
+So the runner has two targets, chosen by the BC major the build is made against:
+
+| BC version | `RunnerTfm` | where the rule lives |
+|---|---|---|
+| below 29 | `net8.0` | `Directory.Build.props` |
+| 29 and later | `net10.0` | `Directory.Build.props` |
+
+`-p:_BCVersion=<build>` selects both the service-tier DLLs and the framework; `-p:RunnerTfm=` overrides.
+Tests, CI legs and scripts read the framework from the project rather than restating it.
+
+In a packed install the top-level `al-runner.dll` is the net8.0 build, and BC 29's engine ships as a
+variant (`variants/<build>/`) whose own `al-runner.runtimeconfig.json` names net10.0. Entering it is the
+existing re-exec (`NclShadowRuntime`), which runs `dotnet exec` on that variant, so it runs under .NET 10.
+
+**What this means on a machine.** A BC 29 run needs a .NET 10 runtime installed beside the .NET 8 one the
+tool itself needs. `EngineVariants.ChooseDefault` leaves out a variant whose runtime is missing, so a default
+run on a .NET-8-only machine still picks BC 28 (and prints one `[bc] skipping BC 29.0` line);
+an explicit `--bc-version 29.x` there exits 2 and names the runtime to install
+(`AlRunner.Tests/EngineVariantRuntimeTests.cs`). The installed runtimes are read from the muxer's
+`shared/Microsoft.NETCore.App` directory; if that cannot be read the variant is assumed runnable and the host's
+own message stands.
+
+Not measured: a BC 29 run from a packed install on a .NET-8-plus-10 machine (the packed layout, the variant's
+dependency closure, and the signed Windows package). The pieces were measured separately — a net10.0 build
+against BC 29.0.54011.55816 runs the al-language corpus, and a variant directory is entered by `dotnet exec` —
+but the assembled package was not run.
+
 ## System Application codeunits — scope policy
 
 ### What the runner ships

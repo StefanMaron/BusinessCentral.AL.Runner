@@ -21,7 +21,8 @@
 #   scripts/tests/server-mode-test.sh [--runner "CMD"] [extra runner args...]
 #
 #   --runner CMD   Command line that invokes the runner (default:
-#                  "dotnet run --no-build --project AlRunner -c Release --framework net8.0 --").
+#                  "dotnet run --no-build --project AlRunner -c Release --framework ${TFM:-net8.0} --"
+#                  plus -p:_BCVersion=$BC_VERSION when BC_VERSION is set).
 #   Everything else (e.g. --package-cache DIR, --bc-version X) is passed to the
 #   server invocation verbatim.
 #
@@ -29,7 +30,10 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-RUNNER="dotnet run --no-build --project $REPO/AlRunner -c Release --framework net8.0 --"
+# TFM and BC_VERSION come from the CI leg (bc-tests.yml sets both): BC 29 and later build for
+# net10.0, and `dotnet run --no-build` evaluates the project, so it must be told the same
+# _BCVersion the build used or it looks for the net8.0 output. Unset, the old default holds.
+RUNNER="dotnet run --no-build --project $REPO/AlRunner -c Release ${BC_VERSION:+-p:_BCVersion=$BC_VERSION} --framework ${TFM:-net8.0} --"
 if [[ "${1:-}" == "--runner" ]]; then
     RUNNER="$2"
     shift 2

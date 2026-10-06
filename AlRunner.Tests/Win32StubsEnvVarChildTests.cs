@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using AlRunner.Infrastructure;
 using System.Text;
 using Xunit;
 
@@ -117,6 +118,13 @@ public class Win32StubsEnvVarChildTests
     {
         Skip.If(OperatingSystem.IsWindows(), "the Win32 shim exists only to fake Win32 on Linux/macOS; on Windows the variable is ignored");
         TestArtifacts.SkipIfMissing();
+        // The abort this asserts is a LATER Win32 import (Types' WindowsLanguageHelper, LCIDToLocaleName)
+        // dying after NavEnvironment's constructor has already fallen back to a skeleton. BC 29 reaches no
+        // such import, so a library with no exports is reported as the constructor's fallback and the run
+        // finishes — see AMissingFile for the half that stays loud on every BC build. Measured on BC 29.0
+        // (this child exits 0 with `NavEnvironment ctor THREW`), not asserted for builds after it.
+        Skip.If((BcArtifacts.EngineBuiltVersion()?.Major ?? 0) >= 29,
+            "BC 29 reaches no Win32 import after the NavEnvironment fallback, so nothing aborts the child; see #5382");
 
         var dir = TestScratch.FlatDir("win32stubs-env-child-wrong-");
         Directory.CreateDirectory(dir);

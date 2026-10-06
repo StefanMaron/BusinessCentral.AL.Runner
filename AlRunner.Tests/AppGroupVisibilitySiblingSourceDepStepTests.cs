@@ -92,7 +92,7 @@ public sealed class AppGroupVisibilitySiblingSourceDepStepTests
     /// </summary>
     private static string ArgumentList(string step)
     {
-        var start = step.IndexOf("--framework net8.0 --", StringComparison.Ordinal);
+        var start = step.IndexOf("--framework \"$TFM\" --", StringComparison.Ordinal);
         Assert.True(start >= 0, "could not find the dotnet run invocation in the app-group-visibility step");
         var end = step.IndexOf("--package-cache", start, StringComparison.Ordinal);
         Assert.True(end > start, "the app-group-visibility step passes no --package-cache, so it would "

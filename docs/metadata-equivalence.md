@@ -642,7 +642,7 @@ entries record is that the work has not been done — never that it could not be
 
 This property is easy to miss and it is load-bearing for every kind #3782 adds. An agent
 generates the allowlist from the bundles on one machine — one BC build. CI then evaluates that
-same file on **three** BC versions per pull request (27.0, 27.5, 28.5) and on every version in
+same file on **four** BC versions per pull request (27.0, 27.5, 28.5, 29.0) and on every version in
 `.github/bc-versions.txt` on `main`.
 
 A difference exists only if the object carrying it exists on that version **and** declares the

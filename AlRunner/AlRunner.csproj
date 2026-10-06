@@ -413,7 +413,12 @@
 
   <!-- Common packages on every TFM -->
   <ItemGroup>
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
+    <!-- Roslyn: BC 28 binds 4.14 at most; BC 29's Ncl.dll and its own Microsoft.CodeAnalysis.CSharp
+         copy bind 5.3.0.0. The runner deploys Roslyn app-local, and an app-local copy below what
+         the selected build binds is refused by the default load context (#5030,
+         AppLocalAssemblyFloorTests), so a build against BC 29 takes the higher one. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" Condition="'$(RunnerTfm)' != 'net10.0'" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.3.0" Condition="'$(RunnerTfm)' == 'net10.0'" />
     <PackageReference Include="Mono.Cecil" Version="0.11.6" />
     <!-- Cross-platform terminal UI for the watch-mode live dashboard. MIT-licensed,
          renders correctly on Windows/macOS/Linux and degrades to plain text on

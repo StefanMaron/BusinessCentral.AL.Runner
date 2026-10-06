@@ -21,9 +21,48 @@ public static class EngineVariants
     public const string VariantsDirName = "variants";
     public const string EntryAssemblyFileName = "al-runner.dll";
 
-    public sealed record Variant(Version BuildVersion, string Dir)
+    /// <param name="RuntimeMajor">
+    /// The major of the .NET runtime this variant's own <c>al-runner.runtimeconfig.json</c> asks
+    /// for (net8.0 → 8, net10.0 → 10), or null when the file is absent or says nothing readable.
+    /// A BC 29 engine targets net10.0 while 27 and 28 target net8.0, and the re-exec into a variant
+    /// runs under the runtime that file names — so a machine without that runtime cannot run it.
+    /// </param>
+    public sealed record Variant(Version BuildVersion, string Dir, int? RuntimeMajor = null)
     {
         public string EntryAssemblyPath => Path.Combine(Dir, EntryAssemblyFileName);
+
+        /// <summary>
+        /// True when a runtime this variant needs is installed. Unknown on either side (the variant
+        /// names no runtime, or the installed set could not be listed) answers true: refusing on a
+        /// fact nobody measured would stop a runnable variant, and the host's own "framework not
+        /// found" message still stands if it really is missing.
+        /// </summary>
+        public bool RuntimeAvailable(IReadOnlyCollection<int>? installedRuntimeMajors) =>
+            RuntimeMajor is not { } needed || installedRuntimeMajors == null || installedRuntimeMajors.Contains(needed);
+    }
+
+    /// <summary>The .NET runtime major named by a variant's runtimeconfig.json (<c>tfm</c>), or null.</summary>
+    internal static int? ReadRuntimeMajor(string variantDir)
+    {
+        try
+        {
+            var path = Path.Combine(variantDir, "al-runner.runtimeconfig.json");
+            if (!File.Exists(path)) return null;
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path));
+            if (!doc.RootElement.TryGetProperty("runtimeOptions", out var opts)
+                || !opts.TryGetProperty("tfm", out var tfm)
+                || tfm.ValueKind != System.Text.Json.JsonValueKind.String) return null;
+            // "net10.0" / "net8.0": the digits after "net" up to the first dot. Anything else
+            // (netcoreapp3.1, a netstandard moniker) names no runtime major this check can use.
+            var text = tfm.GetString()!;
+            if (!text.StartsWith("net", StringComparison.Ordinal)) return null;
+            var digits = new string(text.Skip(3).TakeWhile(char.IsDigit).ToArray());
+            return int.TryParse(digits, out var major) && major >= 5 ? major : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>
@@ -45,7 +84,7 @@ public static class EngineVariants
             var name = Path.GetFileName(dir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
             if (!Version.TryParse(name, out var v)) continue;
             if (!File.Exists(Path.Combine(dir, EntryAssemblyFileName))) continue;
-            list.Add(new Variant(v, dir));
+            list.Add(new Variant(v, dir, ReadRuntimeMajor(dir)));
         }
         return list;
     }
@@ -106,7 +145,8 @@ public static class EngineVariants
     /// The one variant decision, shared by the bundle-run flow and every subcommand that
     /// dispatches before it (#2190: `--precompile` used to skip it).
     /// </summary>
-    public static Resolution Resolve(IReadOnlyList<Variant> variants, Version selected, Version? runningBuild)
+    public static Resolution Resolve(IReadOnlyList<Variant> variants, Version selected, Version? runningBuild,
+        IReadOnlyCollection<int>? installedRuntimeMajors = null)
     {
         if (variants.Count == 0)
             return new Resolution(ResolutionKind.NoVariantsShipped, null, false, null, null);
@@ -120,6 +160,18 @@ public static class EngineVariants
                 null);
 
         var (variant, degraded) = match.Value;
+        // The variant is entered under its own runtime. Say what is missing and what to do, rather
+        // than leave the user the host's "You must install or update .NET" from a child process.
+        // Only a variant that must be ENTERED needs the check: the one already running is on its
+        // runtime by definition.
+        if (runningBuild != variant.BuildVersion && !variant.RuntimeAvailable(installedRuntimeMajors))
+            return new Resolution(ResolutionKind.NoneSupported, null, false,
+                $"BC version selection failed: the engine for BC {selected.Major}.{selected.Minor} runs on " +
+                $".NET {variant.RuntimeMajor}, and this machine has no .NET {variant.RuntimeMajor} runtime " +
+                $"(installed: {DescribeInstalled(installedRuntimeMajors)}). Install .NET {variant.RuntimeMajor} " +
+                $"(https://dotnet.microsoft.com/download/dotnet/{variant.RuntimeMajor}.0), or select a BC version " +
+                $"whose engine runs on an installed runtime with --bc-version.",
+                null);
         var warning = degraded
             ? $"[bc] warning: the shipped {variant.BuildVersion.Major}.{variant.BuildVersion.Minor} engine " +
               $"variant was built against {variant.BuildVersion}, not the selected {selected} — " +
@@ -131,6 +183,9 @@ public static class EngineVariants
         var kind = runningBuild != variant.BuildVersion ? ResolutionKind.SwapRequired : ResolutionKind.RunningEngineMatches;
         return new Resolution(kind, variant, degraded, null, warning);
     }
+
+    internal static string DescribeInstalled(IReadOnlyCollection<int>? majors) =>
+        majors == null || majors.Count == 0 ? "none found" : string.Join(", ", majors.OrderBy(m => m).Select(m => $".NET {m}"));
 
     /// <summary>Human-readable list of available variant versions, for the loud-fail message.</summary>
     public static string DescribeAvailable(IReadOnlyList<Variant> variants) =>
@@ -148,6 +203,15 @@ public static class EngineVariants
     {
         /// <summary>Cached versions passed over because they are below the app.json floor (#4590).</summary>
         public IReadOnlyList<string> SkippedBelowFloor { get; init; } = Array.Empty<string>();
+
+        /// <summary>Shipped minors passed over because the .NET runtime they run on is not installed.</summary>
+        public IReadOnlyList<string> SkippedNoRuntime { get; init; } = Array.Empty<string>();
+
+        /// <summary>The one "[bc] skipping BC ... needs .NET N" line; null when nothing was skipped.</summary>
+        public string? NoRuntimeLine(IReadOnlyList<Variant> variants) =>
+            SkippedNoRuntime.Count == 0 || Version == null ? null :
+            $"[bc] skipping BC {string.Join(", ", SkippedNoRuntime)}: its engine needs a .NET runtime this machine " +
+            $"does not have — using BC {Version} instead. Install it to use that version.";
 
         /// <summary>The floor the choice honoured; null when none was given.</summary>
         public Version? Floor { get; init; }
@@ -184,10 +248,16 @@ public static class EngineVariants
     /// </summary>
     public static DefaultChoice ChooseDefault(
         IReadOnlyList<Variant> variants, IEnumerable<string> cachedVersionNames, int? major = null,
-        Version? floor = null)
+        Version? floor = null, IReadOnlyCollection<int>? installedRuntimeMajors = null)
     {
-        var inScope = variants.Where(v => major == null || v.BuildVersion.Major == major).ToList();
-        if (inScope.Count == 0) return new DefaultChoice(null, Array.Empty<string>()) { Floor = floor };
+        var inMajor = variants.Where(v => major == null || v.BuildVersion.Major == major).ToList();
+        // A default must be one this machine can run: BC 29's engine needs a .NET runtime the tool
+        // itself does not, so on a machine with only the tool's own runtime the newest shipped
+        // minor is not a default. The explicit --bc-version path still reports it (Resolve).
+        var inScope = inMajor.Where(v => v.RuntimeAvailable(installedRuntimeMajors)).ToList();
+        var noRuntime = inMajor.Except(inScope)
+            .Select(v => $"{v.BuildVersion.Major}.{v.BuildVersion.Minor}").Distinct().ToList();
+        if (inScope.Count == 0) return new DefaultChoice(null, Array.Empty<string>()) { Floor = floor, SkippedNoRuntime = noRuntime };
 
         var cached = cachedVersionNames
             .Select(n => (Name: n, Ver: Version.TryParse(n, out var v) ? v : null))
@@ -202,7 +272,7 @@ public static class EngineVariants
         {
             if (floor != null && ver! < floor) { belowFloor.Add(name); continue; }
             if (SelectBestMatch(inScope, ver!) != null)
-                return new DefaultChoice(name, skipped) { SkippedBelowFloor = belowFloor, Floor = floor };
+                return new DefaultChoice(name, skipped) { SkippedBelowFloor = belowFloor, Floor = floor, SkippedNoRuntime = noRuntime };
             skipped.Add(name);
         }
 
@@ -210,9 +280,9 @@ public static class EngineVariants
             .Where(v => floor == null || BcVersionFloor.Meets($"{v.BuildVersion.Major}.{v.BuildVersion.Minor}", floor))
             .ToList();
         if (provisionable.Count == 0)
-            return new DefaultChoice(null, skipped) { SkippedBelowFloor = belowFloor, Floor = floor, FloorUnmet = true };
+            return new DefaultChoice(null, skipped) { SkippedBelowFloor = belowFloor, Floor = floor, FloorUnmet = true, SkippedNoRuntime = noRuntime };
         var newest = provisionable.Max(v => v.BuildVersion)!;
-        return new DefaultChoice($"{newest.Major}.{newest.Minor}", skipped) { SkippedBelowFloor = belowFloor, Floor = floor };
+        return new DefaultChoice($"{newest.Major}.{newest.Minor}", skipped) { SkippedBelowFloor = belowFloor, Floor = floor, SkippedNoRuntime = noRuntime };
     }
 
     /// <summary>

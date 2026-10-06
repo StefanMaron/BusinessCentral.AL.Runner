@@ -71,6 +71,8 @@ catch (Exception ex)
 // startup + the full-opt JIT <TieredCompilation>false</TieredCompilation> forces)
 // with zero phases — the baseline every residual is read against. Completely inert
 // unless AL_RUNNER_PHASE_LOG names a path. See AlRunner/Infrastructure/PhaseLog.cs.
+// First, so every ProcessExit handler installed below also runs on SIGTERM (SigtermExit).
+AlRunner.Infrastructure.SigtermExit.Install();
 AlRunner.Infrastructure.PhaseLog.Install();
 
 if (args.Length == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help")
@@ -1115,7 +1117,8 @@ if (bcVersionArg == null && artifactPathArg == null)
             // #4557: the newest cached version a shipped variant RUNS, else the newest shipped
             // minor as a prefix for provisioning — never a newer CDN minor with no engine.
             var choice = AlRunner.Infrastructure.EngineVariants.ChooseDefault(
-                shippedVariantsForDefault, ProgramSupport.CachedArtifactVersionNames(), floor: projectBcFloor);
+                shippedVariantsForDefault, ProgramSupport.CachedArtifactVersionNames(), floor: projectBcFloor,
+                installedRuntimeMajors: AlRunner.Infrastructure.InstalledDotNetRuntimes.Majors());
             if (choice.FloorUnmet)
             {
                 Console.Error.WriteLine(AlRunner.Infrastructure.BcVersionFloor.DescribeUnmet(projectBcFloor!,
@@ -1130,6 +1133,8 @@ if (bcVersionArg == null && artifactPathArg == null)
             // same cache and would repeat it.
             if (choice.SkipLine(shippedVariantsForDefault) is { } skipLine && ProgramSupport.IsFirstGeneration())
                 Console.Error.WriteLine(skipLine);
+            if (choice.NoRuntimeLine(shippedVariantsForDefault) is { } noRuntimeLine && ProgramSupport.IsFirstGeneration())
+                Console.Error.WriteLine(noRuntimeLine);
             // #2097 considered — but rejected — deferring this line and the mismatch
             // warning just below: unlike the "cached-exact"/"cached-minor" branches of
             // the OTHER (no-variants-shipped) half of this if/else, this branch's own
@@ -1453,6 +1458,8 @@ var shippedVariants = AlRunner.Infrastructure.EngineVariants.Discover(AppContext
 try
 {
     AlRunner.Infrastructure.BcArtifacts.SelectVersion(bcVersionArg, artifactPathArg);
+    if (expectations != null)
+        expectations.ActiveBcMajor = AlRunner.Infrastructure.BcArtifacts.SelectedVersion.Major;
     // #4590 backstop: whatever route the default took (an offline fallback, a CDN build of the
     // floor's minor that is still below a build-level floor), it never runs below the floor.
     if (bcVersionAutoSelected && projectBcFloor != null
@@ -1534,7 +1541,8 @@ string? variantSwapDir = null;
 {
     var selected = AlRunner.Infrastructure.BcArtifacts.SelectedVersion;
     var runningBuild = AlRunner.Infrastructure.BcArtifacts.EngineBuiltVersion();
-    var resolution = AlRunner.Infrastructure.EngineVariants.Resolve(shippedVariants, selected, runningBuild);
+    var resolution = AlRunner.Infrastructure.EngineVariants.Resolve(shippedVariants, selected, runningBuild,
+        AlRunner.Infrastructure.InstalledDotNetRuntimes.Majors());
     if (resolution.Kind == AlRunner.Infrastructure.EngineVariants.ResolutionKind.NoneSupported)
     {
         Console.Error.WriteLine(resolution.FailureMessage);
@@ -5344,7 +5352,7 @@ if (expectationsRequireMatch)
                 + $"{(audited == 1 ? "y" : "ies")} in scope for this run matched a discovered test"
                 + (outOfScope.Count == 0
                     ? "."
-                    : $"; {outOfScope.Count} scoped to another suite, not audited here ("
+                    : $"; {outOfScope.Count} scoped to another suite or BC major, not audited here ("
                       + string.Join(", ", outOfScope.Select(e => $"{e.CodeunitName}.{e.Method}"))
                       + ")."));
         }
