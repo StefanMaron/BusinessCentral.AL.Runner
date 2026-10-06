@@ -3242,6 +3242,24 @@ public sealed partial class BcCompiler
 
         public override void AddApplicationObject(
             NavCA.IApplicationObjectTypeSymbol symbol,
+            byte[] code, string metadata, string debugCode) =>
+            CaptureObject(symbol, code, metadata, debugCode);
+
+#if BC_OUTPUTTER_ADDOBJECT
+        // BC 29 added an abstract AddObject(IObjectTypeSymbol, ...) to CodeModuleOutputter and
+        // moved AL interfaces from AddApplicationObject onto it (Compilation.EmitCode(IObjectTypeSymbol)
+        // calls it for SymbolKind.Interface only). It must be overridden to compile, and it must
+        // capture exactly as AddApplicationObject does or interface code and metadata vanish.
+        // The member does not exist on BC 28, so the override is compiled only when the engine is
+        // built against BC >= 29 (AlRunner.csproj, DefineConstants).
+        public override void AddObject(
+            NavCA.IObjectTypeSymbol symbol,
+            byte[] code, string metadata, string debugCode) =>
+            CaptureObject(symbol, code, metadata, debugCode);
+#endif
+
+        private void CaptureObject(
+            NavCA.ISymbol symbol,
             byte[] code, string metadata, string debugCode)
         {
             AddCalls++;

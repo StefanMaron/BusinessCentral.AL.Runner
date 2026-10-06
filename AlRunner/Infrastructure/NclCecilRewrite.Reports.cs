@@ -996,8 +996,30 @@ public static partial class NclCecilRewrite
                             && sessRef.DeclaringType.FullName == "Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase")
                         { sessionAt = i; break; }
                     if (sessionAt < 0)
-                        throw new InvalidOperationException(
-                            "NavForm 5-arg ctor rewrite: no NavApplicationObjectBase.get_Session call found to cut at — Ncl shape changed, do not commit");
+                    {
+                        // BC 29 dropped the `ExtensionMetrics = new NavExtensionMetrics(.. base.Session
+                        // .NavAppGroup ..)` statement, so the ctor no longer reads Session at all. What
+                        // remains of the session-needing tail is `if (record != null) { SetSourceTable(..);
+                        // .. SyncTempTableWithSourceTableAsync(..) }`; the same cut criterion then lands
+                        // on the start of that `if` — the `ldarg record` before the first conditional
+                        // branch that precedes the SetSourceTable call.
+                        int setSource = -1;
+                        for (int i = 0; i < instructions.Count; i++)
+                            if ((instructions[i].OpCode == OpCodes.Call || instructions[i].OpCode == OpCodes.Callvirt)
+                                && instructions[i].Operand is MethodReference ssRef
+                                && ssRef.Name == "SetSourceTable"
+                                && ssRef.DeclaringType.FullName == "Microsoft.Dynamics.Nav.Runtime.NavForm")
+                            { setSource = i; break; }
+                        int guard = -1;
+                        for (int i = setSource - 1; i > 0; i--)
+                            if (instructions[i].OpCode == OpCodes.Brfalse || instructions[i].OpCode == OpCodes.Brfalse_S
+                                || instructions[i].OpCode == OpCodes.Brtrue || instructions[i].OpCode == OpCodes.Brtrue_S)
+                            { guard = i; break; }
+                        if (setSource < 0 || guard < 1)
+                            throw new InvalidOperationException(
+                                "NavForm 5-arg ctor rewrite: neither a NavApplicationObjectBase.get_Session call (BC 28) nor a guarded NavForm.SetSourceTable call (BC 29) found to cut at — Ncl shape changed, do not commit");
+                        sessionAt = guard - 1;
+                    }
 
                     // The cut has to land on a STATEMENT boundary, not merely before the
                     // session read: `ldarg.0` for the next store already sits on the stack
