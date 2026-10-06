@@ -21,6 +21,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **testpage:** reopen a TestPage variable after a failed open and refuse a control read after a teardown, as BC does
 - **testpage:** a precompiled report's request-page control is named by its control in field errors
 - **testpage:** a raising AutoFormatExpression or CaptionClass expression fails the page open
 - **server:** affectedOnly attributes a statement in a multi-object file to its owning object, so an unchanged request skips the test
