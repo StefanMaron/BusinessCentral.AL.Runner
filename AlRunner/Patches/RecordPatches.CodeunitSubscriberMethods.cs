@@ -183,6 +183,7 @@ public static partial class RecordPatches
         var inherentMethodIds = new HashSet<int>();
         var assemblyInherent = new Dictionary<int, (long, BcAppSymbolCache.CodeunitMethodSymbol?, string)>();
         var publisherNames = new List<string>();
+        var scopeNavNameByClass = new Dictionary<string, string>(StringComparer.Ordinal);
         string? refusal = null;
 
         foreach (var nestedHandle in type.GetNestedTypes())
@@ -198,6 +199,7 @@ public static partial class RecordPatches
                     case "SignatureSpanAttribute": span = ca.DecodeValue(AttributeArgumentTypes.Instance).FixedArguments[0].Value as long?; break;
                 }
             }
+            if (name is not null) scopeNavNameByClass[md.GetString(nested.Name)] = name;
             if (name is null || span is null) continue;
             if (!scopeSpans.TryGetValue(name, out var list)) scopeSpans[name] = list = [];
             list.Add(span.Value);
@@ -219,7 +221,7 @@ public static partial class RecordPatches
                     case "SignatureSpanAttribute": span = ca.DecodeValue(AttributeArgumentTypes.Instance).FixedArguments[0].Value as long?; break;
                     case "NavEventSubscriberAttribute": subscriber = ca.DecodeValue(AttributeArgumentTypes.Instance); break;
                     case "InherentPermissionsAttribute": inherent = ca.DecodeValue(AttributeArgumentTypes.Instance); break;
-                    case "NavEventAttribute": publisherNames.Add(md.GetString(method.Name)); break;
+                    case "NavEventAttribute": publisherNames.Add(PublisherAlName(md, method, scopeNavNameByClass)); break;
                 }
             }
             if (inherent is { } inherentValue)
@@ -256,6 +258,19 @@ public static partial class RecordPatches
 
         return new CodeunitAssemblyFacts(spanByMethodId, scopeSpans, subscribers, inherentMethodIds,
             assemblyInherent, publisherNames, refusal);
+    }
+
+    /// <summary>
+    /// A publisher's AL name: the <c>[NavName]</c> on its <c>&lt;method&gt;_Scope</c> class, the name
+    /// the symbol file lists. The C# method name equals it only when the compiler did not rewrite it
+    /// — a quoted <c>"On Before Quoted"</c> is <c>On_Before_Quoted</c> (#5200). A publisher with no
+    /// such class (BC emits none) keeps its method name, which is what this answered before.
+    /// </summary>
+    private static string PublisherAlName(MetadataReader md, MethodDefinition method,
+        IReadOnlyDictionary<string, string> scopeNavNameByClass)
+    {
+        var methodName = md.GetString(method.Name);
+        return scopeNavNameByClass.TryGetValue(methodName + "_Scope", out var alName) ? alName : methodName;
     }
 
     // The two platform codeunits whose "events" are an install or upgrade codeunit's triggers.

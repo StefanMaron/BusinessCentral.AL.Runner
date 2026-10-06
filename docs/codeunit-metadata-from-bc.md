@@ -339,6 +339,14 @@ package's R2R chunks (`PEReader`, never a load) and builds the missing half:
 | `<Parameter>` | the C# signature. `RuntimeType` is the signature type as written (`ByRef<bool>`, `INavRecordHandle`, `System.Guid`, `NavList<NavCode>`). `RuntimeAttributes` is the parameter's `[NavObjectId]`/`[NavByReference]`. `Name` is the C# parameter name. |
 | document order | `[SignatureSpan]` start line, publishers placed by their `_Scope` class |
 
+**Publishers are checked by their AL name** (#5200). Every `[NavEvent]` method the assembly declares
+must be in the symbol file's list, which spells AL names, so each is named by the `[NavName]` on its
+`<method>_Scope` class. The C# method name is the AL name only when the compiler did not rewrite it:
+`"On Before Quoted"` compiles to `On_Before_Quoted`, and `"On-Check.Value (Qty) & Amt"` to
+`Ona45Checka46Value_a40Qtya41_a38_Amt`. No shipped Microsoft app declares one, so
+`CodeunitQuotedPublisherMethodTableTests` builds the package from BC's own output for a fixture
+and compares the subtree with the document BC's emitter wrote for it.
+
 **Two shapes are not emitted even though they compile with `[NavEventSubscriber]`.** An
 install or upgrade codeunit's triggers (`OnUpgradePerCompany`, `OnInstallAppPerDatabase`, …)
 target the platform codeunits 2000000008/2000000010 and are `public`. BC does not emit them:
