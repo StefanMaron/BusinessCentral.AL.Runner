@@ -488,6 +488,7 @@ public static partial class RecordPatches
         // #4100: BC's page-definition cache keys on (owner package id, page id) and the runner
         // supplies no owner, so every bundle's page N shares one key.
         RunnerMetaApplicationObjectLoader.ResetAllMetaObjectCaches();
+        ClearMetaExtensionObjects();
         _parsedPages.Clear();
         _parsedPageExtensions.Clear();
         _parsedReports.Clear();
