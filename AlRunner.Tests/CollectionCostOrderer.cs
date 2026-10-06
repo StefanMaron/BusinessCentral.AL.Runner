@@ -202,6 +202,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // measurement: 37 s on a local run of the class (BC 28.5), recorded at 1.6 times that; re-record from the first
             // main run that reports it.
             ["ServerAffectedSelectionCompileInputTests"] = 60,
+            // #5368: ten facts, about thirty runner spawns on one cache root. NOT a CI measurement: 153s on one local Release run
+            // (BC 28.5, one runner at a time), recorded at 150; re-record from the first main run that reports it.
+            ["AlOutputCacheCompileInputsTests"] = 150,
             // Absent from this table. CI 46.49s (BC 27.5) and 48.95s (BC 28.5) on PR #5312 run 37175132918, the lower leg
             // rounded down (#5319).
             ["DapLineBaseTests"] = 46,
