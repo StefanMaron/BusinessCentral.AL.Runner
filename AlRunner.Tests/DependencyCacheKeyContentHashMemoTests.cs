@@ -91,7 +91,7 @@ public sealed class DependencyCacheKeyContentHashMemoTests : IDisposable
     /// the key also carries the runner's own content hash and the selected BC version, both of
     /// which change per build; what has to stay fixed is that the two agree.
     /// </summary>
-    private static string FreshReadReferenceKey(AppManifest manifest, string appPath)
+    private static string FreshReadReferenceKey(AppManifest manifest, string appPath, string schema = "schema:v3")
     {
         using var sha = SHA256.Create();
         using var ms = new MemoryStream();
@@ -101,7 +101,7 @@ public sealed class DependencyCacheKeyContentHashMemoTests : IDisposable
             ms.Write(bytes, 0, bytes.Length);
         }
 
-        WriteLine("schema:v2");
+        WriteLine(schema);
         RunnerFingerprint.WriteKeyLines(WriteLine);
         WriteLine(BcCompiler.RunnerEmitModeCacheTerm);
         WriteLine($"defines:{string.Join(",", BcCompiler.GetExtraPreprocessorSymbols())}");
@@ -192,6 +192,22 @@ public sealed class DependencyCacheKeyContentHashMemoTests : IDisposable
             FreshReadReferenceKey(m, pkg),
             DependencyLoader.ComputeSourceDependencyCacheKeyCore(
                 m, pkg, p => RunnerFingerprint.ComputeFileContentHashMemoized(p)));
+    }
+
+    /// <summary>
+    /// #5053: an entry the schema before the resolved-closure term wrote is not found. The reference
+    /// reproduces every other term, so the one difference is the schema line.
+    /// </summary>
+    [Fact]
+    public void Key_IsNotTheKeyTheSchemaBeforeTheClosureWrote()
+    {
+        var pkg = WritePackage("dep.app", "package bytes v1");
+        var m = Manifest();
+        var now = DependencyLoader.ComputeSourceDependencyCacheKeyCore(
+            m, pkg, p => RunnerFingerprint.ComputeFileContentHashMemoized(p));
+
+        Assert.NotEqual(FreshReadReferenceKey(m, pkg, "schema:v2"), now);
+        Assert.Equal(FreshReadReferenceKey(m, pkg, "schema:v3"), now);
     }
 
     [Fact]

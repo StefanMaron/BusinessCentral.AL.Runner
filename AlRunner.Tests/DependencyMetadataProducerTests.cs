@@ -115,7 +115,7 @@ public sealed class DependencyMetadataProducerTests
     {
         var missing = Path.Combine(Path.GetTempPath(), $"no-such-package-{Guid.NewGuid():N}.app");
         Assert.False(File.Exists(missing));
-        Assert.Equal(0, DependencyMetadataProducer.Ensure(Manifest("Base Application"), missing, compiler: null!));
+        Assert.Equal(0, DependencyMetadataProducer.Ensure(Manifest("Base Application"), missing, compiler: null!, NoResolved));
     }
 
     // ---- the cache key -------------------------------------------------------------
@@ -144,8 +144,11 @@ public sealed class DependencyMetadataProducerTests
     private const string RunnerA = "aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000";
     private const string RunnerB = "bbbb0000bbbb0000bbbb0000bbbb0000bbbb0000bbbb0000bbbb0000bbbb0000";
 
+    private static readonly IReadOnlyList<(AppManifest Manifest, string AppPath)> NoResolved =
+        Array.Empty<(AppManifest Manifest, string AppPath)>();
+
     private static string Key(AppManifest m, string content = ContentA, params string[] defines)
-        => DependencyMetadataProducer.CacheKeyCore(m, content, defines, RunnerA)!;
+        => DependencyMetadataProducer.CacheKeyCore(m, content, defines, RunnerA, resolvedClosureTerm: null)!;
 
     /// <summary>
     /// #5039: a rebuilt package at an unchanged id and version is a different key.
@@ -187,9 +190,9 @@ public sealed class DependencyMetadataProducerTests
         var m = Manifest("Business Foundation");
         var p1 = WritePackage("key-a", ("src/A.Table.al", "table 50000 A { fields { field(1; X; Integer) { } } }"));
         var p2 = WritePackage("key-b", ("src/A.Table.al", "table 50000 A { fields { field(2; Y; Integer) { } } }"));
-        var k1 = DependencyMetadataProducer.CacheKey(m, p1, Array.Empty<string>());
+        var k1 = DependencyMetadataProducer.CacheKey(m, p1, Array.Empty<string>(), NoResolved);
         Assert.NotNull(k1);
-        Assert.NotEqual(k1, DependencyMetadataProducer.CacheKey(m, p2, Array.Empty<string>()));
+        Assert.NotEqual(k1, DependencyMetadataProducer.CacheKey(m, p2, Array.Empty<string>(), NoResolved));
     }
 
     /// <summary>
@@ -201,12 +204,12 @@ public sealed class DependencyMetadataProducerTests
     public void CacheKey_SeparatesRunnerBuilds()
     {
         var m = Manifest("Business Foundation");
-        var a = DependencyMetadataProducer.CacheKeyCore(m, ContentA, Array.Empty<string>(), RunnerA);
-        var b = DependencyMetadataProducer.CacheKeyCore(m, ContentA, Array.Empty<string>(), RunnerB);
+        var a = DependencyMetadataProducer.CacheKeyCore(m, ContentA, Array.Empty<string>(), RunnerA, null);
+        var b = DependencyMetadataProducer.CacheKeyCore(m, ContentA, Array.Empty<string>(), RunnerB, null);
         Assert.NotNull(a);
         Assert.NotNull(b);
         Assert.NotEqual(a, b);
-        Assert.Equal(a, DependencyMetadataProducer.CacheKeyCore(m, ContentA, Array.Empty<string>(), RunnerA));
+        Assert.Equal(a, DependencyMetadataProducer.CacheKeyCore(m, ContentA, Array.Empty<string>(), RunnerA, null));
     }
 
     /// <summary>
@@ -223,9 +226,9 @@ public sealed class DependencyMetadataProducerTests
         Assert.NotEqual(AlRunner.Infrastructure.RunnerFingerprint.UnknownContentHash, running);
         var content = AlRunner.Infrastructure.RunnerFingerprint.ComputeFileContentHashMemoized(p);
 
-        var key = DependencyMetadataProducer.CacheKey(m, p, Array.Empty<string>());
-        Assert.Equal(DependencyMetadataProducer.CacheKeyCore(m, content, Array.Empty<string>(), running), key);
-        Assert.NotEqual(DependencyMetadataProducer.CacheKeyCore(m, content, Array.Empty<string>(), RunnerA), key);
+        var key = DependencyMetadataProducer.CacheKey(m, p, Array.Empty<string>(), NoResolved);
+        Assert.Equal(DependencyMetadataProducer.CacheKeyCore(m, content, Array.Empty<string>(), running, null), key);
+        Assert.NotEqual(DependencyMetadataProducer.CacheKeyCore(m, content, Array.Empty<string>(), RunnerA, null), key);
     }
 
     /// <summary>
@@ -240,7 +243,7 @@ public sealed class DependencyMetadataProducerTests
     {
         if (runner == "unknown") runner = AlRunner.Infrastructure.RunnerFingerprint.UnknownContentHash;
         Assert.Null(DependencyMetadataProducer.CacheKeyCore(
-            Manifest("Business Foundation"), ContentA, Array.Empty<string>(), runner));
+            Manifest("Business Foundation"), ContentA, Array.Empty<string>(), runner, null));
     }
 
     /// <summary>
@@ -255,7 +258,102 @@ public sealed class DependencyMetadataProducerTests
     {
         if (content == "unknown") content = AlRunner.Infrastructure.RunnerFingerprint.UnknownContentHash;
         Assert.Null(DependencyMetadataProducer.CacheKeyCore(
-            Manifest("Business Foundation"), content!, Array.Empty<string>(), RunnerA));
+            Manifest("Business Foundation"), content!, Array.Empty<string>(), RunnerA, null));
+    }
+
+    // ---- the resolved closure (#5053) ----------------------------------------------
+
+    private static AppManifest Library(string version) =>
+        new(Publisher: "repro", Name: "Library", Version: Version.Parse(version),
+            AppId: Guid.Parse("5053c0de-1b2e-4f3e-9a41-5e2b8c9d0001"),
+            Dependencies: Array.Empty<DependencyRef>());
+
+    private static AppManifest DeclaringTheLibrary(AppManifest library) =>
+        Manifest("Business Foundation") with
+        {
+            Dependencies = new[] { new DependencyRef(library.AppId, library.Name, library.Publisher, new Version(1, 0, 0, 0)) },
+        };
+
+    /// <summary>
+    /// The documents of a package are compiled against the library the run resolved for it, and
+    /// its declared version is a minimum. A different library behind the same package bytes is
+    /// a different key: other bytes at the same version, and the same bytes at another resolved
+    /// version, each on their own.
+    /// </summary>
+    [Fact]
+    public void CacheKey_SeparatesTheLibraryTheRunResolved()
+    {
+        var pkg = WritePackage("closure-pkg", ("src/A.Table.al", "table 50000 A { fields { field(1; X; Integer) { } } }"));
+        var libV1 = WritePackage("closure-lib-v1", ("SymbolReference.json", "{\"enum\":7}"));
+        var libV1Rebuilt = WritePackage("closure-lib-v1-rebuilt", ("SymbolReference.json", "{\"enum\":9}"));
+        var declaring = DeclaringTheLibrary(Library("1.0.0.0"));
+
+        string? Key(AppManifest library, string path)
+            => DependencyMetadataProducer.CacheKey(declaring, pkg, Array.Empty<string>(), new[] { (library, path) });
+
+        var atV1 = Key(Library("1.0.0.0"), libV1);
+        Assert.NotNull(atV1);
+        Assert.Equal(atV1, Key(Library("1.0.0.0"), libV1));                     // a warm run still hits
+        Assert.NotEqual(atV1, Key(Library("1.0.0.0"), libV1Rebuilt));            // same version, other bytes
+        Assert.NotEqual(atV1, Key(Library("2.0.0.0"), libV1));                   // same bytes, other resolved version
+        Assert.NotEqual(atV1, DependencyMetadataProducer.CacheKey(
+            declaring, pkg, Array.Empty<string>(), Array.Empty<(AppManifest, string)>())); // library not resolved at all
+    }
+
+    /// <summary>A package this run resolved but nothing on the way declares is not part of the key.</summary>
+    [Fact]
+    public void CacheKey_IgnoresAResolvedPackageNothingDeclares()
+    {
+        var pkg = WritePackage("closure-undeclared-pkg", ("src/A.Table.al", "table 50000 A { fields { field(1; X; Integer) { } } }"));
+        var lib = WritePackage("closure-undeclared-lib", ("SymbolReference.json", "{}"));
+        var other = WritePackage("closure-undeclared-other", ("SymbolReference.json", "{\"other\":1}"));
+        var declaring = DeclaringTheLibrary(Library("1.0.0.0"));
+        var stranger = Library("1.0.0.0") with { AppId = Guid.Parse("5053c0de-1b2e-4f3e-9a41-5e2b8c9d0009"), Name = "Stranger" };
+
+        Assert.Equal(
+            DependencyMetadataProducer.CacheKey(declaring, pkg, Array.Empty<string>(), new[] { (Library("1.0.0.0"), lib) }),
+            DependencyMetadataProducer.CacheKey(declaring, pkg, Array.Empty<string>(), new[] { (Library("1.0.0.0"), lib), (stranger, other) }));
+    }
+
+    /// <summary>
+    /// A reached package the run cannot read leaves the closure unnamed: no key, so the compile
+    /// is not cached, rather than an exception out of the key or one shared with a readable run.
+    /// </summary>
+    [Fact]
+    public void CacheKey_ReachedPackageThatCannotBeRead_IsNull()
+    {
+        var pkg = WritePackage("closure-unreadable-pkg", ("src/A.Table.al", "table 50000 A { fields { field(1; X; Integer) { } } }"));
+        var gone = TestScratch.FilePath("dep-metadata-producer", "no-such-library.app");
+        Assert.False(File.Exists(gone));
+
+        Assert.Null(DependencyMetadataProducer.CacheKey(
+            DeclaringTheLibrary(Library("1.0.0.0")), pkg, Array.Empty<string>(), new[] { (Library("1.0.0.0"), gone) }));
+    }
+
+    /// <summary>
+    /// The entry a build before #5053 wrote for a package that reaches nothing is not the key now:
+    /// its documents were compiled against whatever library its run had, and nothing records which.
+    /// </summary>
+    [Fact]
+    public void CacheKey_IsNotTheKeyTheSchemaBeforeTheClosureWrote()
+    {
+        var m = Manifest("Business Foundation");
+        string Hand(string schema)
+        {
+            var terms = new System.Text.StringBuilder(schema + "\n");
+            AlRunner.Infrastructure.RunnerFingerprint.WriteKeyLines(
+                line => terms.Append(line).Append('\n'), RunnerA, AlRunner.Infrastructure.BcArtifacts.SelectedVersion);
+            terms.Append(BcCompiler.RunnerEmitModeCacheTerm).Append('\n');
+            terms.Append($"app-bytes:{ContentA}\ndefines:\n");
+            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(terms.ToString()))).ToLowerInvariant();
+            return $"{m.AppId:N}_{m.Version}_{AlRunner.Infrastructure.BcArtifacts.SelectedVersion}_{hash[..32]}";
+        }
+
+        var now = DependencyMetadataProducer.CacheKeyCore(m, ContentA, Array.Empty<string>(), RunnerA, null);
+        Assert.NotEqual(Hand("schema:v2"), now);
+        // The reference reproduces the key's other terms exactly, so the one difference is the schema.
+        Assert.Equal(Hand("schema:v3"), now);
     }
 
     // ---- availability vs failure ---------------------------------------------------
@@ -275,7 +373,7 @@ public sealed class DependencyMetadataProducerTests
 
         var ex = Assert.Throws<AlRunner.Infrastructure.DependencyLoadException>(
             () => DependencyMetadataProducer.Ensure(
-                Manifest("Business Foundation"), notAnApp, compiler: null!));
+                Manifest("Business Foundation"), notAnApp, compiler: null!, NoResolved));
 
         Assert.Equal("METADATA-SOURCE-UNREADABLE", ex.Stage);
         Assert.Equal("Business Foundation", ex.AppName);
@@ -299,7 +397,7 @@ public sealed class DependencyMetadataProducerTests
         // Arm 1 — source-less package: a quiet 0, no throw.
         var symbolOnly = WritePackage("no-source", ("SymbolReference.json", "{}"));
         Assert.Equal(0, DependencyMetadataProducer.Ensure(
-            Manifest("Business Foundation"), symbolOnly, compiler: null!));
+            Manifest("Business Foundation"), symbolOnly, compiler: null!, NoResolved));
 
         // Arm 2 — the SAME call shape on a package that ships source: throws instead.
         var withSource = WritePackage("with-source",
@@ -307,7 +405,7 @@ public sealed class DependencyMetadataProducerTests
 
         var ex = Assert.Throws<AlRunner.Infrastructure.DependencyLoadException>(
             () => DependencyMetadataProducer.Ensure(
-                Manifest("Business Foundation"), withSource, compiler: null!));
+                Manifest("Business Foundation"), withSource, compiler: null!, NoResolved));
 
         Assert.Equal("METADATA-EMIT-FAIL", ex.Stage);
 

@@ -557,7 +557,8 @@ public sealed class DependencyMetadataPartialEmitTests
             Dependencies: Array.Empty<DependencyRef>());
 
         var ex = Assert.Throws<DependencyLoadException>(
-            () => DependencyMetadataProducer.Ensure(manifest, pkg, new BcCompiler()));
+            () => DependencyMetadataProducer.Ensure(
+                manifest, pkg, new BcCompiler(), Array.Empty<(AppManifest Manifest, string AppPath)>()));
 
         // The stage, which is what keeps it in the never-swallowable METADATA-* family (#3749).
         Assert.Equal("METADATA-EMIT-EXCLUDED", ex.Stage);
@@ -570,7 +571,8 @@ public sealed class DependencyMetadataPartialEmitTests
         // Negative direction, and the half that makes the throw worth having: nothing was
         // persisted. A cached partial set is replayed by every later run without recompiling,
         // so it would record 1 document as this app's complete metadata permanently.
-        var key = DependencyMetadataProducer.CacheKey(manifest, pkg, BcCompiler.GetExtraPreprocessorSymbols());
+        var key = DependencyMetadataProducer.CacheKey(
+            manifest, pkg, BcCompiler.GetExtraPreprocessorSymbols(), Array.Empty<(AppManifest Manifest, string AppPath)>());
         Assert.NotNull(key);
         var sidecar = Path.Combine(
             AlRunner.Infrastructure.CacheRoots.Resolve("dep-metadata"),

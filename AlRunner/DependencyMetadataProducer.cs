@@ -104,31 +104,48 @@ internal static class DependencyMetadataProducer
     /// <paramref name="defines"/> is the --define set the compile applies: the run's for a
     /// dependency the runner compiles from source, none for one it loads precompiled (#5051).
     /// </summary>
-    internal static string? CacheKey(AppManifest m, string appPath, IEnumerable<string> defines)
-        => CacheKeyCore(m, RunnerFingerprint.ComputeFileContentHashMemoized(appPath), defines,
-            RunnerFingerprint.ContentHash);
+    internal static string? CacheKey(
+        AppManifest m, string appPath, IEnumerable<string> defines,
+        IReadOnlyList<(AppManifest Manifest, string AppPath)> resolved)
+    {
+        string? closure;
+        // A resolved package the compile reads but this run cannot identify leaves the closure
+        // unnamed, so the compile goes uncached rather than sharing a key with one that could.
+        try
+        {
+            closure = DependencyLoader.ResolvedClosureCacheTerm(
+                m, resolved, static p => RunnerFingerprint.ComputeFileContentHashMemoized(p));
+        }
+        catch (FileNotFoundException) { return null; }
+        return CacheKeyCore(m, RunnerFingerprint.ComputeFileContentHashMemoized(appPath), defines,
+            RunnerFingerprint.ContentHash, closure);
+    }
 
     /// <summary>
     /// App id, version and BC build stay readable at the front. The hash carries what else
     /// changes the documents at an unchanged version: the runner build and its emit mode
     /// (#5049, as <see cref="DependencyLoader.ComputeSourceDependencyCacheKeyCore"/> keys
-    /// <c>compiled-deps</c>), the package bytes, and the --define symbols the compile applies
-    /// (#5039), normalised as in <see cref="BcCompiler.GetExtraPreprocessorSymbols"/>. The
+    /// <c>compiled-deps</c>), the package bytes, the --define symbols the compile applies
+    /// (#5039), normalised as in <see cref="BcCompiler.GetExtraPreprocessorSymbols"/>, and the
+    /// packages the compile resolved its references against (#5053,
+    /// <see cref="DependencyLoader.ResolvedClosureCacheTerm"/>, null when it reaches none). The
     /// package's own <c>PreprocessorSymbols</c> are inside its bytes.
     /// </summary>
     internal static string? CacheKeyCore(
-        AppManifest m, string contentHash, IEnumerable<string> defines, string runnerContentHash)
+        AppManifest m, string contentHash, IEnumerable<string> defines, string runnerContentHash,
+        string? resolvedClosureTerm)
     {
         if (string.IsNullOrEmpty(contentHash) || contentHash == RunnerFingerprint.UnknownContentHash)
             return null;
         if (RunnerFingerprint.UncacheableReasonFor(runnerContentHash) != null)
             return null;
         var normalised = defines.Distinct(StringComparer.Ordinal).OrderBy(s => s, StringComparer.Ordinal);
-        var terms = new System.Text.StringBuilder("schema:v2\n");
+        var terms = new System.Text.StringBuilder("schema:v3\n");
         RunnerFingerprint.WriteKeyLines(
             line => terms.Append(line).Append('\n'), runnerContentHash, BcArtifacts.SelectedVersion);
         terms.Append(BcCompiler.RunnerEmitModeCacheTerm).Append('\n');
         terms.Append($"app-bytes:{contentHash}\ndefines:{string.Join(",", normalised)}\n");
+        if (resolvedClosureTerm != null) terms.Append(resolvedClosureTerm).Append('\n');
         var hash = Convert.ToHexString(
             System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(terms.ToString())))
             .ToLowerInvariant();
@@ -182,12 +199,14 @@ internal static class DependencyMetadataProducer
     /// The package HAS source and the compile or emit failed. Never downgraded to a silent 0 —
     /// see the header.
     /// </exception>
-    internal static int Ensure(AppManifest m, string appPath, BcCompiler compiler, bool runsPrecompiledCode = false)
+    internal static int Ensure(
+        AppManifest m, string appPath, BcCompiler compiler,
+        IReadOnlyList<(AppManifest Manifest, string AppPath)> resolved, bool runsPrecompiledCode = false)
     {
         if (IsExcluded(m)) return 0;
 
         var defines = runsPrecompiledCode ? Array.Empty<string>() : BcCompiler.GetExtraPreprocessorSymbols();
-        var key = CacheKey(m, appPath, defines);
+        var key = CacheKey(m, appPath, defines, resolved);
         var sidecar = key is null ? null : SidecarPath(key);
         if (sidecar != null && File.Exists(sidecar))
         {
