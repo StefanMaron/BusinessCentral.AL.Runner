@@ -323,7 +323,8 @@ public sealed class DependencyMetadataProducerTests
     public void CacheKey_ReachedPackageThatCannotBeRead_IsNull()
     {
         var pkg = WritePackage("closure-unreadable-pkg", ("src/A.Table.al", "table 50000 A { fields { field(1; X; Integer) { } } }"));
-        var gone = Path.Combine(Path.GetTempPath(), $"no-such-library-{Guid.NewGuid():N}.app");
+        var gone = TestScratch.FilePath("dep-metadata-producer", "no-such-library.app");
+        Assert.False(File.Exists(gone));
 
         Assert.Null(DependencyMetadataProducer.CacheKey(
             DeclaringTheLibrary(Library("1.0.0.0")), pkg, Array.Empty<string>(), new[] { (Library("1.0.0.0"), gone) }));
