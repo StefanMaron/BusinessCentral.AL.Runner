@@ -66,6 +66,9 @@ public sealed class BcCompilerIncrementalCompileInputTests : IDisposable
         Write("js/a.js", "// v1");
         Write("Layouts/A.rdlc", "<Report>v1</Report>");
         Write("Layouts/B.docx", "docx v1");
+        Directory.CreateDirectory(Path.Combine(_root, "Sub"));
+        Write("Sub/ReportC.al", Report(90504, "CI Report C", "RDLC", "./C.rdlc"));
+        Write("Sub/C.rdlc", "<Report>C v1</Report>");
         Write("Translations/CompileInput.da-DK.xlf", "<xliff version=\"1.2\"/>");
         Write("notes.txt", "never read by the compile");
     }
@@ -75,7 +78,14 @@ public sealed class BcCompilerIncrementalCompileInputTests : IDisposable
         {
             DefaultRenderingLayout = L1;
             dataset { dataitem(T; "CI Tab") { column(PK; PK) { } } }
-            rendering { layout(L1) { Type = {{type}}; LayoutFile = '{{file}}'; } }
+            rendering
+            {
+                layout(L1)
+                {
+                    Type = {{type}};
+                    LayoutFile = '{{file}}';
+                }
+            }
         }
         """;
 
@@ -83,7 +93,7 @@ public sealed class BcCompilerIncrementalCompileInputTests : IDisposable
     {
         var compiler = new BcCompiler();
         var output = compiler.Emit(new[] { _root }, Module, appRootDir: _root, trackIncrementalBaseline: true);
-        Assert.Empty(output.Diagnostics);
+        Assert.True(output.Diagnostics.Count == 0, string.Join(" | ", output.Diagnostics));
         return compiler;
     }
 
@@ -118,6 +128,20 @@ public sealed class BcCompilerIncrementalCompileInputTests : IDisposable
         var output = Cycle(compiler, out var reason, out var changed);
         Assert.True(output != null, $"a layout edit must stay on the fast path: {reason}");
         Assert.Equal(new[] { new AffectedObjectId("Report", 90502, "CI Report B") }, changed);
+    }
+
+    [SkippableFact]
+    public void EditedFileRelativeLayout_IsAChangeToTheReportInThatDirectory()
+    {
+        Ready();
+        WriteBundle();
+        var compiler = Baseline();
+
+        Write("Sub/C.rdlc", "<Report>C v2</Report>");
+
+        var output = Cycle(compiler, out var reason, out var changed);
+        Assert.True(output != null, $"a layout edit must stay on the fast path: {reason}");
+        Assert.Equal(new[] { new AffectedObjectId("Report", 90504, "CI Report C") }, changed);
     }
 
     [SkippableFact]
