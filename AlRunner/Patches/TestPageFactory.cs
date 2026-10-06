@@ -113,7 +113,7 @@ internal static class TestPageFactory
         why = null;
         var metaTable = RecordPatches.GetOrBuildNCLMetaTable(tableId);
         var recordType = RecordPatches.FindRecordType(tableId);
-        if (metaTable == null || recordType == null)
+        if (metaTable == null)
         {
             why = $"source table {tableId} has no runtime record type here";
             return null;
@@ -142,17 +142,17 @@ internal static class TestPageFactory
         AlRunner.Patches.EventSubscriberPatches.InjectValidateSubsForTable(tableId, metaTable);
         AlRunner.Patches.EventSubscriberPatches.InjectTriggerSubsForTable(tableId, metaTable);
 
-        var ctor = recordType.GetConstructors().FirstOrDefault(c => c.GetParameters().Length == 6);
-        if (ctor == null)
+        NavRecord record;
+        try
         {
-            why = $"Record{tableId} has no 6-arg constructor";
+            record = RecordPatches.NewRecordInstance(
+                recordType, owner, metaTable, tableId, isTemporary, SecurityFiltering.Ignored);
+        }
+        catch (InvalidOperationException ex)
+        {
+            why = ex.Message;
             return null;
         }
-
-        var record = (NavRecord)ctor.Invoke(new object?[]
-        {
-            owner, metaTable, isTemporary, null, null, SecurityFiltering.Ignored
-        });
 
         // Register tableextensions on THIS record instance, same as the other three
         // record-construction sites (RecordPatches.CreateObjectInstance.cs,

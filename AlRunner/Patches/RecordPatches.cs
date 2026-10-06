@@ -1332,16 +1332,20 @@ public static partial class RecordPatches
                 $"NavRecordHandle.CreateTarget: no NCLMetaTable for table {id} (AL source not parsed)");
         }
 
-        // Find Record{ID} : NavRecord in the loaded test assembly.
+        // Find Record{ID} : NavRecord in the loaded test assembly. A table whose compiled module
+        // has no Record{ID} class is a plain NavRecord: BC's own NCLMetaTable.CreateObjectInstance
+        // builds `new NavRecord(parent, TableId, this, ..)` when no ApplicationObjectConstructor is
+        // set (body identical on 28.5 and 29.0). BC 29's compiler emits that class only for tables
+        // with code, so most System Application tables have none there.
         var recordType = FindRecordType(id);
-        if (recordType == null)
-            throw new InvalidOperationException(
-                $"NavRecordHandle.CreateTarget: no loaded type Record{id} found");
-
-        var ctor = _concreteRecordCtors.GetOrAdd(recordType,
-            t => Array.Find(t.GetConstructors(), c => c.GetParameters().Length == 6));
-        if (ctor == null)
-            throw new InvalidOperationException($"Record{id} has no 6-arg constructor");
+        ConstructorInfo? ctor = null;
+        if (recordType != null)
+        {
+            ctor = _concreteRecordCtors.GetOrAdd(recordType,
+                t => Array.Find(t.GetConstructors(), c => c.GetParameters().Length == 6));
+            if (ctor == null)
+                throw new InvalidOperationException($"Record{id} has no 6-arg constructor");
+        }
 
         // Construct Record{ID}(parent, metaTable, isTemporary, sharedTable, companyName, securityFiltering)
         //
@@ -1354,8 +1358,12 @@ public static partial class RecordPatches
         NavRecord rec;
         try
         {
-            rec = (NavRecord)ctor.Invoke(new object?[] { self, metaTable, isTemp, null, null,
-                SecurityFiltering.Validated });
+            rec = ctor != null
+                ? (NavRecord)ctor.Invoke(new object?[] { self, metaTable, isTemp, null, null,
+                    SecurityFiltering.Validated })
+                : BuildBaseNavRecord(metaTable, self, id, isTemp, null, string.Empty, SecurityFiltering.Validated)
+                    ?? throw new InvalidOperationException(
+                        $"NavRecordHandle.CreateTarget: no loaded type Record{id} and NavRecord has no 7-arg constructor to build a plain record");
         }
         catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null)
         {
