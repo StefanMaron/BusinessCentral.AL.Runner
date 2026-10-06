@@ -396,6 +396,7 @@ internal partial class LiveNavTestPage
         public void Invoke()
         {
             _page._invokedFormResult = _result;
+            var saveRefused = false;
             if (_result is not (FormResult.Cancel or FormResult.LookupCancel))
             {
                 // OK also saves a row typed into a PART, whoever opened the page, and saves it
@@ -407,11 +408,13 @@ internal partial class LiveNavTestPage
                     _page.FlushParts();
                 // OK() raises nothing when the table refuses the row, then or when the page goes
                 // out of scope (corpus 60045 DelayedCard_DuplicateKey_OK, #4624).
+                var refusalsBefore = _page._validationErrors.Count;
                 _page.FlushRow(_result is FormResult.OK ? RefusedInsert.Record : RefusedInsert.Raise);
+                saveRefused = _page._validationErrors.Count > refusalsBefore;
             }
 
             // On BC this invoke IS the close attempt -- see AttemptHandlerDrivenClose.
-            _page.AttemptHandlerDrivenClose(_result);
+            _page.AttemptHandlerDrivenClose(_result, saveRefused);
         }
 
         public bool Visible => true;
