@@ -1,0 +1,23 @@
+{
+  "id": "7b3d1e42-5a96-4c8f-9e07-2d4f6a8b1c53",
+  "name": "Runner Tests Fixture - TestPage No-Row Blank",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #5358: a control of a part or page that shows no row reads blank, whatever its field type.",
+  "description": "Runner-mechanism fixture. The BC-behaviour claim is measured upstream by corpus codeunit 69940 (StefanMaron/BusinessCentral.AL.Language.Tests); this fixture pins the runner's own wiring (a page showing no row answers blank and null from its controls). Declares no application floor.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 73400,
+      "to": 73419
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

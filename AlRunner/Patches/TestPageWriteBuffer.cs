@@ -64,6 +64,32 @@ internal static class TestPageWriteBuffer
     }
 
     /// <summary>
+    /// The buffer's restorable field values as they stand now, or null when the buffer cannot be
+    /// read. Paired with <see cref="IsUnchangedSince"/>: a page that found no row remembers the
+    /// buffer it blanked, and a later read asks whether page code has since changed it (#5358).
+    /// </summary>
+    internal static Dictionary<int, object?>? Values(NavRecord record)
+        => TrySnapshot(new NavRecordBuffer(record));
+
+    /// <summary>
+    /// Whether every restorable field of <paramref name="record"/> still holds the value in
+    /// <paramref name="values"/> (NavValue is immutable, so the stored instance or an equal one).
+    /// An unreadable buffer answers false: "changed" keeps the control reading the buffer, which
+    /// is what it did before the no-row rule existed.
+    /// </summary>
+    internal static bool IsUnchangedSince(NavRecord record, Dictionary<int, object?> values)
+    {
+        var now = Values(record);
+        if (now == null || now.Count != values.Count) return false;
+        foreach (var pair in values)
+        {
+            if (!now.TryGetValue(pair.Key, out var current)) return false;
+            if (!ReferenceEquals(current, pair.Value) && !Equals(current, pair.Value)) return false;
+        }
+        return true;
+    }
+
+    /// <summary>
     /// Run <paramref name="write"/>, and if it raises, put the record's field values back as
     /// they were before returning the exception to the caller.
     ///
