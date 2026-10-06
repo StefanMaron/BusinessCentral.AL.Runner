@@ -48,6 +48,7 @@ internal partial class LiveNavTestPage
         LeaveNewRowLine();
         var found = _page?.RaiseOnFindRecord("-")
                     ?? record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult();
+        _noRowShown = !found;
         if (!found)
         {
             // Same draft line as before the call: restore the latch LeaveNewRowLine just
@@ -105,6 +106,7 @@ internal partial class LiveNavTestPage
         LeaveNewRowLine();
         var found = _page?.RaiseOnFindRecord("+")
                     ?? record.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult();
+        _noRowShown = !found;
         if (!found) EnterNewRowLine(record);
         return Loaded(found);
     }
@@ -202,6 +204,15 @@ internal partial class LiveNavTestPage
     // somewhere in order to be restored when the walk steps off it.
     private bool _onNewRowLine;
     private string? _newRowLineReturnPosition;
+
+    // Set when the rowset is empty and nothing stands in for a row; see NoRowShown.
+    private bool _noRowShown;
+
+    /// <summary>
+    /// The page shows no row: its rowset is empty and neither the draft line nor a started new row
+    /// stands in for one. A control reads blank then, whatever its type (#5358).
+    /// </summary>
+    internal bool NoRowShown => _noRowShown && !_onNewRowLine && !_pendingNewRow;
 
     // ONE NEW-RECORD STEP PER DRAFT-LINE ROW (issue #3029). Set the moment the platform's
     // new-record step has run for the draft line the cursor is on, and cleared whenever that
@@ -344,6 +355,7 @@ internal partial class LiveNavTestPage
     /// </summary>
     private protected void BlankBufferWhenNoRowIsShown(NavRecord record)
     {
+        _noRowShown = true;
         if (_onNewRowLine) return;
         record.ALInit();
         var primaryKey = record.MetaTable?.PrimaryKey;
@@ -451,6 +463,7 @@ internal partial class LiveNavTestPage
     {
         if (found)
         {
+            _noRowShown = false;
             try
             {
                 _page?.RaiseOnAfterGetRecord();

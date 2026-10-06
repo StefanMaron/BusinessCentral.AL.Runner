@@ -93,6 +93,7 @@ internal partial class LiveNavTestPage
         }
 
         _pendingNewRow = true;
+        _noRowShown = false;
 
         // The new row is now the page's current row, so BC runs OnAfterGetCurrRecord for it
         // (corpus codeunit 60927 "ONG Tests", #2394). Top-level pages only: a part's New() is

@@ -67,7 +67,7 @@ internal partial class LiveNavTestPage
                 _fields[id] = field =
                     new LiveNavTestField(_record!, tableFieldNo, _page, id,
                         MarkEdited, PromoteNewRowLineForWrite, ActivateControl, FieldLedger(id))
-                    { OpenModeEditable = () => OpenModeEditable };
+                    { OpenModeEditable = () => OpenModeEditable, NoRowShown = () => NoRowShown };
             return field;
         }
 
