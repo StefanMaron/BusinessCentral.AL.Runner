@@ -2133,6 +2133,16 @@ public static partial class NclCecilRewrite
                 Console.Error.WriteLine("[Cecil] Prepended PNG-signature mimeType classification to NavMediaFactory.ProcessMediaObject");
             }
 
+            // BC 29 (#5382): off Windows, ProcessMediaObject probes content with NavMediaImageSkia.TryProbe
+            // (SKCodec.Create), whose native library BC does not ship for this OS. The type exists only
+            // on BC >= 29; once it is there the probe must be found or the build refuses.
+            if (nclMod.GetType(Rt + "Media.NavMediaImageSkia") != null)
+            {
+                ReplaceBodyWithHelper(nclMod,
+                    FindNclMethod(nclMod, Rt + "Media.NavMediaImageSkia", "TryProbe", 4),
+                    H(typeof(AlRunner.Patches.MediaPatches), "NavMediaImageSkia_TryProbe"));
+            }
+
             // ── NavRecordRef cluster (Batch 8) — get_Target + ALOpen ─────────────
             // get_Target's real body NREs on base.Tree.Session.Company.SharedObjects
             // on the headless skeleton; the replacement constructs a SharedRecordRef
