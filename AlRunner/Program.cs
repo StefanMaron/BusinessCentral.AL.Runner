@@ -8184,18 +8184,26 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                             activePreviousEvents != null
                             && activePreviousEvents.TryGetValue(AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey, out var bundleWidePageBases)
                                 ? bundleWidePageBases : null);
+                        // #5084: an object another test's metadata table read lists.
+                        var metadataResult = AlRunner.Infrastructure.AffectedMetadataTables.ChangedKeys(
+                            activeChangedObjectIds,
+                            o => changedObjectKeys.Contains(ToAffectedObjectKey(o)),
+                            activePreviousEvents != null
+                            && activePreviousEvents.TryGetValue(AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey, out var bundleWideMetadata)
+                                ? bundleWideMetadata : null);
                         // #5083: a changed kind no recorded key reaches (an enum, a reportextension, ...).
                         var unkeyedKindReason = AlRunner.Infrastructure.AffectedEventSelection.UnkeyedKindChange(activeChangedObjectIds);
                         if (unkeyedKindReason != null || eventResult.ForceFullReason != null || tableResult.ForceFullReason != null
-                            || longLivedReason != null || pageExtensionResult.ForceFullReason != null)
+                            || longLivedReason != null || pageExtensionResult.ForceFullReason != null
+                            || metadataResult.ForceFullReason != null)
                         {
                             activeForcedFull = true;
                             activeForcedReason = unkeyedKindReason ?? eventResult.ForceFullReason ?? tableResult.ForceFullReason
-                                ?? longLivedReason ?? pageExtensionResult.ForceFullReason;
+                                ?? longLivedReason ?? pageExtensionResult.ForceFullReason ?? metadataResult.ForceFullReason;
                         }
                         else
                         {
-                            changedEventKeys = eventResult.Keys.Union(tableResult.Keys).ToHashSet(StringComparer.Ordinal);
+                            changedEventKeys = eventResult.Keys.Union(tableResult.Keys).Union(metadataResult.Keys).ToHashSet(StringComparer.Ordinal);
                             activeChangedObjectKeys = changedObjectKeys;
                             changedObjectKeys.UnionWith(pageExtensionResult.Keys);
                         }

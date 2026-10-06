@@ -316,7 +316,8 @@ internal static class AffectedEnvironmentDrift
     /// The keys the changed objects select on: a built kind selects the tests that built it or
     /// entered it, a table or tableextension the tests that held its records. What no key can carry
     /// is returned as a reason instead: another kind, an instance built outside any one test, or a
-    /// record held outside one. A pageextension selects through its base page (#5025).
+    /// record held outside one. A pageextension selects through its base page (#5025). Any kind
+    /// also selects through the metadata virtual tables that list it (#5084).
     /// </summary>
     internal static EnvironmentDriftKeys SelectionKeys(IReadOnlyList<AffectedObjectId> changed,
         IReadOnlyDictionary<int, List<int>> currentExtensionBases, HashSet<string>? recordedBundleWide,
@@ -327,6 +328,10 @@ internal static class AffectedEnvironmentDrift
         var unattributed = new List<string>();
         foreach (var o in changed)
         {
+            // #5084: the metadata virtual tables that list the object, whichever key selects on the object itself.
+            var metadata = AffectedMetadataTables.ChangedKeys(new[] { o }, _ => true, recordedBundleWide);
+            events.UnionWith(metadata.Keys);
+            if (metadata.ForceFullReason != null) unattributed.Add(metadata.ForceFullReason);
             if (BuiltKinds.Contains(o.Kind) && o.Id.HasValue)
             {
                 var key = DependencyKeyPrefix + ObjectKey(o.Kind, o.Id, "");

@@ -1048,6 +1048,45 @@ An event an extension declares, and the subscribers it contains, are selected as
 recorded before #5025 has no `pext|` keys, so a pageextension removed since then
 forces a full run.
 
+#### affectedOnly and metadata virtual tables
+
+A test that reads object metadata through a virtual table (`AllObj`,
+`AllObjWithCaption`, `Table Metadata`, `CodeUnit Metadata`, `Page Control Field`, ...)
+records only that table's own `tbl|Table|<id>` key (previous sections), so a change to
+an object the table lists selected none of them, while a full run answers differently:
+a codeunit added or removed changes every `AllObj` row count, a pageextension changes
+the `Page Control Field` rows of its base page (#5084).
+
+A changed object therefore also adds the `tbl|Table|<id>` key of every table that lists
+its kind. `AffectedMetadataTables.Population` classifies **every** table
+`RecordPatches.GetDataAccessForTableCore` serves from a branch of its own, as one of:
+
+- rows that list objects, with the kinds they list (`null` = every kind): the object-listing
+  tables above, plus `Field`, `Key` and `Table Relations Metadata` (tables and
+  tableextensions), `Page Action` and `Page Control Field` (pages and pageextensions),
+  `Event Subscription` (every kind: any object can declare a subscriber), the report,
+  query, xmlport, codeunit, table and page metadata tables for their own kind;
+- rows from kinds that already force a full run (a profile or permission set, "affectedOnly
+  and object kinds no test records"), so nothing is keyed;
+- rows not derived from AL objects (host time zones and cultures, the session, a fixed
+  BC list, the code coverage log, ...), so nothing is keyed.
+
+`AffectedMetadataTablesTests` reads the dispatch chain's source and fails when a branch is
+missing from the classification, when one names the wrong table ids, or when one is
+classified twice: a table the runner starts serving from the object registry cannot escape
+the keying unnoticed.
+
+Only a whole-object change keys these tables: an added or removed object, or an edit
+outside one procedure's statements (a signature, a property, a field, a control). An edit
+narrowed to one procedure moves no row of any of them and selects only its callers
+("affectedOnly and entered scopes"). A dependency's changed object keys them the same way
+under "affectedOnly across environments".
+
+A full run is forced, with a `reason`, when the recording cannot say which tests read a
+table that lists the changed object: it holds no record of table reads, or a record of that
+virtual table was held outside any one test (a test codeunit's global, a SingleInstance
+codeunit), the rule for any other table.
+
 #### affectedOnly and object kinds no test records
 
 A changed object selects tests only through something a recording run kept: an
