@@ -51,7 +51,7 @@ codeunit 73400 "BNR Runner Tests"
     end;
 
     [Test]
-    procedure PartShowingNoRow_EveryControlReadsBlank()
+    procedure NoRow_Part_EveryControlReadsBlank()
     var
         Card: TestPage "BNR Card";
     begin
@@ -80,7 +80,7 @@ codeunit 73400 "BNR Runner Tests"
     end;
 
     [Test]
-    procedure PartShowingNoRow_TypedReadsAreTheTypeDefault()
+    procedure NoRow_Part_TypedReadsAreTheTypeDefault()
     var
         Card: TestPage "BNR Card";
     begin
@@ -119,7 +119,7 @@ codeunit 73400 "BNR Runner Tests"
     end;
 
     [Test]
-    procedure PartOfAHostOverAnEmptyTable_EveryControlReadsBlank()
+    procedure NoRow_PartOfAHostOverAnEmptyTable_EveryControlReadsBlank()
     var
         Card: TestPage "BNR Card";
         Header: Record "BNR Header";
@@ -150,7 +150,7 @@ codeunit 73400 "BNR Runner Tests"
     end;
 
     [Test]
-    procedure ListOverAnEmptyTable_EveryControlReadsBlank()
+    procedure NoRow_ListOverAnEmptyTable_EveryControlReadsBlank()
     var
         Card: TestPage "BNR Lines List";
     begin
@@ -194,7 +194,7 @@ codeunit 73400 "BNR Runner Tests"
     end;
 
     [Test]
-    procedure ListWithARow_ReadsItsValues()
+    procedure NoRow_Contrast_ListWithARow_ReadsItsValues()
     var
         Card: TestPage "BNR Lines List";
     begin
@@ -206,7 +206,7 @@ codeunit 73400 "BNR Runner Tests"
     end;
 
     [Test]
-    procedure CardOverAnEmptyTable_EveryControlReadsBlank()
+    procedure NoRow_CardOverAnEmptyTable_EveryControlReadsBlank()
     var
         Card: TestPage "BNR Line Card";
     begin
@@ -233,7 +233,7 @@ codeunit 73400 "BNR Runner Tests"
     end;
 
     [Test]
-    procedure ListOverAnEmptyTable_AfterFirstAndLast_StillReadsBlank()
+    procedure NoRow_ListOverAnEmptyTable_AfterFirstAndLast_StillReadsBlank()
     var
         Card: TestPage "BNR Lines List";
     begin
@@ -246,7 +246,7 @@ codeunit 73400 "BNR Runner Tests"
     end;
 
     [Test]
-    procedure ListFilteredToNothing_EveryControlReadsBlank()
+    procedure NoRow_ListFilteredToNothing_EveryControlReadsBlank()
     var
         Card: TestPage "BNR Lines List";
     begin
@@ -260,7 +260,7 @@ codeunit 73400 "BNR Runner Tests"
     end;
 
     [Test]
-    procedure EditableListOverAnEmptyTable_ShowsTheDraftLine_ReadingItsDefaults()
+    procedure NoRow_Contrast_EditableListOverAnEmptyTable_ShowsTheDraftLine_ReadingItsDefaults()
     var
         Card: TestPage "BNR Lines List";
     begin
@@ -273,7 +273,7 @@ codeunit 73400 "BNR Runner Tests"
     end;
 
     [Test]
-    procedure PartUnderAnEditableHostWithNoLines_ShowsTheDraftLine_ReadingItsDefaults()
+    procedure NoRow_Contrast_PartUnderAnEditableHostWithNoLines_ShowsTheDraftLine_ReadingItsDefaults()
     var
         Card: TestPage "BNR Card";
     begin
@@ -286,7 +286,7 @@ codeunit 73400 "BNR Runner Tests"
     end;
 
     [Test]
-    procedure NewRowOnAnEmptyEditableList_ReadsTheValuesWrittenToIt()
+    procedure NoRow_Contrast_NewRowOnAnEmptyEditableList_ReadsTheValuesWrittenToIt()
     var
         Card: TestPage "BNR Lines List";
     begin

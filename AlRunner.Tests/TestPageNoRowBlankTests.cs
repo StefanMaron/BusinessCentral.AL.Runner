@@ -24,19 +24,19 @@ public sealed class TestPageNoRowBlankTests
         Assert.True(r.ExitCode == 0,
             $"every fixture test must pass. exit={r.ExitCode}\n{r}");
 
-        r.AssertPassed("Codeunit73400.PartShowingNoRow_EveryControlReadsBlank");
-        r.AssertPassed("Codeunit73400.PartShowingNoRow_TypedReadsAreTheTypeDefault");
+        r.AssertPassed("Codeunit73400.NoRow_Part_EveryControlReadsBlank");
+        r.AssertPassed("Codeunit73400.NoRow_Part_TypedReadsAreTheTypeDefault");
         r.AssertPassed("Codeunit73400.PartShowingARow_ReadsItsValues_AndBlanksOnlyWhileTheHostShowsNoLines");
-        r.AssertPassed("Codeunit73400.PartOfAHostOverAnEmptyTable_EveryControlReadsBlank");
-        r.AssertPassed("Codeunit73400.ListOverAnEmptyTable_EveryControlReadsBlank");
+        r.AssertPassed("Codeunit73400.NoRow_PartOfAHostOverAnEmptyTable_EveryControlReadsBlank");
+        r.AssertPassed("Codeunit73400.NoRow_ListOverAnEmptyTable_EveryControlReadsBlank");
         r.AssertPassed("Codeunit73400.ListOverAnEmptyTable_TypedReadsAreTheTypeDefault");
-        r.AssertPassed("Codeunit73400.ListWithARow_ReadsItsValues");
-        r.AssertPassed("Codeunit73400.CardOverAnEmptyTable_EveryControlReadsBlank");
-        r.AssertPassed("Codeunit73400.ListOverAnEmptyTable_AfterFirstAndLast_StillReadsBlank");
-        r.AssertPassed("Codeunit73400.ListFilteredToNothing_EveryControlReadsBlank");
-        r.AssertPassed("Codeunit73400.EditableListOverAnEmptyTable_ShowsTheDraftLine_ReadingItsDefaults");
-        r.AssertPassed("Codeunit73400.PartUnderAnEditableHostWithNoLines_ShowsTheDraftLine_ReadingItsDefaults");
-        r.AssertPassed("Codeunit73400.NewRowOnAnEmptyEditableList_ReadsTheValuesWrittenToIt");
+        r.AssertPassed("Codeunit73400.NoRow_Contrast_ListWithARow_ReadsItsValues");
+        r.AssertPassed("Codeunit73400.NoRow_CardOverAnEmptyTable_EveryControlReadsBlank");
+        r.AssertPassed("Codeunit73400.NoRow_ListOverAnEmptyTable_AfterFirstAndLast_StillReadsBlank");
+        r.AssertPassed("Codeunit73400.NoRow_ListFilteredToNothing_EveryControlReadsBlank");
+        r.AssertPassed("Codeunit73400.NoRow_Contrast_EditableListOverAnEmptyTable_ShowsTheDraftLine_ReadingItsDefaults");
+        r.AssertPassed("Codeunit73400.NoRow_Contrast_PartUnderAnEditableHostWithNoLines_ShowsTheDraftLine_ReadingItsDefaults");
+        r.AssertPassed("Codeunit73400.NoRow_Contrast_NewRowOnAnEmptyEditableList_ReadsTheValuesWrittenToIt");
 
         r.AssertNoFailures();
     }
