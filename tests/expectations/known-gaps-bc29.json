@@ -8,6 +8,6 @@
     "BcMajors": [
       29
     ],
-    "Note": "The corpus's own BC 29.0 cloud leg (corpus PR 551, run 37476358665) fails this test on the real service tier too, so the runner and the Linux tier agree with each other and not with the assertion. Passes on BC 27 and 28."
+    "Note": "The Windows nightly on an official MS container (BC 29.0.54011.55816, corpus run 37507797490) fails this test too: BC 29 raises no error here, as the runner does not. Corpus PR 551 changes the assertion to BC 29's behaviour under BC29PLUS; this entry goes when the runner matches. Passes on BC 27 and 28."
   }
 ]
