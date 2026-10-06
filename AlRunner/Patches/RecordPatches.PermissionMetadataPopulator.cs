@@ -92,6 +92,9 @@ public static partial class RecordPatches
     private static FieldInfo? _fBaseGroupPM;
     private static FieldInfo? _fSummariesByType;
     private static FieldInfo? _fPermissionSetLookup;
+    // BC 29 split permissionSetLookup into two: one keyed by (role id, app id), one by role id.
+    private static FieldInfo? _fPermissionSetFullLookup;
+    private static FieldInfo? _fPermissionSetByRoleIdLookup;
     private static Type? _tSummary;
     private static ConstructorInfo? _ctorSummary;
     private static Type? _tFrozenSharingArrayOpen;
@@ -149,7 +152,10 @@ public static partial class RecordPatches
             }
 
             InstallPermissionSetSlot(baseGroup, summaries);
-            InstallFreshPermissionSetLookup(baseGroup, summaries);
+            if (_fPermissionSetLookup != null)
+                InstallFreshPermissionSetLookup(baseGroup, summaries);
+            else
+                InstallFreshPermissionSetLookups(baseGroup, summaries);
 
             _permMetaPopulatedForCount = known.Count;
             // The inventory just changed; rebuild both directions lazily. They are derived
@@ -264,6 +270,67 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// BC 29's shape of <see cref="InstallFreshPermissionSetLookup"/>: two lookups, built as
+    /// NavAppGroup's constructor builds them — the full one keyed by (role id, app id) with the
+    /// app id from BC's own <c>NavAppGroup.GetPermissionSetAppId</c> (which maps the platform
+    /// sets to the null app id), first declaration winning; the by-role one derived from it,
+    /// first declaration of a role id winning.
+    /// </summary>
+    private static void InstallFreshPermissionSetLookups(object baseGroup, List<object> summaries)
+    {
+        var fullField = _fPermissionSetFullLookup!;
+        var byRoleField = _fPermissionSetByRoleIdLookup!;
+        var fullDictType = RequireBcLookupDictionaryType(fullField.FieldType);
+        var fullKv = RequireBcLookupKeyValueTypes(fullDictType);
+        var fullDict = RequireBcInstance(fullDictType, "NavAppGroup.permissionSetFullLookup");
+        var fullTryAdd = RequireBcMethod(fullDictType, "TryAdd", fullKv, "NavAppGroup.permissionSetFullLookup");
+        var byRoleDictType = RequireBcLookupDictionaryType(byRoleField.FieldType);
+        var byRoleKv = RequireBcLookupKeyValueTypes(byRoleDictType);
+        var byRoleDict = RequireBcInstance(byRoleDictType, "NavAppGroup.permissionSetByRoleIdLookup");
+        var byRoleTryAdd = RequireBcMethod(byRoleDictType, "TryAdd", byRoleKv, "NavAppGroup.permissionSetByRoleIdLookup");
+        var nameProp = RequireBcProperty(_tSummary!, "ObjectName");
+        var ownerProp = RequireBcProperty(_tSummary!, "FullObjectOwner");
+        var getAppId = RequireBcMethod(_tNavAppGroupPM!, "GetPermissionSetAppId",
+            new[] { _tNavCode!, _tAppRuntimeMetadata! }, "NavAppGroup.GetPermissionSetAppId");
+        var keyCtor = fullKv[0].GetConstructor(new[] { _tNavCode!, typeof(Guid) })
+            ?? throw PermissionMetadataBcShapeGap(
+                "NavAppGroup.permissionSetFullLookup",
+                $"is keyed by {fullKv[0].Name}, not the (NavCode, Guid) tuple this code builds"
+                + " — BC's permission-set metadata inventory cannot be populated");
+
+        foreach (var s in summaries)
+        {
+            var roleId = _ctorNavCode!.Invoke(new object?[] { 30, nameProp.GetValue(s) });
+            var appId = getAppId.Invoke(null, new[] { roleId, ownerProp.GetValue(s) })!;
+            fullTryAdd.Invoke(fullDict, new[] { keyCtor.Invoke(new[] { roleId, appId }), s });
+            byRoleTryAdd.Invoke(byRoleDict, new[] { roleId, s });
+        }
+
+        InstallLazy(fullField, baseGroup, fullDictType, fullDict);
+        InstallLazy(byRoleField, baseGroup, byRoleDictType, byRoleDict);
+    }
+
+    /// <summary>
+    /// A fresh <c>LazyEx&lt;TDict&gt;</c> over an already-built dictionary, written to
+    /// <paramref name="lazyField"/>. A Func&lt;TDict&gt; built as an expression tree so the
+    /// delegate type matches the closed generic BC declares, without a compile-time reference
+    /// to LazyEx&lt;T&gt;.
+    /// </summary>
+    private static void InstallLazy(FieldInfo lazyField, object baseGroup, Type dictType, object dict)
+    {
+        var lazyType = lazyField.FieldType;
+        var funcType = typeof(Func<>).MakeGenericType(dictType);
+        var factory = Expression.Lambda(funcType, Expression.Constant(dict, dictType)).Compile();
+        var lazyCtor = lazyType.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .FirstOrDefault(c => c.GetParameters().Length == 1
+                                 && c.GetParameters()[0].ParameterType == funcType)
+            ?? throw PermissionMetadataBcShapeGap(
+                "LazyEx<T>(Func<T>)",
+                "constructor not found — BC's permission-set metadata inventory cannot be populated");
+        FieldPoke.SetInstance(lazyField, baseGroup, lazyCtor.Invoke(new object?[] { factory }));
+    }
+
+    /// <summary>
     /// Bind the three members <see cref="GetOrCreateAppOwner"/> needs. Split out of
     /// <c>EnsurePermissionMetadataReflection</c> (#4147) because the Query Metadata virtual
     /// table now sets an owning app too, and the rest of that method is permission-set
@@ -366,10 +433,22 @@ public static partial class RecordPatches
             ?? throw PermissionMetadataBcShapeGap(
                 "NavAppGroup.groupObjectMetadataSummariesByType",
                 "field not found — BC's permission-set metadata inventory cannot be populated");
-        _fPermissionSetLookup = _tNavAppGroupPM.GetField("permissionSetLookup", Inst)
-            ?? throw PermissionMetadataBcShapeGap(
-                "NavAppGroup.permissionSetLookup",
-                "field not found — BC's permission-set metadata inventory cannot be populated");
+        _fPermissionSetLookup = _tNavAppGroupPM.GetField("permissionSetLookup", Inst);
+        if (_fPermissionSetLookup == null)
+        {
+            // BC 29 replaced permissionSetLookup (role id -> summary) with permissionSetFullLookup
+            // ((role id, app id) -> summary) and permissionSetByRoleIdLookup (role id -> summary),
+            // the second derived from the first. Both or neither: a half-present pair is a shape
+            // this code does not know.
+            _fPermissionSetFullLookup = _tNavAppGroupPM.GetField("permissionSetFullLookup", Inst)
+                ?? throw PermissionMetadataBcShapeGap(
+                    "NavAppGroup.permissionSetLookup",
+                    "field not found, and neither is BC 29's permissionSetFullLookup — BC's permission-set metadata inventory cannot be populated");
+            _fPermissionSetByRoleIdLookup = _tNavAppGroupPM.GetField("permissionSetByRoleIdLookup", Inst)
+                ?? throw PermissionMetadataBcShapeGap(
+                    "NavAppGroup.permissionSetByRoleIdLookup",
+                    "field not found beside permissionSetFullLookup — BC's permission-set metadata inventory cannot be populated");
+        }
 
         _tSummary = ncl.GetType("Microsoft.Dynamics.Nav.Runtime.Apps.NavAppGroupObjectMetadataSummary")
             ?? throw PermissionMetadataBcShapeGap(
