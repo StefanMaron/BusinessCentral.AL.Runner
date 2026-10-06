@@ -40,8 +40,16 @@ public sealed class TestPageNoRowBlankTests
         r.AssertPassed("Codeunit73400.NoRow_Action_TempListInsertAndFind_ShowsTheRow");
         r.AssertPassed("Codeunit73400.NoRow_Action_TempListInsertFindUpdate_ShowsTheRow");
         r.AssertPassed("Codeunit73400.NoRow_Action_TempListInsertOnly_ShowsTheRow");
+        r.AssertPassed("Codeunit73400.NoRow_Action_TempListTwoInsertsAndFindLast_ShowsTheLastRow");
+        r.AssertPassed("Codeunit73400.NoRow_Action_StoredListInsertAndFind_ShowsTheRow");
+        r.AssertPassed("Codeunit73400.NoRow_Action_InsertOfARowTheFilterAdmits_ShowsTheRow");
         r.AssertPassed("Codeunit73400.NoRow_Action_TempListFieldsOnly_StaysBlank");
+        r.AssertPassed("Codeunit73400.NoRow_Action_TempListKeyOnlyNoInsert_StaysBlank");
         r.AssertPassed("Codeunit73400.NoRow_Action_GetOfARowTheFilterHides_StaysBlank");
+        r.AssertPassed("Codeunit73400.NoRow_TestCodeInsertAfterOpen_StaysBlankUntilTheListMoves");
+        r.AssertPassed("Codeunit73400.NoRow_TempListInsertingInOnOpenPage_ShowsARow");
+        r.AssertPassed("Codeunit73400.NoRow_Card_OpenEditOverAnEmptyTable_ReadsBlank");
+        r.AssertPassed("Codeunit73400.NoRow_Contrast_CardOpenNewOverAnEmptyTable_ReadsItsDefaults");
 
         r.AssertNoFailures();
     }

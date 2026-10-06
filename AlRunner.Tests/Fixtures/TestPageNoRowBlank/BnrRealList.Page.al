@@ -1,9 +1,8 @@
-// Fixture for codeunit 73400 "BNR Blank Part Tests" (and its probe): a list filtered to nothing whose action positions Rec on a stored row with Get.
-page 73406 "BNR Get List"
+// Fixture for codeunit 73400 "BNR Blank Part Tests" (and its probe): a list over the stored table whose action inserts and positions Rec.
+page 73407 "BNR Real List"
 {
     PageType = List;
     SourceTable = "BNR Line";
-    SourceTableView = where("Header No." = const('ZZZ'));
     ApplicationArea = All;
     UsageCategory = None;
 
@@ -24,24 +23,16 @@ page 73406 "BNR Get List"
     {
         area(Processing)
         {
-            action(GetRow)
-            {
-                ApplicationArea = All;
-                trigger OnAction()
-                begin
-                    Rec.Get('H1', 10);
-                end;
-            }
-            action(InsertMatching)
+            action(InsertFind)
             {
                 ApplicationArea = All;
                 trigger OnAction()
                 begin
                     Rec.Init();
-                    Rec."Header No." := 'ZZZ';
+                    Rec."Header No." := 'R';
                     Rec."Line No." := 1;
-                    Rec.QTxt := 'matching';
-                    Rec.QInt := 3;
+                    Rec.QTxt := 'real';
+                    Rec.QInt := 4;
                     Rec.Insert();
                     Rec.FindFirst();
                 end;

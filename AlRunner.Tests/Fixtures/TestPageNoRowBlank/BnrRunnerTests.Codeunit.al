@@ -301,6 +301,20 @@ codeunit 73400 "BNR Runner Tests"
         Assert.AreEqual('X', Card.HeaderNo.Value, 'the new row reads its key');
     end;
 
+    local procedure AssertLineCardBlankFx(var Card: TestPage "BNR Line Card")
+    begin
+        Assert.AreEqual('', Card.HeaderNo.Value, 'HeaderNo');
+        Assert.AreEqual('', Card.LineNo.Value, 'LineNo');
+        Assert.AreEqual('', Card.QInt.Value, 'QInt');
+        Assert.AreEqual('', Card.QIntInit.Value, 'QIntInit');
+        Assert.AreEqual('', Card.QBoolInit.Value, 'QBoolInit');
+        Assert.AreEqual(0, Card.QInt.AsInteger(), 'typed');
+    end;
+
+    // The actions below fill and position Rec from AL, the shape of Navigate: a list over a temporary
+    // source table that shows nothing when it opens, then an action inserts rows and positions Rec.
+    // CLAIM: once page code has put a row into the rowset and positioned Rec on it, the page shows
+    // that row, whether or not the page showed nothing before.
     [Test]
     procedure NoRow_Action_TempListInsertAndFind_ShowsTheRow()
     var
@@ -311,10 +325,13 @@ codeunit 73400 "BNR Runner Tests"
         Assert.AreEqual('', Card.QInt.Value, 'no row before the action');
         Card.InsertFind.Invoke();
         Assert.AreEqual('T', Card.HeaderNo.Value, 'the row the action inserted is shown');
-        Assert.AreEqual('7', Card.QInt.Value, 'its value');
+        Assert.AreEqual('1', Card.LineNo.Value, 'its line');
+        Assert.AreEqual('found', Card.QTxt.Value, 'its text');
+        Assert.AreEqual('7', Card.QInt.Value, 'its integer');
         Assert.AreEqual(7, Card.QInt.AsInteger(), 'and its typed read');
     end;
 
+    // CLAIM: the same when the action also calls CurrPage.Update.
     [Test]
     procedure NoRow_Action_TempListInsertFindUpdate_ShowsTheRow()
     var
@@ -324,8 +341,10 @@ codeunit 73400 "BNR Runner Tests"
         Card.OpenView();
         Card.InsertFindUpdate.Invoke();
         Assert.AreEqual('7', Card.QInt.Value, 'the row is shown after CurrPage.Update');
+        Assert.AreEqual('found', Card.QTxt.Value, 'its text');
     end;
 
+    // CLAIM: an Insert alone leaves Rec on the inserted row, and the page shows it.
     [Test]
     procedure NoRow_Action_TempListInsertOnly_ShowsTheRow()
     var
@@ -337,6 +356,51 @@ codeunit 73400 "BNR Runner Tests"
         Assert.AreEqual('7', Card.QInt.Value, 'the inserted row is shown');
     end;
 
+    // CLAIM: two inserts and a FindLast: the page shows the row Rec stands on, and First() shows the other.
+    [Test]
+    procedure NoRow_Action_TempListTwoInsertsAndFindLast_ShowsTheLastRow()
+    var
+        Card: TestPage "BNR Temp List";
+    begin
+        Initialize();
+        Card.OpenView();
+        Card.InsertTwoFindLast.Invoke();
+        Assert.AreEqual('2', Card.QInt.Value, 'Rec stands on the second row');
+        Card.First();
+        Assert.AreEqual('1', Card.QInt.Value, 'First() shows the first row');
+    end;
+
+    // CLAIM: the same on a list over the stored table.
+    [Test]
+    procedure NoRow_Action_StoredListInsertAndFind_ShowsTheRow()
+    var
+        Card: TestPage "BNR Real List";
+        Line: Record "BNR Line";
+    begin
+        Initialize();
+        Line.DeleteAll();
+        Card.OpenView();
+        Assert.AreEqual('', Card.QInt.Value, 'no row before the action');
+        Card.InsertFind.Invoke();
+        Assert.AreEqual('4', Card.QInt.Value, 'the inserted row is shown');
+        Assert.AreEqual('R', Card.HeaderNo.Value, 'its key');
+    end;
+
+    // CLAIM: an insert of a row the page's filter lets through, positioned on, is shown.
+    [Test]
+    procedure NoRow_Action_InsertOfARowTheFilterAdmits_ShowsTheRow()
+    var
+        Card: TestPage "BNR Get List";
+    begin
+        Initialize();
+        Card.OpenView();
+        Assert.AreEqual('', Card.QInt.Value, 'no row before the action');
+        Card.InsertMatching.Invoke();
+        Assert.AreEqual('3', Card.QInt.Value, 'the inserted row is shown');
+        Assert.AreEqual('ZZZ', Card.HeaderNo.Value, 'its key');
+    end;
+
+    // CONTRAST: page code that changes only the buffer, with no row in the rowset, shows nothing.
     [Test]
     procedure NoRow_Action_TempListFieldsOnly_StaysBlank()
     var
@@ -345,11 +409,25 @@ codeunit 73400 "BNR Runner Tests"
         Initialize();
         Card.OpenView();
         Card.FieldsOnly.Invoke();
-        Assert.AreEqual('', Card.QInt.Value, 'a buffer change that put no row into the rowset shows nothing');
-        Assert.AreEqual('', Card.QTxt.Value, 'text');
+        Assert.AreEqual('', Card.QInt.Value, 'QInt');
+        Assert.AreEqual('', Card.QTxt.Value, 'QTxt');
         Assert.AreEqual(0, Card.QInt.AsInteger(), 'typed');
     end;
 
+    // CONTRAST: and so does a key set on Rec that was never inserted.
+    [Test]
+    procedure NoRow_Action_TempListKeyOnlyNoInsert_StaysBlank()
+    var
+        Card: TestPage "BNR Temp List";
+    begin
+        Initialize();
+        Card.OpenView();
+        Card.KeyOnly.Invoke();
+        Assert.AreEqual('', Card.HeaderNo.Value, 'the key');
+        Assert.AreEqual('', Card.QInt.Value, 'QInt');
+    end;
+
+    // CONTRAST: Get of a stored row the page's filter hides leaves the page showing nothing.
     [Test]
     procedure NoRow_Action_GetOfARowTheFilterHides_StaysBlank()
     var
@@ -360,6 +438,68 @@ codeunit 73400 "BNR Runner Tests"
         Card.OpenView();
         Card.GetRow.Invoke();
         Assert.AreEqual('', Card.QInt.Value, 'Rec is on a stored row the page filters out');
-        Assert.AreEqual('', Card.QTxt.Value, 'text');
+        Assert.AreEqual('', Card.QTxt.Value, 'its text');
+    end;
+
+    // CONTRAST: a row that test code inserts after the page opened is not shown before the list moves.
+    [Test]
+    procedure NoRow_TestCodeInsertAfterOpen_StaysBlankUntilTheListMoves()
+    var
+        Card: TestPage "BNR Real List";
+        Line: Record "BNR Line";
+    begin
+        Initialize();
+        Line.DeleteAll();
+        Card.OpenView();
+        Line.Init();
+        Line."Header No." := 'R';
+        Line."Line No." := 9;
+        Line.QTxt := 'late';
+        Line.QInt := 6;
+        Line.Insert();
+        Assert.AreEqual('', Card.QInt.Value, 'the page has not seen the new row');
+        Assert.AreEqual('', Card.QTxt.Value, 'its text');
+    end;
+
+    // CLAIM: rows a temporary-source page inserts in its own OnOpenPage are shown, not blank.
+    [Test]
+    procedure NoRow_TempListInsertingInOnOpenPage_ShowsARow()
+    var
+        Card: TestPage "BNR Temp Open List";
+    begin
+        Initialize();
+        Card.OpenView();
+        Assert.AreEqual('T', Card.HeaderNo.Value, 'a row the page inserted is shown');
+        Assert.AreNotEqual('', Card.QInt.Value, 'its integer is not blank');
+    end;
+
+    // CLAIM: a card over an empty table opened for editing reads blank (a card has no draft line) ...
+    [Test]
+    procedure NoRow_Card_OpenEditOverAnEmptyTable_ReadsBlank()
+    var
+        Card: TestPage "BNR Line Card";
+        Line: Record "BNR Line";
+    begin
+        Initialize();
+        Line.DeleteAll();
+        Card.OpenEdit();
+        AssertLineCardBlankFx(Card);
+    end;
+
+    // ... and one opened with OpenNew reads the defaults of the new record.
+    [Test]
+    procedure NoRow_Contrast_CardOpenNewOverAnEmptyTable_ReadsItsDefaults()
+    var
+        Card: TestPage "BNR Line Card";
+        Line: Record "BNR Line";
+    begin
+        Initialize();
+        Line.DeleteAll();
+        Card.OpenNew();
+        Assert.AreEqual('', Card.HeaderNo.Value, 'the key is blank');
+        Assert.AreEqual('0', Card.LineNo.Value, 'the integer key reads its default');
+        Assert.AreEqual('0', Card.QInt.Value, 'QInt reads its default');
+        Assert.AreEqual('5', Card.QIntInit.Value, 'QIntInit reads its InitValue');
+        Assert.AreEqual(0, Card.QInt.AsInteger(), 'typed');
     end;
 }

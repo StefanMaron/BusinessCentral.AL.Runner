@@ -231,8 +231,15 @@ internal partial class LiveNavTestPage
     /// whether the page's rowset has rows.</para>
     /// </summary>
     internal bool NoRowShown
-        => _noRowShown && !_onNewRowLine && _record != null && _noRowBuffer != null
+        => _noRowShown && !DraftLineIsARow && _record != null && _noRowBuffer != null
            && (TestPageWriteBuffer.IsUnchangedSince(_record, _noRowBuffer) || !RowsetHasRows(_record));
+
+    // The draft line is a row only where the page has a repeater to put it in. A top-level Card over
+    // an empty table opened with OpenEdit reads blank on BC (corpus 69947, cloud legs and Windows),
+    // where the same list reads the line's defaults; the line still takes a write here either way.
+    // Parts stay as they were: a part's draft line is measured for ListPart only.
+    private bool DraftLineIsARow
+        => _onNewRowLine && (this is LiveNavTestPart || _page?.WritesRowsAsTheyAreCompleted != false);
 
     private static bool RowsetHasRows(NavRecord record)
     {

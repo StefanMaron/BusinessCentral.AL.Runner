@@ -76,6 +76,38 @@ page 73404 "BNR Temp List"
                     Rec.QInt := 9;
                 end;
             }
+            action(KeyOnly)
+            {
+                ApplicationArea = All;
+                trigger OnAction()
+                begin
+                    Rec.Init();
+                    Rec."Header No." := 'K';
+                    Rec."Line No." := 5;
+                    Rec.QTxt := 'keyonly';
+                    Rec.QInt := 5;
+                end;
+            }
+            action(InsertTwoFindLast)
+            {
+                ApplicationArea = All;
+                trigger OnAction()
+                begin
+                    Rec.Init();
+                    Rec."Header No." := 'T';
+                    Rec."Line No." := 1;
+                    Rec.QTxt := 'first';
+                    Rec.QInt := 1;
+                    Rec.Insert();
+                    Rec.Init();
+                    Rec."Header No." := 'T';
+                    Rec."Line No." := 2;
+                    Rec.QTxt := 'second';
+                    Rec.QInt := 2;
+                    Rec.Insert();
+                    Rec.FindLast();
+                end;
+            }
         }
     }
 }
