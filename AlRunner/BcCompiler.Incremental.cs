@@ -199,6 +199,9 @@ internal sealed class RadBaseline
     // source size only (not test count) — unlike per-test coverage sets, this does not
     // grow with the suite.
     public required Dictionary<string, string> FileContentByPath;
+    // #5087: every non-.al input the compile read (CompileFileReads keys) and its fingerprint at the
+    // same cycle FileHashByPath was taken. Empty when the compile had no file system.
+    public required Dictionary<string, string> CompileInputs;
     public required Dictionary<string, RadObjectIdentity> ObjectByPath;
     public required Dictionary<string, EmittedSource> SourceByKey;
     public required BcEmitOutput LastOutput;
@@ -731,6 +734,12 @@ public sealed partial class BcCompiler
         foreach (var oldPath in baseline.FileHashByPath.Keys)
             if (!currentHashes.ContainsKey(oldPath)) removedPaths.Add(oldPath);
 
+        if (!FoldCompileInputChanges(baseline, appRootDir, alFiles, addedPaths, removedPaths, modifiedPaths, out var inputReason))
+        {
+            fallbackReason = inputReason;
+            return null;
+        }
+
         if (addedPaths.Count == 0 && removedPaths.Count == 0 && modifiedPaths.Count == 0)
         {
             // Every file hashes identical to the last cycle — including a touch-with-identical-
@@ -945,7 +954,8 @@ public sealed partial class BcCompiler
         // #2151: same file-relative LayoutFile override Emit() applies — scanned against the
         // FULL alFiles list (not just this cycle's changedTrees) so an incremental cycle
         // resolves identically to a from-scratch Emit() of the same bundle.
-        var radFileSystem = ReportLayoutFileSystem.Build(alFiles, appRootDir);
+        var radReads = appRootDir != null ? new CompileFileReads() : null;
+        var radFileSystem = ReportLayoutFileSystem.Build(alFiles, appRootDir, radReads);
         if (radFileSystem != null)
             radComp = radComp.WithFileSystem(radFileSystem);
         radComp = radComp.WithDotNetResolverFactory(GetOrCreateDotNetFactory());
@@ -1117,6 +1127,10 @@ public sealed partial class BcCompiler
             ModuleDef = mergedModuleDef,
             FileHashByPath = newFileHashByPath,
             FileContentByPath = newFileContentByPath,
+            // The delta only re-read what it recompiled; everything the baseline knew stays an input.
+            CompileInputs = radReads == null || appRootDir == null
+                ? new Dictionary<string, string>(baseline.CompileInputs, StringComparer.Ordinal)
+                : CompileFileReads.Fingerprint(appRootDir, baseline.CompileInputs.Keys.Union(radReads.Keys, StringComparer.Ordinal)),
             ObjectByPath = newObjectByPath,
             SourceByKey = newSourceByKey,
             LastOutput = output,
@@ -1161,7 +1175,8 @@ public sealed partial class BcCompiler
             ? new AlRunner.Infrastructure.AffectedModuleSnapshot(
                 b.ManifestFingerprint, b.SharedRefsFingerprint,
                 new Dictionary<string, string>(b.FileHashByPath, StringComparer.Ordinal),
-                b.ObjectByPath.ToDictionary(kv => kv.Key, kv => ToAffectedObjectId(kv.Value), StringComparer.Ordinal))
+                b.ObjectByPath.ToDictionary(kv => kv.Key, kv => ToAffectedObjectId(kv.Value), StringComparer.Ordinal),
+                new Dictionary<string, string>(b.CompileInputs, StringComparer.Ordinal))
             : null;
 
     internal IReadOnlyDictionary<string, AffectedObjectId>? TryGetTrackedObjectsByPath(string moduleName)
@@ -1228,6 +1243,9 @@ public sealed partial class BcCompiler
         }
         foreach (var oldPath in baseline.FileHashByPath.Keys)
             if (!currentHashes.ContainsKey(oldPath)) removedPaths.Add(oldPath);
+
+        if (!FoldCompileInputChanges(baseline, appRootDir, alFiles, addedPaths, removedPaths, modifiedPaths, out _))
+            return null; // a read input changed and no `.al` file names it: only the real compile can adjudicate
 
         if (addedPaths.Count == 0 && removedPaths.Count == 0 && modifiedPaths.Count == 0)
             return Array.Empty<AffectedObjectId>();
@@ -1334,6 +1352,9 @@ public sealed partial class BcCompiler
         }
         foreach (var oldPath in baseline.FileHashByPath.Keys)
             if (!currentHashes.ContainsKey(oldPath)) removedPaths.Add(oldPath);
+
+        if (!FoldCompileInputChanges(baseline, appRootDir, alFiles, addedPaths, removedPaths, modifiedPaths, out _))
+            return null;
 
         if (addedPaths.Count == 0 && removedPaths.Count == 0 && modifiedPaths.Count == 0)
             return Array.Empty<AffectedScopeId>();
@@ -1485,6 +1506,7 @@ public sealed partial class BcCompiler
     /// so it passes null.</item>
     /// </list>
     /// </summary>
+    /// <param name="compileReads">What this compile read through its file system (#5087), or null when it had none.</param>
     /// <param name="bundleQuerySymbolsPath">The SymbolReference.json THIS module's compile just
     /// wrote for its own queries, or null when it wrote none. Never
     /// <see cref="LastBundleQuerySymbolsPath"/> read at the callee — see
@@ -1493,7 +1515,7 @@ public sealed partial class BcCompiler
         string moduleName, NavCA.Compilation compilation, IReadOnlyList<string> alFiles,
         IReadOnlyList<EmittedSource> captured, NavCA.SymbolReferenceSpecification[] specs,
         ManifestCompilerInputs manifestInputs, string? manifestAppJsonPath, Guid appId, string publisher, Version version,
-        string? appRootDir, BcEmitOutput fullOutput, string? bundleQuerySymbolsPath)
+        string? appRootDir, BcEmitOutput fullOutput, string? bundleQuerySymbolsPath, CompileFileReads? compileReads)
     {
         var declared = compilation.GetDeclaredApplicationObjectSymbols();
         var byName = new Dictionary<string, List<(NavCA.SymbolKind Kind, int? Id, string? Path)>>(StringComparer.Ordinal);
@@ -1607,6 +1629,9 @@ public sealed partial class BcCompiler
             ModuleDef = moduleDef,
             FileHashByPath = fileHashByPath,
             FileContentByPath = fileContentByPath,
+            CompileInputs = compileReads == null || appRootDir == null
+                ? new Dictionary<string, string>(StringComparer.Ordinal)
+                : CompileFileReads.Fingerprint(appRootDir, compileReads.Keys),
             ObjectByPath = objectByPath,
             SourceByKey = sourceByKey,
             LastOutput = fullOutput,

@@ -228,13 +228,16 @@ internal sealed class ReportLayoutFileSystem : NavCA.IFileSystem
     /// have skipped WithFileSystem entirely, so every call site keeps its existing null-check
     /// shape unchanged.
     /// </summary>
-    internal static NavCA.IFileSystem? Build(IReadOnlyList<string> alFiles, string? appRootDir)
+    internal static NavCA.IFileSystem? Build(
+        IReadOnlyList<string> alFiles, string? appRootDir, CompileFileReads? reads = null)
     {
         if (appRootDir == null || !Directory.Exists(appRootDir)) return null;
         var inner = new NavCA.RelativeFileSystem(appRootDir);
         var overrides = BuildLayoutFileOverrides(alFiles, appRootDir);
-        return overrides == null || overrides.Count == 0
+        NavCA.IFileSystem fs = overrides == null || overrides.Count == 0
             ? inner
             : new ReportLayoutFileSystem(inner, overrides);
+        // #5087: the reads the compile makes through this file system are inputs the change model hashes.
+        return reads == null ? fs : reads.Wrap(fs);
     }
 }

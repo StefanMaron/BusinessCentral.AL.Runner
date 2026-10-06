@@ -1945,7 +1945,8 @@ public sealed partial class BcCompiler
         // root — see ReportLayoutFileSystem's header for the full investigation. Compute the
         // file system ONCE here so every retry compile below (--tdd generation, EMIT-EXCLUDED
         // retry) reuses the identical override table instead of re-scanning alFiles each time.
-        var compileFileSystem = ReportLayoutFileSystem.Build(alFiles, appRootDir);
+        var compileReads = appRootDir != null ? new CompileFileReads() : null;
+        var compileFileSystem = ReportLayoutFileSystem.Build(alFiles, appRootDir, compileReads);
         if (compileFileSystem != null)
             compilation = compilation.WithFileSystem(compileFileSystem);
 
@@ -2532,7 +2533,7 @@ public sealed partial class BcCompiler
                 RecordIncrementalBaseline(
                     moduleName, compilation, alFiles, outputter.Captured, specs,
                     manifestInputs, manifestAppJsonPath, appId, _currentPublisher ?? "AlRunner", _currentVersion ?? new Version(1, 0, 0, 0),
-                    appRootDir, emitOutput, bundleQuerySymbolsPath);
+                    appRootDir, emitOutput, bundleQuerySymbolsPath, compileReads);
             }
             catch (Exception ex)
             {
@@ -2835,7 +2836,8 @@ public sealed partial class BcCompiler
         // #2151: same file-relative LayoutFile override as Emit's compileFileSystem — a
         // source-dependency report can live in a subdirectory too.
         var effectiveAppRoot = appRootDir ?? (foundAppJson != null ? Path.GetDirectoryName(foundAppJson) : null);
-        var depCompileFileSystem = ReportLayoutFileSystem.Build(alFiles, effectiveAppRoot);
+        var depCompileReads = effectiveAppRoot != null ? new CompileFileReads() : null;
+        var depCompileFileSystem = ReportLayoutFileSystem.Build(alFiles, effectiveAppRoot, depCompileReads);
         if (depCompileFileSystem != null)
             compilation = compilation.WithFileSystem(depCompileFileSystem);
 
@@ -2907,7 +2909,7 @@ public sealed partial class BcCompiler
                 // rather than reading LastBundleQuerySymbolsPath, which here would name whatever
                 // module the last Emit ANYWHERE in this process compiled. See
                 // CaptureRadMetadataSnapshotFull and RadQuerySymbolsSnapshotModuleScopeTests.
-                bundleQuerySymbolsPath: null);
+                bundleQuerySymbolsPath: null, compileReads: depCompileReads);
         }
     }
 
