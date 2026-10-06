@@ -1108,6 +1108,39 @@ An `Interface` is one of them: adding or removing an `extends` changes what `is`
 list decides what a dependency's changed object does under "affectedOnly across
 environments", where an unkeyed kind makes the diff approximate instead.
 
+#### affectedOnly and files the compile reads
+
+The change model hashes every `.al` file, and since #5087 every other file BC's
+compiler read through its file system when it compiled the bundle: a report's
+layout file (`LayoutFile`, `RDLCLayout`, `WordLayout`, `ExcelLayout`), a ControlAddIn's
+`Scripts`, `StartupScript`, `StyleSheets` and `Images`, and the `Translations` folder
+(`*.xlf`, `*.xliff`, `*.lcl`). The list is not kept anywhere: the compile's file
+system records what it is asked for (`CompileFileReads`), each file by content hash
+(or as missing, so a layout that appears later is a change) and each listing by its
+names. An edit to a file the compile does not read, such as a `.md` or `.txt` in the
+bundle, is still a zero-work replay.
+
+A changed input is a change to the object that names it: the `.al` files whose quoted
+text resolves to it, against the app root or against their own directory, are treated
+as edited, so the report (or ControlAddIn) is a changed object and is recompiled. A
+layout deleted while its report still names it fails the compile (`AL1081`) as a cold
+run does, instead of replaying last cycle's output. When no `.al` file names a changed
+input (a Translations file, a listing, a directory), which object it belongs to cannot
+be read from the change set, so the cycle falls back to a full compile and the run is
+forced full with a `reason` naming the file.
+
+A `ControlAddIn` is a kind no test records, so its changed resource forces a full run
+(see "affectedOnly and object kinds no test records"); a changed `Report` selects the
+tests that built it. Across server processes the store keeps the fingerprints
+(schema 8; a schema-7 file is no baseline) and a changed one forces a full run naming
+the file, since the store does not keep which object names it.
+
+Two tests pin the population: every member of BC's `IFileSystem` is a recorded read or
+is named as not one, and every `WithFileSystem` in the runner gets the recording file
+system from `ReportLayoutFileSystem.Build`
+(`AlRunner.Tests/CompileInputPopulationTests.cs`). The AL-output cache key (which
+decides a warm start) still hashes only `.al` and `app.json`; see #5368.
+
 #### affectedOnly and packaged dependencies
 
 A common layout is `App/` (source), `App.Test/` (source) and
@@ -1193,8 +1226,9 @@ holds no coverage for loads it.
   (plus a `<bundle>` entry for records held outside any one test), the
   subscriber bindings and event observability, the environment key), and per request
   module, the change model's baseline at the moment the coverage was recorded: the
-  SHA-256 of every `.al` file, the one object each file declares, and the fingerprints
-  of `app.json`/preprocessor symbols and of the resolved dependency set. Since
+  SHA-256 of every `.al` file, the one object each file declares, the fingerprints
+  of `app.json`/preprocessor symbols and of the resolved dependency set, and (schema 8)
+  the files the compile read (see "affectedOnly and files the compile reads"). Since
   schema 5, also each bundle's environment: per resolved package, its content hash
   and a hash per object, each package stored once however many bundles resolved it
   and per test the environment its record was taken in (see the next section). Statement tables are not stored. Object and scope keys are

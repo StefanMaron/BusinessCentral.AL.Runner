@@ -13,7 +13,9 @@ internal sealed record AffectedModuleSnapshot(
     string ManifestFingerprint,
     string SharedRefsFingerprint,
     Dictionary<string, string> FileHashByPath,
-    Dictionary<string, AffectedObjectId> ObjectByPath);
+    Dictionary<string, AffectedObjectId> ObjectByPath,
+    // #5087: the non-.al files the compile read, and their fingerprints (BcCompiler's CompileInputs).
+    Dictionary<string, string>? CompileInputs = null);
 
 /// <summary>One bundle's selection baseline, the same fields the server keeps in memory.</summary>
 internal sealed record AffectedBundleBaseline(
@@ -44,8 +46,10 @@ internal static class AffectedBaselineStore
     //    AffectedSessionStateSelection.WithPreviousState and widen every later selection for good.)
     // 7: #5167's quoted event names key on the AL name ("ev|…|On Quoted Work"), where a version-6
     //    file holds the C# name ("On_Quoted_Work"); read, it would skip that event's raisers for good.
-    internal const int SchemaVersion = 7;
-    internal const int OldestReadableSchema = 7;
+    // 8: #5087's compile inputs ("Inputs") in each module. A version-7 file never recorded them, so it
+    //    cannot say a layout file or a control add-in resource is unchanged: it is no baseline.
+    internal const int SchemaVersion = 8;
+    internal const int OldestReadableSchema = 8;
     internal const string CacheName = "affected-baseline";
 
     /// <summary>The file for one request's bundle set. Order and duplicates do not change the key.</summary>
@@ -120,6 +124,18 @@ internal static class AffectedBaselineStore
                 && !string.Equals(before.SharedRefsFingerprint, now.SharedRefsFingerprint, StringComparison.Ordinal))
                 return new(changed, $"the resolved dependency set of {module} changed");
 
+            // Which object a changed layout file or resource belongs to is not stored, so a change in
+            // one runs everything; the in-process change model attributes it (BcCompiler.CompileInputs).
+            var inputsBefore = before.CompileInputs ?? new Dictionary<string, string>();
+            var inputsNow = now.CompileInputs ?? new Dictionary<string, string>();
+            foreach (var input in inputsBefore.Keys.Union(inputsNow.Keys, StringComparer.Ordinal).OrderBy(k => k, StringComparer.Ordinal))
+            {
+                inputsBefore.TryGetValue(input, out var was);
+                inputsNow.TryGetValue(input, out var is_);
+                if (!string.Equals(was, is_, StringComparison.Ordinal))
+                    return new(changed, $"a file the compile of {module} reads changed ({input})");
+            }
+
             foreach (var path in before.FileHashByPath.Keys.Union(now.FileHashByPath.Keys, StringComparer.Ordinal))
             {
                 var hadFile = before.FileHashByPath.TryGetValue(path, out var oldHash);
@@ -174,6 +190,7 @@ internal static class AffectedBaselineStore
         public string Manifest { get; set; } = "";
         public string Refs { get; set; } = "";
         public Dictionary<string, string> Files { get; set; } = new();
+        public Dictionary<string, string>? Inputs { get; set; }
         public Dictionary<string, ObjectDto> Objects { get; set; } = new();
     }
 
@@ -241,6 +258,7 @@ internal static class AffectedBaselineStore
                 Manifest = m.ManifestFingerprint,
                 Refs = m.SharedRefsFingerprint,
                 Files = new Dictionary<string, string>(m.FileHashByPath, StringComparer.Ordinal),
+                Inputs = new Dictionary<string, string>(m.CompileInputs ?? new(), StringComparer.Ordinal),
                 Objects = m.ObjectByPath.ToDictionary(
                     kv => kv.Key, kv => new ObjectDto { Kind = kv.Value.Kind, Id = kv.Value.Id, Name = kv.Value.Name },
                     StringComparer.Ordinal),
@@ -314,7 +332,8 @@ internal static class AffectedBaselineStore
                     kv => kv.Key,
                     kv => new AffectedObjectId(
                         Required(Required(kv.Value, "an object").Kind, "an object kind"), kv.Value.Id, kv.Value.Name ?? ""),
-                    StringComparer.Ordinal));
+                    StringComparer.Ordinal),
+                new Dictionary<string, string>(Required(m.Inputs, "a compile input table"), StringComparer.Ordinal));
         }
 
         var bundles = new Dictionary<string, AffectedBundleBaseline>(StringComparer.Ordinal);

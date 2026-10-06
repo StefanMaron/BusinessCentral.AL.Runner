@@ -152,6 +152,41 @@ public class AffectedBaselineStoreTests
         Assert.Contains("schema version 6", schema6.Unusable);
     }
 
+    /// <summary>A version-7 file never recorded the files the compile reads (#5087), so it cannot say a
+    /// layout file is unchanged: it must read as no baseline, forcing a full run.</summary>
+    [Fact]
+    public void SchemaSevenFile_WithoutCompileInputs_IsNoBaseline()
+    {
+        var dir = TestScratch.Dir("al-runner-affected-store-schema7");
+        var path = Path.Combine(dir, "s.json");
+        AffectedBaselineStore.Write(path, Sample());
+        Assert.NotNull(AffectedBaselineStore.Load(path).Baseline);
+
+        var current = AffectedBaselineStore.SchemaVersion;
+        File.WriteAllText(path, File.ReadAllText(path).Replace($"\"Schema\":{current},", "\"Schema\":7,", StringComparison.Ordinal));
+        var schema7 = AffectedBaselineStore.Load(path);
+        Assert.Null(schema7.Baseline);
+        Assert.Contains("schema version 7", schema7.Unusable);
+    }
+
+    /// <summary>A changed compile input forces a full run naming the file; an unchanged one does not (#5087).</summary>
+    [Fact]
+    public void ChangedSince_AChangedCompileInput_ForcesAFullRunNamingIt_AnUnchangedOneDoesNot()
+    {
+        AffectedModuleSnapshot Snapshot(string layoutHash) => new("m", "r",
+            new() { ["/b/R.al"] = "R1" }, new() { ["/b/R.al"] = new("Report", 1, "R") },
+            new() { ["file:/b/Layouts/R.rdlc"] = layoutHash });
+
+        var same = AffectedBaselineStore.ChangedSince(
+            new Dictionary<string, AffectedModuleSnapshot> { ["m"] = Snapshot("A") }, new[] { "m" }, _ => Snapshot("A"));
+        Assert.Null(same.ForceFullReason);
+        Assert.Empty(same.Changed);
+
+        var changed = AffectedBaselineStore.ChangedSince(
+            new Dictionary<string, AffectedModuleSnapshot> { ["m"] = Snapshot("A") }, new[] { "m" }, _ => Snapshot("B"));
+        Assert.Contains("reads changed (file:/b/Layouts/R.rdlc)", changed.ForceFullReason, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void PathFor_IgnoresOrderAndDuplicates_AndSeparatesBundleSets()
     {
