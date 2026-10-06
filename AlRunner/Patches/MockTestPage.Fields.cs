@@ -78,7 +78,7 @@ internal sealed class LiveNavTestField : ITestField
         // An option field answers with its MEMBER NAME, not the ordinal it stores. Returning the
         // ordinal made every comparison against a member name fail while looking like a data
         // problem ("expected <Mid>, got <0>") rather than a missing option table.
-        get => NoRowShown?.Invoke() == true ? string.Empty
+        get => ShowsNoRow ? string.Empty
                : (CurrentOption() is { } option
                    ? TestPageOptionValue.Display(option, OptionCaptions())
                    : null)
@@ -281,7 +281,7 @@ internal sealed class LiveNavTestField : ITestField
     public int ValidationErrorCount => _validationErrors.Count;
     public long LastUsedValidationErrorId => _validationErrors.LastUsedId;
     public long MaxValidationErrorId => _validationErrors.MaxId;
-    public object? ObjectValue => NoRowShown?.Invoke() == true ? null : LiveNavTestPage.Unwrap(_record.GetFieldValue(_fieldNo));
+    public object? ObjectValue => ShowsNoRow ? null : LiveNavTestPage.Unwrap(_record.GetFieldValue(_fieldNo));
     public int OptionCount => CurrentOption() is { } option ? TestPageOptionValue.Count(option) : 0;
 
     // The control's declared state, not a constant. `Editable = false` / `Editable = SomeVar`
@@ -299,6 +299,10 @@ internal sealed class LiveNavTestField : ITestField
     // True while the page behind the control shows no row: nothing is current, so the control
     // reads blank rather than the blank buffer's value (#5358).
     internal Func<bool>? NoRowShown { get; init; }
+
+    // One decision for both readers: BC's typed accessors (AsInteger, AsDate, ...) read ObjectValue,
+    // which is null while no row is shown, and Value is blank for the same reason (corpus 69940).
+    private bool ShowsNoRow => NoRowShown?.Invoke() == true;
     public bool HideValue => false;
     public bool ShowMandatory => false;
 
