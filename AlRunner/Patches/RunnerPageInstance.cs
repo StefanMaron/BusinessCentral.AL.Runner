@@ -237,6 +237,10 @@ internal sealed partial class RunnerPageInstance
         foreach (System.Collections.DictionaryEntry entry in expressions)
         {
             if (entry.Key is not string name || entry.Value == null) continue;
+            // Not this snapshot's: a row expression is evaluated by EvaluateRowExpressions, per
+            // row and where BC does, and its failure must reach the test rather than be absorbed
+            // below (#4920). Nothing reads these keys back from the snapshot.
+            if (IsRowExpressionKey(name)) continue;
             try
             {
                 snapshot[name] = GetValue(entry.Value)?.ClientObject;
@@ -2059,6 +2063,41 @@ internal sealed partial class RunnerPageInstance
 
     /// <summary>BC's key convention for a control's FORMAT source expression.</summary>
     internal static string FormatExpressionKey(int controlId) => "Control" + controlId + "_Format";
+
+    /// <summary>A control's AutoFormatExpression or CaptionClass source expression, by BC's own key
+    /// shape (<see cref="FormatExpressionKey"/>, <see cref="DynamicCaptionExpressionKey"/>).</summary>
+    internal static bool IsRowExpressionKey(string key)
+    {
+        const string prefix = "Control";
+        if (!key.StartsWith(prefix, StringComparison.Ordinal)) return false;
+        var i = prefix.Length;
+        while (i < key.Length && char.IsAsciiDigit(key[i])) i++;
+        if (i == prefix.Length) return false;
+        var suffix = key.AsSpan(i);
+        return suffix.SequenceEqual("_Format") || suffix.SequenceEqual("_DynamicCaption");
+    }
+
+    /// <summary>
+    /// Evaluate every control's AutoFormatExpression and CaptionClass expression for the row the
+    /// page is on, so an error one of them raises reaches the caller.
+    ///
+    /// Claim: BC evaluates them when a row is populated, before the page's OnAfterGetRecord, and
+    /// for hidden controls and an empty view as well; an AL error there fails the page open or the
+    /// move onto that row. Corpus codeunit "AFT Expression Timing Tests" (autoformat/, #4920). The
+    /// values are discarded: a read still evaluates its own control's expression, as before.
+    ///
+    /// Trap: only the errors are modelled. Every row a list loads is evaluated by BC, the runner
+    /// evaluates the current row only (#5376).
+    /// </summary>
+    internal void EvaluateRowExpressions()
+    {
+        // Copied first: the expression is page AL, free to register further bindings.
+        var expressions = new List<object>();
+        foreach (System.Collections.DictionaryEntry entry in _sourceExpressions)
+            if (entry.Key is string key && entry.Value != null && IsRowExpressionKey(key))
+                expressions.Add(entry.Value);
+        foreach (var expression in expressions) GetValue(expression);
+    }
 
     /// <summary>
     /// The .NET format string this control renders its value with, or null when the page

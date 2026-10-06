@@ -59,6 +59,48 @@ internal partial class LiveNavTestPage
     // scope).
     private bool _suppressTeardownOnLoad;
 
+    // Whether the row the page stands on has had its control expressions evaluated: set by Loaded,
+    // cleared by MarkOpened. What it is for is the open that never reaches Loaded, because there
+    // is no row (an empty view, a new record) or the caller positioned one. See RaiseRowExpressions.
+    private bool _rowExpressionsRaised;
+
+    /// <summary>
+    /// A row became the current row (or, on an open that loaded none, the page opened): evaluate
+    /// the controls' AutoFormatExpression and CaptionClass expressions, as BC does when it
+    /// populates a row, BEFORE the page's OnAfterGetRecord. An AL error there fails the open
+    /// with its own text, and tears the page down; on a later move the error reads as BC's
+    /// "The TestPage is not open." exactly like an OnAfterGetRecord error (#2656). Measured on
+    /// every cloud leg, corpus codeunit "AFT Expression Timing Tests" (autoformat/, #4920).
+    ///
+    /// Trap: a subpage part is left out, because no corpus test measures what BC does when a
+    /// part's expression raises (#5376).
+    /// </summary>
+    private void RaiseRowExpressions(bool duringOpen)
+    {
+        _rowExpressionsRaised = true;
+        if (this is LiveNavTestPart) return;
+        try
+        {
+            _page?.EvaluateRowExpressions();
+        }
+        // NavBaseException only, for the reason Loaded gives: an out-of-scope refusal or a runner
+        // fault must not be relabelled as a BC error.
+        catch (NavBaseException ex)
+        {
+            _tornDown = true;
+            if (duringOpen) throw;
+            throw MakeTestPageNotOpenException(ex);
+        }
+    }
+
+    /// <summary>The end of an open: evaluate the expressions of the row the open left the page
+    /// on when no row load did, which is what an empty view, a new record and a caller-positioned
+    /// row are. Skipped once <see cref="Loaded"/> has.</summary>
+    internal void RaiseRowExpressionsAtOpen()
+    {
+        if (!_rowExpressionsRaised) RaiseRowExpressions(duringOpen: true);
+    }
+
     /// <summary>
     /// The page-construction-time initial positioning call -- see _suppressTeardownOnLoad.
     /// </summary>
@@ -159,6 +201,7 @@ internal partial class LiveNavTestPage
     {
         _opened = true;
         _detached = false;
+        _rowExpressionsRaised = false;
         _staticEditableOverride = viewMode != Microsoft.Dynamics.Nav.Types.Metadata.ViewMode.View
                                   && (_page?.PageEditable ?? true);
     }

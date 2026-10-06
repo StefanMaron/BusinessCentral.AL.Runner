@@ -118,6 +118,9 @@ public static class RunnerTestPageState
                 // already positioned on a specific row must not be silently reset to the
                 // table's own first row.
                 live.MoveFirstDuringOpen();
+            // A page that opened with no row load (an empty view, a new record, a caller-positioned
+            // row) still has its control expressions evaluated at open (#4920).
+            live.RaiseRowExpressionsAtOpen();
             // BC's TestPageProxy activates the initial control once the page is open (#4062).
             live.FocusInitialControl();
         }

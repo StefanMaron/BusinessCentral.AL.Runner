@@ -124,6 +124,9 @@ public sealed class RunnerTestClientSession : ITestClientSession
             }
         }
 
+        // The open that loaded no row (an empty view, a new record) evaluates the controls'
+        // expressions all the same, and an error there fails the RunModal (#4920).
+        live.RaiseRowExpressionsAtOpen();
         return live;
     }
 

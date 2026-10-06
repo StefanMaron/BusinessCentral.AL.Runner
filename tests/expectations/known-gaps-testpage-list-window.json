@@ -1,0 +1,26 @@
+[
+  {
+    "codeunitId": 69600,
+    "CodeunitName": "AFT Expression Timing Tests",
+    "Method": "RowFormat_List_FailingSecondRow_RaisesAtOpen",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/5376",
+    "Note": "BC populates a window of rows when a list opens (a failing row 3 to 20 of 120 fails OpenView; row 25 and row 30 do not), and a later move that populates a new window raises the expression's own error. The runner evaluates the current row's AutoFormatExpression/CaptionClass expressions only (RunnerPageInstance.EvaluateRowExpressions, called from LiveNavTestPage.Loaded). Measured on all nine cloud legs, corpus PR #549 (codeunit \"AFT Expression Timing Tests\"). Added by agent stma-auto-7 with the #4920 fix; the fix for #5376 removes these entries."
+  },
+  {
+    "codeunitId": 69600,
+    "CodeunitName": "AFT Expression Timing Tests",
+    "Method": "RowFormat_List_FailingRow20Of120_RaisesAtOpen",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/5376",
+    "Note": "BC populates a window of rows when a list opens (a failing row 3 to 20 of 120 fails OpenView; row 25 and row 30 do not), and a later move that populates a new window raises the expression's own error. The runner evaluates the current row's AutoFormatExpression/CaptionClass expressions only (RunnerPageInstance.EvaluateRowExpressions, called from LiveNavTestPage.Loaded). Measured on all nine cloud legs, corpus PR #549 (codeunit \"AFT Expression Timing Tests\"). Added by agent stma-auto-7 with the #4920 fix; the fix for #5376 removes these entries."
+  },
+  {
+    "codeunitId": 69600,
+    "CodeunitName": "AFT Expression Timing Tests",
+    "Method": "RowFormat_List_LastOntoAFailingRowBeyondTheWindow_RaisesItsOwnError",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/5376",
+    "Note": "BC populates a window of rows when a list opens (a failing row 3 to 20 of 120 fails OpenView; row 25 and row 30 do not), and a later move that populates a new window raises the expression's own error. The runner evaluates the current row's AutoFormatExpression/CaptionClass expressions only (RunnerPageInstance.EvaluateRowExpressions, called from LiveNavTestPage.Loaded). Measured on all nine cloud legs, corpus PR #549 (codeunit \"AFT Expression Timing Tests\"). Added by agent stma-auto-7 with the #4920 fix; the fix for #5376 removes these entries."
+  }
+]
