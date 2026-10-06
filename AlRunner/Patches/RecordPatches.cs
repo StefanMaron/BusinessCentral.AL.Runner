@@ -1338,6 +1338,9 @@ public static partial class RecordPatches
         // set (body identical on 28.5 and 29.0). BC 29's compiler emits that class only for tables
         // with code, so most System Application tables have none there.
         var recordType = FindRecordType(id);
+        if (recordType == null && StubNavRecordType == null)
+            throw new InvalidOperationException(
+                $"NavRecordHandle.CreateTarget: no loaded type Record{id} found");
         ConstructorInfo? ctor = null;
         if (recordType != null)
         {

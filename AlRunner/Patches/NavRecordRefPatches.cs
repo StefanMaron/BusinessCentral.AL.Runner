@@ -277,7 +277,8 @@ public static partial class BcRuntime
         var recordType = RecordPatches.FindRecordType(tableNo);
         var target = NavRecordRef_get_Target(self);
         var record = RecordPatches.NewRecordInstance(
-            recordType, target, metaTable, tableNo, isTemporary, SecurityFiltering.Ignored);
+            recordType, target, metaTable, tableNo, isTemporary, SecurityFiltering.Ignored,
+            RecordPatches.StubNavRecordType);
         // Register tableextensions so the record's extension triggers (incl. the field
         // OnBefore/OnAfterValidate handlers fired through FieldRef.Validate) dispatch to a
         // real extension instance instead of falling back to a cast of the base record.

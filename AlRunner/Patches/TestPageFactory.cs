@@ -113,7 +113,7 @@ internal static class TestPageFactory
         why = null;
         var metaTable = RecordPatches.GetOrBuildNCLMetaTable(tableId);
         var recordType = RecordPatches.FindRecordType(tableId);
-        if (metaTable == null)
+        if (metaTable == null || (recordType == null && RecordPatches.StubNavRecordType == null))
         {
             why = $"source table {tableId} has no runtime record type here";
             return null;
@@ -146,7 +146,8 @@ internal static class TestPageFactory
         try
         {
             record = RecordPatches.NewRecordInstance(
-                recordType, owner, metaTable, tableId, isTemporary, SecurityFiltering.Ignored);
+                recordType, owner, metaTable, tableId, isTemporary, SecurityFiltering.Ignored,
+                RecordPatches.StubNavRecordType);
         }
         catch (InvalidOperationException ex)
         {

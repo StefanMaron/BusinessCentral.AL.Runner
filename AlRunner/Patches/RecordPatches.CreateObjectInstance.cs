@@ -186,8 +186,9 @@ public static partial class RecordPatches
     /// </summary>
     internal static NavRecord NewRecordInstance(
         Type? recordType, object? parent, object metaTable, int tableId, bool isTemporary,
-        object securityFiltering)
+        object securityFiltering, Type? stubNavRecordType)
     {
+        ThrowIfNoRecordTypeAndNoStub(recordType, stubNavRecordType, tableId);
         if (recordType == null)
             return BuildBaseNavRecord(metaTable, (ITreeObject?)parent, tableId, isTemporary, null, string.Empty, securityFiltering)
                 ?? throw new InvalidOperationException(
@@ -196,6 +197,17 @@ public static partial class RecordPatches
             t => Array.Find(t.GetConstructors(), c => c.GetParameters().Length == 6))
             ?? throw new InvalidOperationException($"Record{tableId} has no 6-arg constructor");
         return (NavRecord)ctor.Invoke(new object?[] { parent, metaTable, isTemporary, null, null, securityFiltering });
+    }
+
+    /// <summary>
+    /// The plain-NavRecord fallback is BC 29's shape (<c>StubNavRecord</c> exists, tables without code get no
+    /// Record{id} class). On BC 27/28 every table has a class, so a missing one means something was dropped
+    /// (an emit-excluded table, a failed load) and must stay the loud error it was before #5382.
+    /// </summary>
+    internal static void ThrowIfNoRecordTypeAndNoStub(Type? recordType, Type? stubNavRecordType, int tableId)
+    {
+        if (recordType == null && stubNavRecordType == null)
+            throw new InvalidOperationException($"no loaded type Record{tableId} found");
     }
 
     private static NavRecord? BuildBaseNavRecord(
