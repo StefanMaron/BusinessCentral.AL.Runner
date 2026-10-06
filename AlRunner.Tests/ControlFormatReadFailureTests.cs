@@ -2,6 +2,8 @@
 // AL (AutoFormatExpression). A failure there used to be swallowed into "no format declared". It
 // now propagates, as TryGetControlCaptionClass's does, and GetValue unwraps the reflection
 // wrapper so the AL error itself reaches the test. The BC half is corpus codeunit 67644.
+// #4920: BC raises that error when the page OPENS, not at the read, so the paired control that reads
+// is on a page of its own; see RowExpressionOpenFailureTests.
 using AlRunner.Patches;
 using Microsoft.Dynamics.Nav.Runtime;
 using Xunit;
@@ -42,7 +44,6 @@ public sealed class ControlFormatReadFailureTests
                 area(Content)
                 {
                     field(NoCtl; Rec."No.") { }
-                    field(PlainCtl; Rec.Amount) { }
                     field(FailingCtl; Rec.Amount)
                     {
                         AutoFormatType = 10;
@@ -55,6 +56,20 @@ public sealed class ControlFormatReadFailureTests
             begin
                 Error('CFR format expression failed');
             end;
+        }
+
+        page 63461 "Cfr Plain Card"
+        {
+            PageType = Card;
+            SourceTable = "Cfr Row";
+            layout
+            {
+                area(Content)
+                {
+                    field(NoCtl; Rec."No.") { }
+                    field(PlainCtl; Rec.Amount) { }
+                }
+            }
         }
 
         codeunit 63461 "Cfr Tests"
@@ -91,7 +106,7 @@ public sealed class ControlFormatReadFailureTests
             [Test]
             procedure ControlWithoutFormatExpression_ReadsItsValue()
             var
-                Card: TestPage "Cfr Card";
+                Card: TestPage "Cfr Plain Card";
                 Shown: Decimal;
             begin
                 Seed();

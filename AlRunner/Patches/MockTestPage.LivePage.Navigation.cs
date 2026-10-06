@@ -506,6 +506,8 @@ internal partial class LiveNavTestPage
         if (found)
         {
             _noRowShown = false;
+            // Before OnAfterGetRecord: BC evaluates a row's control expressions first (#4920).
+            RaiseRowExpressions(duringOpen: _suppressTeardownOnLoad);
             try
             {
                 _page?.RaiseOnAfterGetRecord();
