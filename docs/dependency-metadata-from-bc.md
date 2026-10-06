@@ -279,7 +279,7 @@ problem rather than the app's build breaking.
 
 ## The cache
 
-One entry per **(runner build, package content, `--define` symbols, BC version)** under the
+One entry per **(runner build, package content, `--define` symbols, resolved closure, BC version)** under the
 `dep-metadata` cache root, in `AlObjectMetadataRegistry`'s sidecar format. The file name starts
 with the app id, version and BC version so a listing stays readable; the hash after them
 (`DependencyMetadataProducer.CacheKeyCore`) is what separates entries:
@@ -295,6 +295,13 @@ with the app id, version and BC version so a listing stays readable; the hash af
 - **the `--define` symbols the compile applies** (#5039), because a `#if` around a field changes
   the table's document. They are sorted and de-duplicated ordinally, as
   `BcCompiler.GetExtraPreprocessorSymbols` does.
+- **the packages the compile resolved its references against** (#5053), each by app id, resolved
+  version and content, found by walking the package's declared dependencies through the run's
+  resolved list (`DependencyLoader.ResolvedClosureCacheTerm`, the term the `compiled-deps` key
+  writes too). A declared version is a minimum, so the same package compiled against library 1.0 and
+  against a 2.0 from the project's `.alpackages` has different documents: a `TableRelation` names
+  the field id the library declared. A package nothing on the way declares is not in the term, and
+  a reached package this run cannot read leaves the compile uncached.
 
 ### A precompiled dependency's metadata ignores `--define`
 

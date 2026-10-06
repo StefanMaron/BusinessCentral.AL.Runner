@@ -261,6 +261,100 @@ public sealed class DependencyMetadataProducerTests
             Manifest("Business Foundation"), content!, Array.Empty<string>(), RunnerA, null));
     }
 
+    // ---- the resolved closure (#5053) ----------------------------------------------
+
+    private static AppManifest Library(string version) =>
+        new(Publisher: "repro", Name: "Library", Version: Version.Parse(version),
+            AppId: Guid.Parse("5053c0de-1b2e-4f3e-9a41-5e2b8c9d0001"),
+            Dependencies: Array.Empty<DependencyRef>());
+
+    private static AppManifest DeclaringTheLibrary(AppManifest library) =>
+        Manifest("Business Foundation") with
+        {
+            Dependencies = new[] { new DependencyRef(library.AppId, library.Name, library.Publisher, new Version(1, 0, 0, 0)) },
+        };
+
+    /// <summary>
+    /// The documents of a package are compiled against the library the run resolved for it, and
+    /// its declared version is a minimum. A different library behind the same package bytes is
+    /// a different key: other bytes at the same version, and the same bytes at another resolved
+    /// version, each on their own.
+    /// </summary>
+    [Fact]
+    public void CacheKey_SeparatesTheLibraryTheRunResolved()
+    {
+        var pkg = WritePackage("closure-pkg", ("src/A.Table.al", "table 50000 A { fields { field(1; X; Integer) { } } }"));
+        var libV1 = WritePackage("closure-lib-v1", ("SymbolReference.json", "{\"enum\":7}"));
+        var libV1Rebuilt = WritePackage("closure-lib-v1-rebuilt", ("SymbolReference.json", "{\"enum\":9}"));
+        var declaring = DeclaringTheLibrary(Library("1.0.0.0"));
+
+        string? Key(AppManifest library, string path)
+            => DependencyMetadataProducer.CacheKey(declaring, pkg, Array.Empty<string>(), new[] { (library, path) });
+
+        var atV1 = Key(Library("1.0.0.0"), libV1);
+        Assert.NotNull(atV1);
+        Assert.Equal(atV1, Key(Library("1.0.0.0"), libV1));                     // a warm run still hits
+        Assert.NotEqual(atV1, Key(Library("1.0.0.0"), libV1Rebuilt));            // same version, other bytes
+        Assert.NotEqual(atV1, Key(Library("2.0.0.0"), libV1));                   // same bytes, other resolved version
+        Assert.NotEqual(atV1, DependencyMetadataProducer.CacheKey(
+            declaring, pkg, Array.Empty<string>(), Array.Empty<(AppManifest, string)>())); // library not resolved at all
+    }
+
+    /// <summary>A package this run resolved but nothing on the way declares is not part of the key.</summary>
+    [Fact]
+    public void CacheKey_IgnoresAResolvedPackageNothingDeclares()
+    {
+        var pkg = WritePackage("closure-undeclared-pkg", ("src/A.Table.al", "table 50000 A { fields { field(1; X; Integer) { } } }"));
+        var lib = WritePackage("closure-undeclared-lib", ("SymbolReference.json", "{}"));
+        var other = WritePackage("closure-undeclared-other", ("SymbolReference.json", "{\"other\":1}"));
+        var declaring = DeclaringTheLibrary(Library("1.0.0.0"));
+        var stranger = Library("1.0.0.0") with { AppId = Guid.Parse("5053c0de-1b2e-4f3e-9a41-5e2b8c9d0009"), Name = "Stranger" };
+
+        Assert.Equal(
+            DependencyMetadataProducer.CacheKey(declaring, pkg, Array.Empty<string>(), new[] { (Library("1.0.0.0"), lib) }),
+            DependencyMetadataProducer.CacheKey(declaring, pkg, Array.Empty<string>(), new[] { (Library("1.0.0.0"), lib), (stranger, other) }));
+    }
+
+    /// <summary>
+    /// A reached package the run cannot read leaves the closure unnamed: no key, so the compile
+    /// is not cached, rather than an exception out of the key or one shared with a readable run.
+    /// </summary>
+    [Fact]
+    public void CacheKey_ReachedPackageThatCannotBeRead_IsNull()
+    {
+        var pkg = WritePackage("closure-unreadable-pkg", ("src/A.Table.al", "table 50000 A { fields { field(1; X; Integer) { } } }"));
+        var gone = Path.Combine(Path.GetTempPath(), $"no-such-library-{Guid.NewGuid():N}.app");
+
+        Assert.Null(DependencyMetadataProducer.CacheKey(
+            DeclaringTheLibrary(Library("1.0.0.0")), pkg, Array.Empty<string>(), new[] { (Library("1.0.0.0"), gone) }));
+    }
+
+    /// <summary>
+    /// The entry a build before #5053 wrote for a package that reaches nothing is not the key now:
+    /// its documents were compiled against whatever library its run had, and nothing records which.
+    /// </summary>
+    [Fact]
+    public void CacheKey_IsNotTheKeyTheSchemaBeforeTheClosureWrote()
+    {
+        var m = Manifest("Business Foundation");
+        string Hand(string schema)
+        {
+            var terms = new System.Text.StringBuilder(schema + "\n");
+            AlRunner.Infrastructure.RunnerFingerprint.WriteKeyLines(
+                line => terms.Append(line).Append('\n'), RunnerA, AlRunner.Infrastructure.BcArtifacts.SelectedVersion);
+            terms.Append(BcCompiler.RunnerEmitModeCacheTerm).Append('\n');
+            terms.Append($"app-bytes:{ContentA}\ndefines:\n");
+            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(terms.ToString()))).ToLowerInvariant();
+            return $"{m.AppId:N}_{m.Version}_{AlRunner.Infrastructure.BcArtifacts.SelectedVersion}_{hash[..32]}";
+        }
+
+        var now = DependencyMetadataProducer.CacheKeyCore(m, ContentA, Array.Empty<string>(), RunnerA, null);
+        Assert.NotEqual(Hand("schema:v2"), now);
+        // The reference reproduces the key's other terms exactly, so the one difference is the schema.
+        Assert.Equal(Hand("schema:v3"), now);
+    }
+
     // ---- availability vs failure ---------------------------------------------------
 
     /// <summary>

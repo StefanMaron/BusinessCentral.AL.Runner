@@ -1170,7 +1170,8 @@ names it returned, not by how many.
 - **Both entry points use it**: the CLI's bundle loop and `--server`'s `RunBundleForServer`
   (the two callers of `ComputeAlCacheKey`). `--tdd` neither reads nor writes this cache.
   A source dependency's compiled-deps cache is keyed by the package's own bytes, which
-  contain its layouts, so it needs no record (the resolved-closure question is #5053).
+  contain its layouts, so it needs no record. It is also keyed by the packages its compile
+  resolved its references against (#5053, `DependencyLoader.ResolvedClosureCacheTerm`).
 - **A HIT costs one read of each recorded file** (plus hashing the DLL and the sidecars,
   which it already reads), nothing against a recompile.
 - **Limit**: the fingerprint is taken when the compile ends. A file edited during the
