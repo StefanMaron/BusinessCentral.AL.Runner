@@ -236,7 +236,6 @@ public class ServerAffectedSelectionMultiObjectFileTests : IClassFixture<SharedC
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
           "preprocessorSymbols": [ "MO_SPLIT" ],
           "idRanges": [ { "from": 62400, "to": 62499 } ],
           "runtime": "14.0"
