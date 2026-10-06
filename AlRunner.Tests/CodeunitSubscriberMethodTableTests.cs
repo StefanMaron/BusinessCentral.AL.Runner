@@ -104,22 +104,30 @@ public sealed class CodeunitSubscriberMethodTableTests
     [SkippableFact]
     public void Subscribers_are_placed_in_source_order_not_metadata_order()
     {
-        RegisteredCodeunits();
+        var codeunits = RegisteredCodeunits();
         var methods = MethodsOf(RunnerDocument(3902) ?? throw new Xunit.Sdk.XunitException("codeunit 3902 not known"));
         Assert.NotNull(methods);
-        Assert.Equal(
-            new[]
-            {
-                "AddRetentionPolicyOnRegisterManualSetup",
-                "VerifyRetentionPolicySetupOnbeforeDeleteRetentionPeriod",
-                "VerifyRetentionPolicySetupOnbeforeModifyRetentionPeriod",
-                "VerifyRetentionPolicyAllowedTablesOnBeforeInsertRetenPolSetup",
-                "InsertDefaultTableFiltersOnAfterInsertRetenPolSetup",
-                "ErrorOnBeforeRenameRetentionPolicySetup",
-                "ErrorOnBeforeRenameRetentionPolicySetupLine",
-                "CheckRecordLockedOnRetentionPolicySetupLineOnAfterModify",
-                "CheckRecordLockedOnRetentionPolicySetupLineOnAfterDelete",
-            },
+        var inSourceOrder = new[]
+        {
+            "AddRetentionPolicyOnRegisterManualSetup",
+            "VerifyRetentionPolicySetupOnbeforeDeleteRetentionPeriod",
+            "VerifyRetentionPolicySetupOnbeforeModifyRetentionPeriod",
+            "VerifyRetentionPolicyAllowedTablesOnBeforeInsertRetenPolSetup",
+            "InsertDefaultTableFiltersOnAfterInsertRetenPolSetup",
+            "ErrorOnBeforeRenameRetentionPolicySetup",
+            "ErrorOnBeforeRenameRetentionPolicySetupLine",
+            "CheckRecordLockedOnRetentionPolicySetupLineOnAfterModify",
+            "CheckRecordLockedOnRetentionPolicySetupLineOnAfterDelete",
+        };
+        // The list is the 28.x source. BC 29's own emitter output for this codeunit has no
+        // AddRetentionPolicyOnRegisterManualSetup, so what is pinned is the ORDER of the subscribers
+        // BC's document for THIS build declares, never a member BC itself no longer emits (#5382).
+        var bcNames = MethodsOf(Load(codeunits.First(c => c.Id == 3902).BcDocumentPath))!
+            .ChildNodes.OfType<XmlElement>().Select(m => m.GetAttribute("Name")).ToHashSet(StringComparer.Ordinal);
+        var expected = inSourceOrder.Where(bcNames.Contains).ToArray();
+        Assert.True(expected.Length >= 8,
+            $"only {expected.Length} of the nine known subscribers are in BC's own document, so this no longer pins an order");
+        Assert.Equal(expected,
             methods!.ChildNodes.OfType<XmlElement>().Select(m => m.GetAttribute("Name")).ToArray());
     }
 
