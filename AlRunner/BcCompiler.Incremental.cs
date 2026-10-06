@@ -203,6 +203,10 @@ internal sealed class RadBaseline
     // same cycle FileHashByPath was taken. Empty when the compile had no file system.
     public required Dictionary<string, string> CompileInputs;
     public required Dictionary<string, RadObjectIdentity> ObjectByPath;
+    // #5003: the files that declare several objects. ObjectByPath tracks one object per file, so these
+    // are absent from it; a test's statements there are attributed through the scope's own object
+    // (Program.cs), which is safe only because touching one of these files falls back to a full run.
+    public required HashSet<string> MultiObjectPaths;
     public required Dictionary<string, EmittedSource> SourceByKey;
     public required BcEmitOutput LastOutput;
     // #4971: identity of this baseline; --server's affectedOnly coverage is held to it
@@ -775,6 +779,12 @@ public sealed partial class BcCompiler
 
         foreach (var path in addedPaths.Concat(modifiedPaths))
         {
+            // #5003: even an edit that leaves one object in the file leaves the others' baseline entries behind.
+            if (baseline.MultiObjectPaths.Contains(path))
+            {
+                fallbackReason = $"'{path}' declared several objects when the baseline was recorded; the fast path tracks one object per file";
+                return null;
+            }
             NavSyntax.SyntaxTree tree;
             try
             {
@@ -1132,6 +1142,7 @@ public sealed partial class BcCompiler
                 ? new Dictionary<string, string>(baseline.CompileInputs, StringComparer.Ordinal)
                 : CompileFileReads.Fingerprint(appRootDir, baseline.CompileInputs.Keys.Union(radReads.Keys, StringComparer.Ordinal)),
             ObjectByPath = newObjectByPath,
+            MultiObjectPaths = baseline.MultiObjectPaths,
             SourceByKey = newSourceByKey,
             LastOutput = output,
             Generation = NextRadGeneration(),
@@ -1178,6 +1189,10 @@ public sealed partial class BcCompiler
                 b.ObjectByPath.ToDictionary(kv => kv.Key, kv => ToAffectedObjectId(kv.Value), StringComparer.Ordinal),
                 new Dictionary<string, string>(b.CompileInputs, StringComparer.Ordinal))
             : null;
+
+    /// <summary>#5003: the files of the current baseline that declare several objects; null when there is no baseline.</summary>
+    internal IReadOnlyCollection<string>? TryGetMultiObjectPaths(string moduleName)
+        => _radBaselines.TryGetValue(moduleName, out var baseline) ? baseline.MultiObjectPaths : null;
 
     internal IReadOnlyDictionary<string, AffectedObjectId>? TryGetTrackedObjectsByPath(string moduleName)
         => _radBaselines.TryGetValue(moduleName, out var baseline)
@@ -1263,6 +1278,7 @@ public sealed partial class BcCompiler
 
         foreach (var path in addedPaths.Concat(modifiedPaths))
         {
+            if (baseline.MultiObjectPaths.Contains(path)) return null; // #5003: only the real compile can adjudicate it
             NavSyntax.SyntaxTree tree;
             try
             {
@@ -1392,6 +1408,7 @@ public sealed partial class BcCompiler
 
         foreach (var path in modifiedPaths)
         {
+            if (baseline.MultiObjectPaths.Contains(path)) return null; // #5003: as PeekChangedObjects
             NavSyntax.SyntaxTree tree;
             string newSrc;
             try
@@ -1529,6 +1546,7 @@ public sealed partial class BcCompiler
 
         var objectByPath = new Dictionary<string, RadObjectIdentity>(StringComparer.Ordinal);
         var claimedPaths = new HashSet<string>(StringComparer.Ordinal);
+        var multiObjectPaths = new HashSet<string>(StringComparer.Ordinal);
         foreach (var sym in declared)
         {
             var path = sym.Location?.SourceTree?.FilePath;
@@ -1543,6 +1561,7 @@ public sealed partial class BcCompiler
                 // more than one object; the fast path requires exactly one, so untrack the path
                 // entirely rather than record a misleading single identity for it.
                 objectByPath.Remove(path);
+                multiObjectPaths.Add(path);
                 continue;
             }
             objectByPath[path] = new RadObjectIdentity(sym.Kind, id, sym.Name);
@@ -1575,7 +1594,7 @@ public sealed partial class BcCompiler
                 ? Path.GetFullPath(Path.Combine(appRootDir, path))
                 : path;
             if (objectByPath.ContainsKey(resolved)) return; // already tracked via `declared` — a DIFFERENT API surfacing the SAME object, not a real duplicate
-            if (!claimedPaths.Add(resolved)) { objectByPath.Remove(resolved); return; } // a genuine second id-less object in one file
+            if (!claimedPaths.Add(resolved)) { objectByPath.Remove(resolved); multiObjectPaths.Add(resolved); return; } // a genuine second id-less object in one file
             objectByPath[resolved] = new RadObjectIdentity(kind, null, name);
         }
         // #2507: a namespace-declared id-less object lives under `.Namespaces[...]`, not the
@@ -1633,6 +1652,7 @@ public sealed partial class BcCompiler
                 ? new Dictionary<string, string>(StringComparer.Ordinal)
                 : CompileFileReads.Fingerprint(appRootDir, compileReads.Keys),
             ObjectByPath = objectByPath,
+            MultiObjectPaths = multiObjectPaths,
             SourceByKey = sourceByKey,
             LastOutput = fullOutput,
             Generation = NextRadGeneration(),

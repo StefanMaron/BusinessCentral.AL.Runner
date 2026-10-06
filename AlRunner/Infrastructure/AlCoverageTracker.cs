@@ -253,11 +253,14 @@ public static class AlCoverageTracker
     /// the start line <see cref="AlCoverageStatement"/> carries — the id↔position
     /// mapping a consumer like ALchemist needs to place a captured value in an editor
     /// instead of guessing from a covered-lines index (see the issue's linked
-    /// SShadowS/ALchemist#1 reply).
+    /// SShadowS/ALchemist#1 reply). <c>ObjectLabel</c>/<c>ObjectId</c> name the AL object whose
+    /// scope holds the statement, which a file declaring several objects cannot answer from
+    /// <c>FilePath</c> (#5003); not on the wire.
     /// </summary>
     public readonly record struct AlStatementRecord(
         string FilePath, string ScopeName, int StatementId,
-        int Line, int Column, int EndLine, int EndColumn, int HitCount);
+        int Line, int Column, int EndLine, int EndColumn, int HitCount,
+        string ObjectLabel = "", int ObjectId = 0);
 
     /// <summary>
     /// Distinct scope Types that have recorded at least one hit since the last
@@ -299,7 +302,7 @@ public static class AlCoverageTracker
                 result.Add(new AlStatementRecord(
                     resolved.FilePath, resolved.ScopeName, i,
                     fromLine + 1 + resolved.LineOffset, fromColumn + 1, toLine + 1 + resolved.LineOffset, toColumn + 1,
-                    GetHitCount(t, i)));
+                    GetHitCount(t, i), resolved.ObjectLabel, resolved.ObjectId));
             }
         }
 
@@ -350,7 +353,7 @@ public static class AlCoverageTracker
     // because the (Type, statementId) identity does not vary per test and only the hit count does.
     // LineOffset: what to add to this scope's decoded [SourceSpans] lines to get file lines
     // (#3713, AlSourceLocationMap.LineOffset); 0 for the first object in a file.
-    private static (string FilePath, string ScopeName, long[] Spans, int LineOffset)? ResolveScopeInfo(
+    private static (string FilePath, string ScopeName, long[] Spans, int LineOffset, string ObjectLabel, int ObjectId)? ResolveScopeInfo(
         MemberInfo type, AlSourceLocationMap sourceMap)
     {
         if (Attribute.GetCustomAttribute(type, _tSourceSpansAttr!) is not object srcAttr) return null;
@@ -359,11 +362,11 @@ public static class AlCoverageTracker
         if (id == 0) return null;
         if (!sourceMap.TryGetValue((label, id), out var filePath)) return null;
         var scopeName = AlNavNameReflection.GetAlName(type) ?? "?";
-        return (filePath, scopeName, spans, sourceMap.LineOffset(label, id));
+        return (filePath, scopeName, spans, sourceMap.LineOffset(label, id), label, id);
     }
 
     /// <summary>ResolveScopeInfo with the reflection init done; null for a scope outside the bundle.</summary>
-    internal static (string FilePath, string ScopeName, long[] Spans, int LineOffset)? TryResolveScope(
+    internal static (string FilePath, string ScopeName, long[] Spans, int LineOffset, string ObjectLabel, int ObjectId)? TryResolveScope(
         MemberInfo type, AlSourceLocationMap sourceMap)
     {
         EnsureReflInit();
@@ -394,7 +397,7 @@ public static class AlCoverageTracker
         EnsureReflInit();
         AlNavNameReflection.EnsureInit();
         var result = new Dictionary<string, List<AlStatementRecord>>();
-        var typeInfo = new Dictionary<MemberInfo, (string FilePath, string ScopeName, long[] Spans, int LineOffset)?>();
+        var typeInfo = new Dictionary<MemberInfo, (string FilePath, string ScopeName, long[] Spans, int LineOffset, string ObjectLabel, int ObjectId)?>();
 
         foreach (var testEntry in _perTestHits)
         {
@@ -415,7 +418,7 @@ public static class AlCoverageTracker
                 (list ??= new List<AlStatementRecord>()).Add(new AlStatementRecord(
                     resolved.FilePath, resolved.ScopeName, stmtId,
                     fromLine + 1 + resolved.LineOffset, fromColumn + 1, toLine + 1 + resolved.LineOffset, toColumn + 1,
-                    stmtEntry.Value));
+                    stmtEntry.Value, resolved.ObjectLabel, resolved.ObjectId));
             }
             if (list is { Count: > 0 }) result[testEntry.Key] = list;
         }

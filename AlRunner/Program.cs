@@ -8568,12 +8568,17 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 .ToDictionary(m => m, m => emitter.RadBaselineGeneration(m), StringComparer.Ordinal);
 
             var requestWideTrackedObjectsByPath = new Dictionary<string, AffectedObjectId>(StringComparer.Ordinal);
+            // #5003: files declaring several objects are in no map above; a statement there is keyed by the
+            // object whose scope ran it. A change to such a file falls back to a full run (BcCompiler.Incremental).
+            var requestWideMultiObjectPaths = new HashSet<string>(StringComparer.Ordinal);
             foreach (var trackedModuleName in requestModuleByBundle.Values.Distinct(StringComparer.Ordinal))
             {
                 var m = emitter.TryGetTrackedObjectsByPath(trackedModuleName);
                 if (m == null) continue;
                 foreach (var kv in m)
                     requestWideTrackedObjectsByPath[kv.Key] = kv.Value;
+                if (emitter.TryGetMultiObjectPaths(trackedModuleName) is { } multiObjectPaths)
+                    requestWideMultiObjectPaths.UnionWith(multiObjectPaths);
             }
 
             var extensionsOfTable = new Dictionary<int, List<int>>();
@@ -8600,6 +8605,9 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 if (UsedObjectOf(type) is { } o)
                     longLivedObjectKeys.Add(AlRunner.Infrastructure.AffectedEventSelection.LongLivedObjectKey(o.Key));
 
+            // The key of an AL object named by its class label and id, as a tracked file's identity keys it.
+            string ObjectKeyOf(string label, int id)
+                => ToAffectedObjectKey(new AffectedObjectId(label == "CodeUnit" ? "Codeunit" : label, id, ""));
             // The key and file of an AL object class from this request's sources; null outside them.
             // The class names its object, so a file declaring several objects (#5003) still keys.
             (string Key, string Path)? UsedObjectOf(Type objectType)
@@ -8608,7 +8616,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 if (id == 0 || !selectionSourceMap.TryGetValue((label, id), out var path)) return null;
                 return (requestWideTrackedObjectsByPath.TryGetValue(path, out var identity)
                     ? ToAffectedObjectKey(identity)
-                    : ToAffectedObjectKey(new AffectedObjectId(label == "CodeUnit" ? "Codeunit" : label, id, "")), path);
+                    : ObjectKeyOf(label, id), path);
             }
             // #4988: the event side of the baseline, stored whenever the coverage is.
             var recordedThisRequest = new List<string>();
@@ -8748,12 +8756,15 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
 
                     var coveredObjects = new HashSet<string>(StringComparer.Ordinal);
                     var unmappable = false;
-                    // False when the file maps to no single object (#5003) and is not packaged.
-                    bool Cover(string filePath, string? scopeName)
+                    // False when the file is in neither map (not a tracked file of this request) and is not packaged.
+                    bool Cover(AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord statement)
                     {
-                        if (!requestWideTrackedObjectsByPath.TryGetValue(filePath, out var identity))
-                            return AlRunner.Infrastructure.DependencyPackageFingerprint.IsUnderAny(filePath, packagedSourceRoots);
-                        AddKeys(ToAffectedObjectKey(identity), scopeName);
+                        if (requestWideTrackedObjectsByPath.TryGetValue(statement.FilePath, out var identity))
+                            AddKeys(ToAffectedObjectKey(identity), statement.ScopeName);
+                        else if (requestWideMultiObjectPaths.Contains(statement.FilePath) && statement.ObjectId != 0)
+                            AddKeys(ObjectKeyOf(statement.ObjectLabel, statement.ObjectId), statement.ScopeName);
+                        else
+                            return AlRunner.Infrastructure.DependencyPackageFingerprint.IsUnderAny(statement.FilePath, packagedSourceRoots);
                         return true;
                     }
                     void AddKeys(string objKey, string? scopeName)
@@ -8773,7 +8784,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                             dependencyKeys.Add(k);
                     }
                     foreach (var s in statements ?? Enumerable.Empty<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>())
-                        if (!Cover(s.FilePath, s.ScopeName)) { unmappable = true; break; }
+                        if (!Cover(s)) { unmappable = true; break; }
                     if (used != null && !unmappable)
                     {
                         // Outside this request's sources, or packaged: no source key, as a statement there has none.
