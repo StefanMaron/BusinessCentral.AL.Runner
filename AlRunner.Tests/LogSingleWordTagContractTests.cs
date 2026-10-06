@@ -64,6 +64,7 @@ public sealed class LogSingleWordTagContractTests
         new("grey", Kind.NotALogLine, "Spectre.Console markup"),
         new("Oo", Kind.NotALogLine, "a regex character class, [Oo]bject, in a BcCompiler diagnostic pattern"),
         new("red", Kind.NotALogLine, "Spectre.Console markup"),
+        new("skip", Kind.NotALogLine, "BcFloorGate.SkipLine's text is only ever written after an indent (the CLI's two spaces) or carried in a runTests `warnings` entry, never as a line starting with the tag (#5137)"),
         new("yellow", Kind.NotALogLine, "Spectre.Console markup"),
 
         // --- Internal: per-object/per-method chatter. Suppressed by default, --verbose recovers it.

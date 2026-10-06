@@ -42,6 +42,8 @@ internal sealed class AffectedSelectionState
 /// <summary>What one run through Program.RunTestsWithSelection produced.</summary>
 /// <param name="SelectedTestsByBundle">Per bundle path, the tests selection ran; null for a bundle
 /// that was not narrowed (every discovered test was selected).</param>
+/// <param name="BcFloorSkips">One <c>[skip]</c> line per app the request left out for declaring a BC
+/// floor above the running BC (#5137).</param>
 internal sealed record AffectedRunOutcome(
     IReadOnlyList<ServerRunResult> Runs,
     IReadOnlyList<TestResult> AllTests,
@@ -54,4 +56,5 @@ internal sealed record AffectedRunOutcome(
     IReadOnlyList<SourceScanFailure>? ScanFailures,
     ServerSelection? Selection,
     IReadOnlyDictionary<string, HashSet<string>> DiscoveredTestsByBundle,
-    IReadOnlyDictionary<string, HashSet<string>?> SelectedTestsByBundle);
+    IReadOnlyDictionary<string, HashSet<string>?> SelectedTestsByBundle,
+    IReadOnlyList<string>? BcFloorSkips = null);

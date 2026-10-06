@@ -165,6 +165,11 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // #5307: added by that PR; an ESTIMATE from one local run (63s, twelve runner invocations on private cache roots,
             // BC 28.5), not a CI measurement: re-record from the CI TRX once a main run carries the class.
             ["PerSuiteTddExcludedTests"] = 63,
+            // #5137: one CLI oracle run and one shared --server. The first revision (a server per fact) measured 254.3s on the
+            // BC 28.5 leg of PR #5361 (run 37392893854). The shared server cut the class from about 165s to about 120s locally
+            // (x0.73), so 185 is an ESTIMATE (254.3 x 0.73, rounded down), not a CI measurement: re-record from the CI TRX
+            // once a main run carries the restructured class.
+            ["ServerBcFloorSkipTests"] = 185,
             // #5132, grown by #5303 (the keep side at four emit sites, each loading the System Application): runner spawns
             // on one scratch tree. CI 143.9s (BC 27.5) and 144.3s (BC 28.5) on main run 37161245486, the lower leg rounded
             // down (#5311).

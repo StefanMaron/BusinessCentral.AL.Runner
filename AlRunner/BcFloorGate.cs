@@ -48,10 +48,16 @@ public static class BcFloorGate
         lock (Reported)
             if (!Reported.Add(appJsonPath)) return;
 
-        Console.WriteLine(
-            $"  [skip] {suiteName}: declares BC >= {floor}, running "
-            + $"{AlRunner.Infrastructure.BcArtifacts.SelectedVersion} (app.json application/platform)");
+        Console.WriteLine("  " + SkipLine(suiteName, floor));
     }
+
+    /// <summary>
+    /// The one wording of a skip, shared by the CLI's stdout line and by a <c>--server</c> request's
+    /// <c>warnings</c> entry (#5137), so both transports say the same thing.
+    /// </summary>
+    public static string SkipLine(string suiteName, Version floor)
+        => $"[skip] {suiteName}: declares BC >= {floor}, running "
+           + $"{AlRunner.Infrastructure.BcArtifacts.SelectedVersion} (app.json application/platform)";
 
     /// <summary>Suite name from an app.json, falling back to its directory name.</summary>
     public static string SuiteNameOf(string appJsonPath)

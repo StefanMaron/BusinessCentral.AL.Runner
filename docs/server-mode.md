@@ -136,6 +136,15 @@ readable `app.json` anywhere stays one bundle.
 `--dap` does not do this: a debug session serves one module, so a container stays one bundle
 there (#5121).
 
+A `runTests` `sourcePaths` entry that is an app whose `app.json` declares an `application` or
+`platform` above the running BC is **skipped**, as the CLI skips it (#5137), whether it came
+from a container or was listed on its own. Nothing of it is compiled or run, and the request's
+`warnings` carries one line per skipped app in the CLI's wording, for example
+`[skip] My Tests: declares BC >= 99.0.0.0, running 28.5.54151.55132 (app.json application/platform)`.
+The skip is reported on every request that meets it, not once per server process. A request
+whose every app is skipped is a clean zero-test run (`exitCode` 0), as on the CLI. `execute` and
+`--dap` do not apply the gate.
+
 Bundles execute in **dependency order**, not the order they were listed: if one
 bundle in the request declares a dependency on another, the dependency runs
 first (#2614). Without that, a dependency listed last was compiled against —
