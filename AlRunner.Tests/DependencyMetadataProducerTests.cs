@@ -115,7 +115,7 @@ public sealed class DependencyMetadataProducerTests
     {
         var missing = Path.Combine(Path.GetTempPath(), $"no-such-package-{Guid.NewGuid():N}.app");
         Assert.False(File.Exists(missing));
-        Assert.Equal(0, DependencyMetadataProducer.Ensure(Manifest("Base Application"), missing, compiler: null!));
+        Assert.Equal(0, DependencyMetadataProducer.Ensure(Manifest("Base Application"), missing, compiler: null!, NoResolved));
     }
 
     // ---- the cache key -------------------------------------------------------------
@@ -144,8 +144,11 @@ public sealed class DependencyMetadataProducerTests
     private const string RunnerA = "aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000aaaa0000";
     private const string RunnerB = "bbbb0000bbbb0000bbbb0000bbbb0000bbbb0000bbbb0000bbbb0000bbbb0000";
 
+    private static readonly IReadOnlyList<(AppManifest Manifest, string AppPath)> NoResolved =
+        Array.Empty<(AppManifest Manifest, string AppPath)>();
+
     private static string Key(AppManifest m, string content = ContentA, params string[] defines)
-        => DependencyMetadataProducer.CacheKeyCore(m, content, defines, RunnerA)!;
+        => DependencyMetadataProducer.CacheKeyCore(m, content, defines, RunnerA, resolvedClosureTerm: null)!;
 
     /// <summary>
     /// #5039: a rebuilt package at an unchanged id and version is a different key.
@@ -187,9 +190,9 @@ public sealed class DependencyMetadataProducerTests
         var m = Manifest("Business Foundation");
         var p1 = WritePackage("key-a", ("src/A.Table.al", "table 50000 A { fields { field(1; X; Integer) { } } }"));
         var p2 = WritePackage("key-b", ("src/A.Table.al", "table 50000 A { fields { field(2; Y; Integer) { } } }"));
-        var k1 = DependencyMetadataProducer.CacheKey(m, p1, Array.Empty<string>());
+        var k1 = DependencyMetadataProducer.CacheKey(m, p1, Array.Empty<string>(), NoResolved);
         Assert.NotNull(k1);
-        Assert.NotEqual(k1, DependencyMetadataProducer.CacheKey(m, p2, Array.Empty<string>()));
+        Assert.NotEqual(k1, DependencyMetadataProducer.CacheKey(m, p2, Array.Empty<string>(), NoResolved));
     }
 
     /// <summary>
@@ -201,12 +204,12 @@ public sealed class DependencyMetadataProducerTests
     public void CacheKey_SeparatesRunnerBuilds()
     {
         var m = Manifest("Business Foundation");
-        var a = DependencyMetadataProducer.CacheKeyCore(m, ContentA, Array.Empty<string>(), RunnerA);
-        var b = DependencyMetadataProducer.CacheKeyCore(m, ContentA, Array.Empty<string>(), RunnerB);
+        var a = DependencyMetadataProducer.CacheKeyCore(m, ContentA, Array.Empty<string>(), RunnerA, null);
+        var b = DependencyMetadataProducer.CacheKeyCore(m, ContentA, Array.Empty<string>(), RunnerB, null);
         Assert.NotNull(a);
         Assert.NotNull(b);
         Assert.NotEqual(a, b);
-        Assert.Equal(a, DependencyMetadataProducer.CacheKeyCore(m, ContentA, Array.Empty<string>(), RunnerA));
+        Assert.Equal(a, DependencyMetadataProducer.CacheKeyCore(m, ContentA, Array.Empty<string>(), RunnerA, null));
     }
 
     /// <summary>
@@ -223,9 +226,9 @@ public sealed class DependencyMetadataProducerTests
         Assert.NotEqual(AlRunner.Infrastructure.RunnerFingerprint.UnknownContentHash, running);
         var content = AlRunner.Infrastructure.RunnerFingerprint.ComputeFileContentHashMemoized(p);
 
-        var key = DependencyMetadataProducer.CacheKey(m, p, Array.Empty<string>());
-        Assert.Equal(DependencyMetadataProducer.CacheKeyCore(m, content, Array.Empty<string>(), running), key);
-        Assert.NotEqual(DependencyMetadataProducer.CacheKeyCore(m, content, Array.Empty<string>(), RunnerA), key);
+        var key = DependencyMetadataProducer.CacheKey(m, p, Array.Empty<string>(), NoResolved);
+        Assert.Equal(DependencyMetadataProducer.CacheKeyCore(m, content, Array.Empty<string>(), running, null), key);
+        Assert.NotEqual(DependencyMetadataProducer.CacheKeyCore(m, content, Array.Empty<string>(), RunnerA, null), key);
     }
 
     /// <summary>
@@ -240,7 +243,7 @@ public sealed class DependencyMetadataProducerTests
     {
         if (runner == "unknown") runner = AlRunner.Infrastructure.RunnerFingerprint.UnknownContentHash;
         Assert.Null(DependencyMetadataProducer.CacheKeyCore(
-            Manifest("Business Foundation"), ContentA, Array.Empty<string>(), runner));
+            Manifest("Business Foundation"), ContentA, Array.Empty<string>(), runner, null));
     }
 
     /// <summary>
@@ -255,7 +258,7 @@ public sealed class DependencyMetadataProducerTests
     {
         if (content == "unknown") content = AlRunner.Infrastructure.RunnerFingerprint.UnknownContentHash;
         Assert.Null(DependencyMetadataProducer.CacheKeyCore(
-            Manifest("Business Foundation"), content!, Array.Empty<string>(), RunnerA));
+            Manifest("Business Foundation"), content!, Array.Empty<string>(), RunnerA, null));
     }
 
     // ---- availability vs failure ---------------------------------------------------
@@ -275,7 +278,7 @@ public sealed class DependencyMetadataProducerTests
 
         var ex = Assert.Throws<AlRunner.Infrastructure.DependencyLoadException>(
             () => DependencyMetadataProducer.Ensure(
-                Manifest("Business Foundation"), notAnApp, compiler: null!));
+                Manifest("Business Foundation"), notAnApp, compiler: null!, NoResolved));
 
         Assert.Equal("METADATA-SOURCE-UNREADABLE", ex.Stage);
         Assert.Equal("Business Foundation", ex.AppName);
@@ -299,7 +302,7 @@ public sealed class DependencyMetadataProducerTests
         // Arm 1 — source-less package: a quiet 0, no throw.
         var symbolOnly = WritePackage("no-source", ("SymbolReference.json", "{}"));
         Assert.Equal(0, DependencyMetadataProducer.Ensure(
-            Manifest("Business Foundation"), symbolOnly, compiler: null!));
+            Manifest("Business Foundation"), symbolOnly, compiler: null!, NoResolved));
 
         // Arm 2 — the SAME call shape on a package that ships source: throws instead.
         var withSource = WritePackage("with-source",
@@ -307,7 +310,7 @@ public sealed class DependencyMetadataProducerTests
 
         var ex = Assert.Throws<AlRunner.Infrastructure.DependencyLoadException>(
             () => DependencyMetadataProducer.Ensure(
-                Manifest("Business Foundation"), withSource, compiler: null!));
+                Manifest("Business Foundation"), withSource, compiler: null!, NoResolved));
 
         Assert.Equal("METADATA-EMIT-FAIL", ex.Stage);
 

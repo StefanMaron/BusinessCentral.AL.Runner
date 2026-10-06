@@ -1,12 +1,14 @@
-// DependencyCacheKeySourceClosureTests — issue #5306.
+// DependencyCacheKeySourceClosureTests — issues #5306 and #5053.
 //
 // A source dependency compiles against the packages it depends on. The runner packages a source
 // bundle itself (workspace-deps) and, under --tdd, rewrites that package when it generates a member
 // into it, so the compile of a library depends on bytes the library's own package does not hold. The
 // compiled-deps key named only the library's own bytes, so a DLL compiled while a neighbour lacked a
 // member answered for a run in which it had it, and the reverse: a warm --tdd run generated other
-// members than the cold one. These pin the key's term for that closure: the source-built packages the
-// compile reaches follow it, transitively, and nothing else does.
+// members than the cold one. #5053 is the same shape for a package the runner did not build: a
+// declared version is a minimum, so the compile binds against whichever version the run resolved.
+// These pin the key's term for that closure: the packages the compile reaches through declared
+// dependencies, source-built or packaged, follow it, transitively, and nothing else does.
 using AlRunner;
 using AlRunner.Infrastructure;
 using System.Text;
@@ -106,17 +108,38 @@ public sealed class DependencyCacheKeySourceClosureTests : IDisposable
     }
 
     [Fact]
-    public void Key_DoesNotFollowAPackagedDependencyOutsideTheWorkspace()
+    public void Key_FollowsAPackagedDependencyOutsideTheWorkspace()
     {
         var packaged = Package(_outside, "packaged", "a package the runner did not build");
         var lib = Package(_workspace, "lib", "lib own bytes", packaged);
 
-        Assert.Null(DependencyLoader.SourceClosureCacheTerm(
-            lib.Manifest, new[] { (packaged.Manifest, packaged.Path), (lib.Manifest, lib.Path) },
-            CacheRoots.SourceBuiltPackageDirs(), static p => RunnerFingerprint.ComputeFileContentHashMemoized(p)));
         var before = Key(lib, packaged, lib);
+        Assert.Equal(before, Key(lib, packaged, lib));        // the same closure keys the same: a warm run still hits
         Rewritten(packaged, "rebuilt elsewhere");
-        Assert.Equal(before, Key(lib, packaged, lib));
+        Assert.NotEqual(before, Key(lib, packaged, lib));     // same id, same declared version, other bytes
+    }
+
+    [Fact]
+    public void Key_FollowsTheVersionTheRunResolved_NotTheOneThePackageDeclared()
+    {
+        var packaged = Package(_outside, "packaged", "the library's bytes");
+        var lib = Package(_outside, "lib", "lib own bytes", packaged);   // declares packaged 1.0.0.0 as a minimum
+
+        var atDeclared = Key(lib, packaged, lib);
+        var newer = packaged.Manifest with { Version = new Version(2, 0, 0, 0) };
+        Assert.NotEqual(atDeclared, Key(lib, new Pkg(newer, packaged.Path), lib));
+    }
+
+    [Fact]
+    public void Key_DoesNotFollowAPackageNothingOnTheWayDeclares()
+    {
+        var packaged = Package(_outside, "packaged", "a package the runner did not build");
+        var lib = Package(_outside, "lib", "lib own bytes", packaged);
+        var unrelated = Package(_outside, "unrelated", "resolved by the run, declared by nobody on the way");
+
+        var before = Key(lib, packaged, lib, unrelated);
+        Rewritten(unrelated, "the unrelated one rebuilt");
+        Assert.Equal(before, Key(lib, packaged, lib, unrelated));
     }
 
     [Fact]
@@ -151,14 +174,14 @@ public sealed class DependencyCacheKeySourceClosureTests : IDisposable
     }
 
     [Fact]
-    public void Key_OfACompileWithNoSourceBuiltDependencyCarriesNoClosureTerm()
+    public void Key_OfAPackageThatReachesNothingCarriesNoClosureTerm()
     {
-        var packaged = Package(_outside, "packaged", "a package the runner did not build");
-        var lib = Package(_outside, "lib", "lib own bytes", packaged);
+        var packaged = Package(_outside, "packaged", "resolved, but declared by nobody");
+        var lib = Package(_outside, "lib", "lib own bytes");
 
-        Assert.Null(DependencyLoader.SourceClosureCacheTerm(
+        Assert.Null(DependencyLoader.ResolvedClosureCacheTerm(
             lib.Manifest, new[] { (packaged.Manifest, packaged.Path), (lib.Manifest, lib.Path) },
-            CacheRoots.SourceBuiltPackageDirs(), static p => RunnerFingerprint.ComputeFileContentHashMemoized(p)));
+            static p => RunnerFingerprint.ComputeFileContentHashMemoized(p)));
         Assert.Equal(
             DependencyLoader.ComputeSourceDependencyCacheKeyCore(
                 lib.Manifest, lib.Path, static p => RunnerFingerprint.ComputeFileContentHashMemoized(p),

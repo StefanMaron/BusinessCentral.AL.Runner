@@ -101,7 +101,7 @@ public sealed class DependencyCacheKeyContentHashMemoTests : IDisposable
             ms.Write(bytes, 0, bytes.Length);
         }
 
-        WriteLine("schema:v2");
+        WriteLine("schema:v3");
         RunnerFingerprint.WriteKeyLines(WriteLine);
         WriteLine(BcCompiler.RunnerEmitModeCacheTerm);
         WriteLine($"defines:{string.Join(",", BcCompiler.GetExtraPreprocessorSymbols())}");

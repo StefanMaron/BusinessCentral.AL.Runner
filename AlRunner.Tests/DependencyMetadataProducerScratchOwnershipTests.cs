@@ -160,7 +160,7 @@ public sealed class DependencyMetadataProducerScratchOwnershipTests
                 Version: new Version(1, 0, 0, 0),
                 AppId: appId,
                 Dependencies: Array.Empty<DependencyRef>()),
-            pkg, compiler: null!));
+            pkg, compiler: null!, Array.Empty<(AppManifest Manifest, string AppPath)>()));
 
         var after = Directory.Exists(DependencyMetadataProducer.ScratchContainer)
             ? Directory.GetFileSystemEntries(DependencyMetadataProducer.ScratchContainer)
