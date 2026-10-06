@@ -212,7 +212,7 @@ internal partial class LiveNavTestPage
     /// The page shows no row: its rowset is empty and neither the draft line nor a started new row
     /// stands in for one. A control reads blank then, whatever its type (#5358).
     /// </summary>
-    internal bool NoRowShown => _noRowShown && !_onNewRowLine && !_pendingNewRow;
+    internal bool NoRowShown => _noRowShown && !_onNewRowLine;
 
     // ONE NEW-RECORD STEP PER DRAFT-LINE ROW (issue #3029). Set the moment the platform's
     // new-record step has run for the draft line the cursor is on, and cleared whenever that

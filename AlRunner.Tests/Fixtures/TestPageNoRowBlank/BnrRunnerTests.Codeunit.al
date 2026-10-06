@@ -231,4 +231,73 @@ codeunit 73400 "BNR Runner Tests"
         Assert.AreEqual('', Card.QDecInit.Value, 'QDecInit');
         Assert.AreEqual('', Card.QBoolInit.Value, 'QBoolInit');
     end;
+
+    [Test]
+    procedure ListOverAnEmptyTable_AfterFirstAndLast_StillReadsBlank()
+    var
+        Card: TestPage "BNR Lines List";
+    begin
+        Initialize();
+        Card.OpenView();
+        Assert.IsFalse(Card.First(), 'First() has no row to go to');
+        Assert.AreEqual('', Card.QInt.Value, 'after First()');
+        Assert.IsFalse(Card.Last(), 'Last() has no row to go to');
+        Assert.AreEqual('', Card.QInt.Value, 'after Last()');
+    end;
+
+    [Test]
+    procedure ListFilteredToNothing_EveryControlReadsBlank()
+    var
+        Card: TestPage "BNR Lines List";
+    begin
+        Initialize();
+        InsertFullLine('H1', 10);
+        Card.OpenView();
+        Card.Filter.SetFilter("Header No.", 'ZZZ');
+        Assert.AreEqual('', Card.QInt.Value, 'QInt');
+        Assert.AreEqual('', Card.QDec.Value, 'QDec');
+        Assert.AreEqual('', Card.QIntInit.Value, 'QIntInit');
+    end;
+
+    [Test]
+    procedure EditableListOverAnEmptyTable_ShowsTheDraftLine_ReadingItsDefaults()
+    var
+        Card: TestPage "BNR Lines List";
+    begin
+        Initialize();
+        Card.OpenEdit();
+        Assert.AreEqual('0', Card.QInt.Value, 'QInt reads its default on the draft line');
+        Assert.AreEqual('5', Card.QIntInit.Value, 'QIntInit reads its InitValue');
+        Assert.AreEqual('Yes', Card.QBoolInit.Value, 'QBoolInit reads its InitValue');
+        Assert.AreEqual(0, Card.QInt.AsInteger(), 'AsInteger on the draft line');
+    end;
+
+    [Test]
+    procedure PartUnderAnEditableHostWithNoLines_ShowsTheDraftLine_ReadingItsDefaults()
+    var
+        Card: TestPage "BNR Card";
+    begin
+        Initialize();
+        InsertFullLine('H1', 10);
+        Card.OpenEdit();
+        Card.GoToKey('H0');
+        Assert.AreEqual('H0', Card.Lines.HeaderNo.Value, 'the draft line carries the link value');
+        Assert.AreEqual('5', Card.Lines.QIntInit.Value, 'QIntInit reads its InitValue');
+    end;
+
+    [Test]
+    procedure NewRowOnAnEmptyEditableList_ReadsTheValuesWrittenToIt()
+    var
+        Card: TestPage "BNR Lines List";
+    begin
+        Initialize();
+        Card.OpenEdit();
+        Card.New();
+        Card.HeaderNo.SetValue('X');
+        Card.LineNo.SetValue(1);
+        Card.QInt.SetValue(5);
+        Assert.AreEqual('5', Card.QInt.Value, 'the new row reads what was written');
+        Assert.AreEqual(5, Card.QInt.AsInteger(), 'typed read of the new row');
+        Assert.AreEqual('X', Card.HeaderNo.Value, 'the new row reads its key');
+    end;
 }

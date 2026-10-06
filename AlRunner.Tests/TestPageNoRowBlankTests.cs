@@ -32,6 +32,11 @@ public sealed class TestPageNoRowBlankTests
         r.AssertPassed("Codeunit73400.ListOverAnEmptyTable_TypedReadsAreTheTypeDefault");
         r.AssertPassed("Codeunit73400.ListWithARow_ReadsItsValues");
         r.AssertPassed("Codeunit73400.CardOverAnEmptyTable_EveryControlReadsBlank");
+        r.AssertPassed("Codeunit73400.ListOverAnEmptyTable_AfterFirstAndLast_StillReadsBlank");
+        r.AssertPassed("Codeunit73400.ListFilteredToNothing_EveryControlReadsBlank");
+        r.AssertPassed("Codeunit73400.EditableListOverAnEmptyTable_ShowsTheDraftLine_ReadingItsDefaults");
+        r.AssertPassed("Codeunit73400.PartUnderAnEditableHostWithNoLines_ShowsTheDraftLine_ReadingItsDefaults");
+        r.AssertPassed("Codeunit73400.NewRowOnAnEmptyEditableList_ReadsTheValuesWrittenToIt");
 
         r.AssertNoFailures();
     }
