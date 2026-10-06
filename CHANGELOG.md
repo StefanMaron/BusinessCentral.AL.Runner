@@ -21,6 +21,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **cache:** a changed or deleted layout, resource or translation file is not an AL-output cache HIT
 - **testpage:** a field on a part or list showing no row reads blank like BC
 - **affected:** a changed non-.al file the compile reads is a change to its object
 - **affected:** key metadata virtual tables when an object is added or removed
