@@ -1283,6 +1283,237 @@
       "outOfScope": false,
       "Doc": "docs/metadata-equivalence.md#deltas-declaration-order",
       "issue": 3926
+    },
+    {
+      "member": "TranslationKey.HasNamespace",
+      "reason": "Whether the key carries a namespace component. BC 29 puts the object's AL namespace in front of every translation key and the runner derives none of it. Translations are out of scope for the runner (repository owner, 2026-09-10, relayed on #3568), so this is the same decided surface as the other TranslationKey entries, on a member BC 29 introduced. Present only on BC 29, hence version-contingent.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true
+    },
+    {
+      "member": "TranslationKey.#IdNamespace",
+      "reason": "The hash of the namespace component. BC 29 puts the object's AL namespace in front of every translation key and the runner derives none of it. Translations are out of scope for the runner (repository owner, 2026-09-10, relayed on #3568), so this is the same decided surface as the other TranslationKey entries, on a member BC 29 introduced. Present only on BC 29, hence version-contingent.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true
+    },
+    {
+      "member": "TranslationKey.#NavSymbolKindNamespace",
+      "reason": "The symbol kind of the namespace component (BC: Namespace, runner: Module). BC 29 puts the object's AL namespace in front of every translation key and the runner derives none of it. Translations are out of scope for the runner (repository owner, 2026-09-10, relayed on #3568), so this is the same decided surface as the other TranslationKey entries, on a member BC 29 introduced. Present only on BC 29, hence version-contingent.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true
+    },
+    {
+      "member": "PageProperties.ToolTipTranslationKey",
+      "reason": "The page's ToolTip translation key, which BC 28 left empty and BC 29 states. BC 29 puts the object's AL namespace in front of every translation key and the runner derives none of it. Translations are out of scope for the runner (repository owner, 2026-09-10, relayed on #3568), so this is the same decided surface as the other TranslationKey entries, on a member BC 29 introduced. Present only on BC 29, hence version-contingent.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaTable.FieldsByAppAndId.<presence>",
+      "reason": "The by-(app, id) index over the merged tableextension fields the runner models and BC's per-app build-time document does not hold: the same oracle limitation as MetaTable.Fields.<presence> (runner-only), on an index BC 29 added. Present only on BC 29, hence version-contingent.",
+      "oracleLimitation": true,
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true,
+      "direction": "runner-only"
+    },
+    {
+      "member": "MetaTable.#fieldsByAppAndId.<presence>",
+      "reason": "The private backing store of MetaTable.FieldsByAppAndId; same reason as that entry.",
+      "oracleLimitation": true,
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true,
+      "direction": "runner-only"
+    },
+    {
+      "member": "MetaTable.Fields.<presence>",
+      "reason": "BC 29 declares four more platform FlowFields (ids 2000000005 to 2000000008) on every table than the runner builds; tracked as #5389. BC-only direction, so a field the runner builds and BC lacks still fails.",
+      "issue": 5389,
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true,
+      "direction": "bc-only",
+      "pathPrefix": "Fields[id=2000000005]"
+    },
+    {
+      "member": "MetaTable.Fields.<presence>",
+      "reason": "BC 29 declares four more platform FlowFields (ids 2000000005 to 2000000008) on every table than the runner builds; tracked as #5389. BC-only direction, so a field the runner builds and BC lacks still fails.",
+      "issue": 5389,
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true,
+      "direction": "bc-only",
+      "pathPrefix": "Fields[id=2000000006]"
+    },
+    {
+      "member": "MetaTable.Fields.<presence>",
+      "reason": "BC 29 declares four more platform FlowFields (ids 2000000005 to 2000000008) on every table than the runner builds; tracked as #5389. BC-only direction, so a field the runner builds and BC lacks still fails.",
+      "issue": 5389,
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true,
+      "direction": "bc-only",
+      "pathPrefix": "Fields[id=2000000007]"
+    },
+    {
+      "member": "MetaTable.Fields.<presence>",
+      "reason": "BC 29 declares four more platform FlowFields (ids 2000000005 to 2000000008) on every table than the runner builds; tracked as #5389. BC-only direction, so a field the runner builds and BC lacks still fails.",
+      "issue": 5389,
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true,
+      "direction": "bc-only",
+      "pathPrefix": "Fields[id=2000000008]"
+    },
+    {
+      "member": "MetaTable.FieldsById.<presence>",
+      "reason": "The by-id index of the same four BC 29 platform fields (#5389).",
+      "issue": 5389,
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true,
+      "direction": "bc-only",
+      "pathPrefix": "FieldsById[key=2000000005]"
+    },
+    {
+      "member": "MetaTable.FieldsById.<presence>",
+      "reason": "The by-id index of the same four BC 29 platform fields (#5389).",
+      "issue": 5389,
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true,
+      "direction": "bc-only",
+      "pathPrefix": "FieldsById[key=2000000006]"
+    },
+    {
+      "member": "MetaTable.FieldsById.<presence>",
+      "reason": "The by-id index of the same four BC 29 platform fields (#5389).",
+      "issue": 5389,
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true,
+      "direction": "bc-only",
+      "pathPrefix": "FieldsById[key=2000000007]"
+    },
+    {
+      "member": "MetaTable.FieldsById.<presence>",
+      "reason": "The by-id index of the same four BC 29 platform fields (#5389).",
+      "issue": 5389,
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true,
+      "direction": "bc-only",
+      "pathPrefix": "FieldsById[key=2000000008]"
+    },
+    {
+      "member": "MetaTable.#fieldsById.<presence>",
+      "reason": "The private backing store of MetaTable.FieldsById for the same four BC 29 platform fields (#5389).",
+      "issue": 5389,
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true,
+      "direction": "bc-only",
+      "pathPrefix": "#fieldsById[key=2000000005]"
+    },
+    {
+      "member": "MetaTable.#fieldsById.<presence>",
+      "reason": "The private backing store of MetaTable.FieldsById for the same four BC 29 platform fields (#5389).",
+      "issue": 5389,
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true,
+      "direction": "bc-only",
+      "pathPrefix": "#fieldsById[key=2000000006]"
+    },
+    {
+      "member": "MetaTable.#fieldsById.<presence>",
+      "reason": "The private backing store of MetaTable.FieldsById for the same four BC 29 platform fields (#5389).",
+      "issue": 5389,
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true,
+      "direction": "bc-only",
+      "pathPrefix": "#fieldsById[key=2000000007]"
+    },
+    {
+      "member": "MetaTable.#fieldsById.<presence>",
+      "reason": "The private backing store of MetaTable.FieldsById for the same four BC 29 platform fields (#5389).",
+      "issue": 5389,
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true,
+      "direction": "bc-only",
+      "pathPrefix": "#fieldsById[key=2000000008]"
+    },
+    {
+      "member": "NavAppObjectMetadataRuntimeDeltas.Count",
+      "reason": "Five extension-runtime-delta documents on BC 29 carry a different element count than the runner renders; not yet diagnosed, tracked as #5395.",
+      "issue": 5395,
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaTable.FieldsByAppAndId.<presence>",
+      "reason": "The by-(app, id) index of the four BC 29 platform fields the runner does not build (#5389).",
+      "issue": 5389,
+      "direction": "bc-only",
+      "pathPrefix": "FieldsByAppAndId[key=(00000000-0000-0000-0000-000000000000, 2000000005)]",
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaTable.FieldsByAppAndId.<presence>",
+      "reason": "The by-(app, id) index of the four BC 29 platform fields the runner does not build (#5389).",
+      "issue": 5389,
+      "direction": "bc-only",
+      "pathPrefix": "FieldsByAppAndId[key=(00000000-0000-0000-0000-000000000000, 2000000006)]",
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaTable.FieldsByAppAndId.<presence>",
+      "reason": "The by-(app, id) index of the four BC 29 platform fields the runner does not build (#5389).",
+      "issue": 5389,
+      "direction": "bc-only",
+      "pathPrefix": "FieldsByAppAndId[key=(00000000-0000-0000-0000-000000000000, 2000000007)]",
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaTable.FieldsByAppAndId.<presence>",
+      "reason": "The by-(app, id) index of the four BC 29 platform fields the runner does not build (#5389).",
+      "issue": 5389,
+      "direction": "bc-only",
+      "pathPrefix": "FieldsByAppAndId[key=(00000000-0000-0000-0000-000000000000, 2000000008)]",
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaTable.#fieldsByAppAndId.<presence>",
+      "reason": "The private backing store of MetaTable.FieldsByAppAndId for the same four BC 29 platform fields (#5389).",
+      "issue": 5389,
+      "direction": "bc-only",
+      "pathPrefix": "#fieldsByAppAndId[key=(00000000-0000-0000-0000-000000000000, 2000000005)]",
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaTable.#fieldsByAppAndId.<presence>",
+      "reason": "The private backing store of MetaTable.FieldsByAppAndId for the same four BC 29 platform fields (#5389).",
+      "issue": 5389,
+      "direction": "bc-only",
+      "pathPrefix": "#fieldsByAppAndId[key=(00000000-0000-0000-0000-000000000000, 2000000006)]",
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaTable.#fieldsByAppAndId.<presence>",
+      "reason": "The private backing store of MetaTable.FieldsByAppAndId for the same four BC 29 platform fields (#5389).",
+      "issue": 5389,
+      "direction": "bc-only",
+      "pathPrefix": "#fieldsByAppAndId[key=(00000000-0000-0000-0000-000000000000, 2000000007)]",
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaTable.#fieldsByAppAndId.<presence>",
+      "reason": "The private backing store of MetaTable.FieldsByAppAndId for the same four BC 29 platform fields (#5389).",
+      "issue": 5389,
+      "direction": "bc-only",
+      "pathPrefix": "#fieldsByAppAndId[key=(00000000-0000-0000-0000-000000000000, 2000000008)]",
+      "Doc": "docs/metadata-equivalence.md#bc-29-only-differences",
+      "versionContingent": true
     }
   ]
 }

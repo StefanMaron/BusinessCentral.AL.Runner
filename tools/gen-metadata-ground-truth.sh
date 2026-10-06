@@ -55,9 +55,14 @@ fi
 
 echo "[ground-truth] BC build $BC_BUILD -> $OUT/$BC_BUILD"
 
+# #5382: the framework follows the BC major (Directory.Build.props RunnerTfm: net10.0 from BC 29),
+# so the build is told the artifact's version and the output directory is read back from it.
+BC_VERSION_PREFIX="$(printf '%s' "$BC_BUILD" | sed -nE 's/^([0-9]+(\.[0-9]+)+).*/\1/p')"
+[ -n "$BC_VERSION_PREFIX" ] || { echo "cannot read a BC version from '$BC_BUILD'" >&2; exit 1; }
+if [ "${BC_VERSION_PREFIX%%.*}" -ge 29 ]; then TFM=net10.0; else TFM=net8.0; fi
 dotnet build "$REPO_ROOT/tools/metadata-ground-truth/MetadataGroundTruth.csproj" \
-  -c "$CONFIG" -p:ServiceTierPath="$ARTIFACTS" --nologo -v quiet
-TOOL="$REPO_ROOT/tools/metadata-ground-truth/bin/$CONFIG/net8.0/metadata-ground-truth.dll"
+  -c "$CONFIG" -p:_BCVersion="$BC_VERSION_PREFIX" -p:ServiceTierPath="$ARTIFACTS" --nologo -v quiet
+TOOL="$REPO_ROOT/tools/metadata-ground-truth/bin/$CONFIG/$TFM/metadata-ground-truth.dll"
 
 failed=0
 covered=0

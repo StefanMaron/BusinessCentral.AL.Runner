@@ -727,7 +727,13 @@ public sealed class MetadataEquivalenceHarnessTests
                     if (string.IsNullOrEmpty(emitted)) return;
                     attempted++;
                     var parts = emitted.Split(" - ", StringSplitOptions.None);
-                    var expected = new List<string> { "Table " + TranslationKeyHash(owner) };
+                    var expected = new List<string>();
+                    // BC 29 leads every key with the object's AL namespace ("Namespace <hash>"); BC 27/28
+                    // do not. Only that leading component is conditional, and when present its hash is
+                    // still derived from the object's own ALNamespace, so it is checked, not skipped (#5382).
+                    if (parts[0].StartsWith("Namespace ", StringComparison.Ordinal))
+                        expected.Add("Namespace " + TranslationKeyHash(table.GetAttribute("ALNamespace")));
+                    expected.Add("Table " + TranslationKeyHash(owner));
                     if (field is not null) expected.Add("Field " + TranslationKeyHash(field));
 
                     var prefixMatches = parts.Length == expected.Count + 1

@@ -692,6 +692,26 @@ moves and goes stale silently when it is not — the same defect as the build-ke
 went inert in `The_current_reader_reproduces_the_known_defect_shapes`. What the flag declares is a
 *property* of the difference: its population is version-contingent.
 
+<a id="bc-29-only-differences"></a>
+### Differences that exist only on BC 29 (#5382)
+
+The harness first ran on BC 29 when the ground-truth generator was made to build for it (the tool
+follows the runner's framework, `net10.0` from BC 29). The version-contingent entries below are
+for that reason: each names a member BC 29 introduced or a population only BC 29 has, so a 27/28
+leg matches nothing and would otherwise report the entry as stale.
+
+| entries | kind | what BC 29 changed |
+|---|---|---|
+| `TranslationKey.HasNamespace`, `.#IdNamespace`, `.#NavSymbolKindNamespace`, `PageProperties.ToolTipTranslationKey` | out of scope | translation keys gain a leading namespace component, and pages state a tool-tip key; translations stay out of scope ([why](#translation-keys-are-out-of-scope)) |
+| `MetaTable.FieldsByAppAndId.<presence>`, `.#fieldsByAppAndId.<presence>` | oracle limitation, runner-only | a by-(app, id) field index the build-time document does not hold ([why](#the-oracle-is-build-time-per-app-metadata)) |
+| `MetaTable.Fields.<presence>`, `.FieldsById.<presence>`, `.#fieldsById.<presence>`, `.FieldsByAppAndId.<presence>`, `.#fieldsByAppAndId.<presence>` (bc-only, one entry per id 2000000005 to 2000000008) | issue #5389 | four more platform FlowFields on every table |
+| `NavAppObjectMetadataRuntimeDeltas.Count` | issue #5395 | five delta documents with a different element count; not diagnosed |
+
+`TranslationKeysAreDerivable_NotAPermanentLimit` derives the namespace component too when a key
+carries one, from the object's own `ALNamespace`, so on BC 29 the derivation is still checked
+rather than skipped. Being version-contingent, these entries cannot report themselves stale
+(see the flag's blind spot below); when #5389 or #5395 lands, delete the entry.
+
 <a id="a-flagged-entry-can-go-stale-without-the-harness-saying-so"></a>
 ### The flag's own blind spot: a flagged entry can go stale and nothing reports it
 

@@ -325,6 +325,14 @@ internal sealed class CaptureOutputter : NavEmit.CodeModuleOutputter
         NavCA.IApplicationObjectTypeSymbol s, byte[] code, string metadata, string debugCode)
         => Items.Add((s.Name, s.GetType().Name, metadata, code?.Length ?? 0));
 
+#if BC_OUTPUTTER_ADDOBJECT
+    // BC 29 routes AL interfaces through this abstract member (metadata only, no code); it is kept
+    // like any other object so the ground truth still has every document BC produced.
+    public override void AddObject(
+        NavCA.IObjectTypeSymbol s, byte[] code, string metadata, string debugCode)
+        => Items.Add((s.Name, s.GetType().Name, metadata, code?.Length ?? 0));
+#endif
+
     public override void AddProfileObject(NavCA.ISymbol s, byte[] code, string metadata, string debugCode) { }
     public override void AddNavigationObject(string s) { }
     public override void AddExternalBusinessEvent(string s) { }

@@ -308,7 +308,7 @@ dotnet test AlRunner.Tests/AlRunner.Tests.csproj -c Release --no-build \
 The "probe" cited above is a hand-built `.app` — a zip holding a `NavxManifest.xml` (no
 dependencies, so only its own table and the platform's system tables resolve) and one `src/Probe.al` declaring a
 table and eleven pages, one per arm — run through
-`dotnet tools/metadata-ground-truth/bin/Release/net8.0/metadata-ground-truth.dll --app <probe.app> --out <dir> --artifacts <BC build>`.
+`dotnet tools/metadata-ground-truth/bin/Release/<net8.0 or net10.0, per BC major>/metadata-ground-truth.dll --app <probe.app> --out <dir> --artifacts <BC build>`.
 The tool compiles the source with BC's own compiler and writes the emitted `PageDefinition`
 documents, which is the same thing it does for Microsoft's apps.
 
