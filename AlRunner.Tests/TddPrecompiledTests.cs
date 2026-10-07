@@ -143,9 +143,9 @@ public sealed class TddPrecompiledTests : IDisposable
         using var doc = JsonDocument.Parse(stdout.Trim());
         var root = doc.RootElement;
         var tests = root.GetProperty("tests").EnumerateArray().ToList();
-        Assert.Equal(10, root.GetProperty("total").GetInt32());
+        Assert.Equal(11, root.GetProperty("total").GetInt32());
         Assert.Equal(5, root.GetProperty("passed").GetInt32());
-        Assert.Equal(5, root.GetProperty("failed").GetInt32());
+        Assert.Equal(6, root.GetProperty("failed").GetInt32());
         JsonElement Find(string name) => tests.Single(t => t.GetProperty("name").GetString()!.EndsWith("." + name));
 
         // The members the package declares run their real bodies and name no stub.
@@ -174,7 +174,7 @@ public sealed class TddPrecompiledTests : IDisposable
         Assert.Equal(new[] { CalcPointsStub }, StubsOf(own));
 
         // What --tdd refuses to stub drops its object, reported FAILED naming the missing symbol.
-        foreach (var name in new[] { "TextArgument_IsRefused", "StubbableCall_InTheSameDroppedFile", "ArrayElementQualifier_IsRefused", "NewOverloadOfAnExistingProcedure_IsRefused" })
+        foreach (var name in new[] { "TextArgument_IsRefused", "StubbableCall_InTheSameDroppedFile", "ArrayElementQualifier_IsRefused", "PlainSite_OfAMemberAnotherSiteCannotStub_IsRefused", "NewOverloadOfAnExistingProcedure_IsRefused" })
         {
             var t = Find(name);
             Assert.Equal("fail", t.GetProperty("status").GetString());

@@ -13,10 +13,11 @@
 // Scope, and why nothing here needs a separate "revert a bad guess" step: this generates into a
 // tree BcCompiler.Emit ALREADY has in memory as one of its own `trees[]`, or (#5037) into the
 // source of another bundle of the same run that is compiled from source — as overlay text
-// (TddCrossBundle.cs), recompiled by re-running the cycle. A symbol declared by neither (a
-// precompiled dependency's type, or a symbol BC couldn't resolve at all) is refused for a
-// structural reason — this is what keeps precompiled .app dependencies out of scope (#1997/#2001,
-// and #5037's own precompiled half) without any special-casing. And because generation runs strictly BEFORE the
+// (TddCrossBundle.cs), recompiled by re-running the cycle. A procedure of a codeunit declared by neither
+// (a package's: .app symbols, a DLL or embedded source) is stubbed BESIDE the object in a new codeunit of
+// this compile, never in it (#5037, TddPrecompiledStub.cs, docs/tdd-precompiled.md); any other symbol
+// declared by neither, or one BC couldn't resolve at all, is refused for a structural reason. And because
+// generation runs strictly BEFORE the
 // pre-existing exclude-and-retry loop, a wrong guess is caught for free: if a generated member
 // still doesn't make its referencing object compile (a bad inferred type, a shape this file
 // doesn't recognize, anything), that object is excluded and its [Test] procedures reported
@@ -205,7 +206,7 @@ public static partial class TddGeneration
     /// it's safe to re-derive per diagnostic including repeat diagnostics for an
     /// already-generated member). Returns null for every refuse case from this file's header:
     /// unrecognized syntax shape, unresolvable qualifier, or a qualifier declared outside this
-    /// compile's own trees (a precompiled dependency, out of scope).
+    /// compile's own trees that is neither a source bundle's nor a package's codeunit (a Target with Precompiled set).
     /// </summary>
     private static Target? ResolveTarget(
         NavCA.Compilation compilation, NavSyntax.SyntaxTree[] originalTrees, NavDiag.Diagnostic diag)
@@ -291,9 +292,9 @@ public static partial class TddGeneration
             var cross = TddCrossBundle.FindObject(SyntaxTypeFor(kind), qualType.Name);
             if (cross == null)
             {
-                // A codeunit of a loaded package (#5037): nothing to add the member to, so GenerateBesidePrecompiled.
-                // An overload is refused: a stub beside the object would shadow nothing it can see.
-                return kind == "procedure" && !overload && IsPackagedObject(qualType) && mae != null
+                // A codeunit of a loaded package (#5037): nothing to add the member to, so GenerateBesidePrecompiled,
+                // which takes only AL0132 (a missing procedure), never AL0126 (a missing overload).
+                return kind == "procedure" && IsPackagedObject(qualType) && mae != null
                     ? new Target(kind, -1, qualType.Name, memberName, mae, null, null, Precompiled: true)
                     : null;
             }
