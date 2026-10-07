@@ -1,0 +1,24 @@
+{
+  "id": "9b1d3f55-2a4c-4e78-8c06-7d5e1a3b9f21",
+  "name": "Runner Tests Fixture - Tdd Precompiled Test",
+  "publisher": "AL Runner Fixtures",
+  "version": "1.0.0.0",
+  "brief": "The test app of the #5037 precompiled-dependency --tdd reproducer.",
+  "description": "Depends on a precompiled app and calls procedures its codeunit does not declare yet.",
+  "dependencies": [
+    {
+      "id": "3c5e7a10-8b24-4d96-b1f3-5a7d2e9c4086",
+      "name": "Tdd Precompiled Dep",
+      "publisher": "AL Runner Fixtures",
+      "version": "1.0.0.0"
+    }
+  ],
+  "idRanges": [
+    {
+      "from": 65320,
+      "to": 65339
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

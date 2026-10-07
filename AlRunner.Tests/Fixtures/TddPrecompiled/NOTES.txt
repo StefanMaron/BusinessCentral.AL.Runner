@@ -1,0 +1,14 @@
+dep/ is the precompiled app of the #5037 --tdd fixture. TddPrecompiledTests compiles it with the runner under
+test, once per test run, and ships the resulting DLL in the test folder's .deps-bin next to a package it
+writes itself; a DLL checked in was built against one BC major's Ncl and could not run on another (27.5 lacks
+ALMethodScope.ALFinally(ALMethodScope)).
+
+The symbols name each method by the id its DLL dispatches on. BC derives that id from the method name, so it
+is the same on every build (read from the `case` labels of Codeunit65300.OnInvoke on 27.5 and 28.5). To read
+them again after changing dep/:
+
+  dotnet run --project AlRunner -c Release -- --cache /tmp/tdd-pre-dep AlRunner.Tests/Fixtures/TddPrecompiled/dep
+  ilspycmd /tmp/tdd-pre-dep/*.dll | grep 'case -\?[0-9]*:'
+
+and update ExistingMethodId / TwiceMethodId in TddPrecompiledTests. The dep/ source must never sit inside the
+test/ folder: the test app would compile it as its own.

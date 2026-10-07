@@ -356,6 +356,14 @@ internal static partial class ProgramSupport
         w.WriteLine("  takes (the test adds a parameter), generates an overload beside it, typed by the");
         w.WriteLine("  call site; the existing procedure is not touched.");
         w.WriteLine();
+        w.WriteLine("  When the implementing codeunit is not a source folder of the run but a package (a");
+        w.WriteLine("  .app in .alpackages: its DLL, or its own source) nothing of it is changed. A missing");
+        w.WriteLine("  procedure is generated in a new codeunit of the test's own compile, beside the");
+        w.WriteLine("  object, and each call to it through a variable is pointed there; every other call");
+        w.WriteLine("  keeps running the real object. The tests that reach it are named like any other");
+        w.WriteLine("  generated member. Not covered yet, so reported as a FAILED test: a field, an enum value,");
+        w.WriteLine("  an overload or a whole object of a package; see docs/tdd-precompiled.md.");
+        w.WriteLine();
         w.WriteLine("  Every test that reaches a generated member, passed or failed, gets a line naming");
         w.WriteLine("  those members — reached in its own body or through procedures it calls in the");
         w.WriteLine("  same app (helpers, library codeunits, [HandlerFunctions] handlers, event");

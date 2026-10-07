@@ -65,7 +65,7 @@ public static class TddSourceOverlay
 /// <summary>
 /// The source bundles of this run that another bundle depends on, and what --tdd generated into
 /// them. Registered by the layered pre-pass (<c>RunLayeredPrePass</c>); a precompiled dependency
-/// is never registered, so it stays out of scope (#5037's precompiled half).
+/// is never registered: its procedures are stubbed beside the object instead (TddPrecompiledStub.cs).
 /// </summary>
 public static class TddCrossBundle
 {

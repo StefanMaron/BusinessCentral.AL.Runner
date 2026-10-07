@@ -127,6 +127,8 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
     public static readonly IReadOnlyDictionary<string, int> MeasuredWeightSeconds =
         new Dictionary<string, int>(StringComparer.Ordinal)
         {
+            // #5037: PR #5427, CI run 37656308473 (head 8cd27def): 51.0s (BC 27.5), 51.2s (28.5), 54.3s (29.0), lowest leg.
+            ["TddPrecompiledTests"] = 51,
             // #3262: 8 tests, most spawning a real runner subprocess, several of them twice
             // (a cold write then a warm read from a fresh server process, so the in-process
             // module cache cannot answer instead of the disk). Absent from this table on its
