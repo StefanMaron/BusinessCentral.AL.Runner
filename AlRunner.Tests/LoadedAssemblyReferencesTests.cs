@@ -53,8 +53,9 @@ public sealed class LoadedAssemblyReferencesTests
     {
         var first = typeof(object).Assembly;
         var last = typeof(FactAttribute).Assembly;
+        // TestScratch.Dir reserves a path and creates nothing at it, which is the point here.
         var gone = new FakeAssembly(Path.Combine(
-            Path.GetTempPath(), "al-runner-never-existed-" + Guid.NewGuid().ToString("N"), "r2r-chunks", "000.dll"));
+            TestScratch.Dir("al-runner-loaded-assembly-references-absent"), "r2r-chunks", "000.dll"));
 
         var refs = LoadedAssemblyReferences.Build(new Assembly[] { first, gone, last });
 
