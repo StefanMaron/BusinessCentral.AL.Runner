@@ -622,7 +622,9 @@ public sealed partial class BcCompiler
                 Console.Error.WriteLine(
                     "[BcCompiler-diag] DotNet probing paths:\n  " + string.Join("\n  ", probingPaths));
 
-            var locator = new NavDotNet.AssemblyLocator(probingPaths);
+            var locator = GuardAgainstForwarderLoops(
+                new NavDotNet.AssemblyLocator(probingPaths), probingPaths,
+                System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(), RunningDotNetRefPackGap);
             _dotNetResolverFactory = new NavDotNet.DotNetResolverFactory(locator);
             return _dotNetResolverFactory;
         }
