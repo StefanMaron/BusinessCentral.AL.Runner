@@ -1652,8 +1652,10 @@ same-named types still loaded from the previous run.
 Two directories declaring the same app `id` (two checkouts of one app, or a copy) can be
 sent to one server. A module an earlier request compiled for one of them is reused for the
 other only when that directory holds the same source: every `.al` file by relative path and
-content, `app.json`, and the resolved dependencies. Otherwise the request compiles its own
-source, as a fresh server would. A module compiled by a `tdd` request, or with a test codeunit
+content, `app.json`, and the resolved dependencies by identity, path and package bytes (#5081): a
+library rebuilt at the same version and path is a different dependency, and the compile loader's
+warm symbols for it are replaced too. Otherwise the request compiles its own source, as a fresh
+server would. A module compiled by a `tdd` request, or with a test codeunit
 dropped from it (#5118), is never reused by a later request. A dependency package another request loaded from a different path is reused
 only when its bytes are the same (#5079). Within one request, bundles that share an app id
 still share one module (#1683, #1892).
