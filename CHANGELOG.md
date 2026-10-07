@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **ci:** support BC 29 as a required version
 - **jobs:** free memory limits shared-bundle workers, measured floor, abort/resume/--per-suite tests
 - **jobs:** workers sharing a heavy bundle claim its test codeunits first come, first served
 - **server:** runTests request fields for the CLI flags tests pass
@@ -21,6 +22,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **coverage:** GetMetaApplicationObject serves tableextension, pageextension and reportextension lookups
 - **testpage:** a TestPage variable opens again after its closing action
 - **server:** the cross-request module reuse fingerprint names dependency packages by content
 - **cache:** key the compiled-deps and dep-metadata entries on the resolved closure the compile used
