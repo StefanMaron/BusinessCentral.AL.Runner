@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **tdd:** generate a missing procedure of a precompiled codeunit beside it
 - **ci:** support BC 29 as a required version
 - **jobs:** free memory limits shared-bundle workers, measured floor, abort/resume/--per-suite tests
 - **jobs:** workers sharing a heavy bundle claim its test codeunits first come, first served
