@@ -967,6 +967,17 @@ public sealed partial class BcCompiler
     private static readonly object _stageSync = new();
     private static string? _stageRootCache;
 
+    /// <summary>The packages of the latest scan above (#5446): every .app of the package folders with symbols, referenced
+    /// by the compile or not. <c>--tdd</c> asks it whether a package declares an object the compile cannot see.</summary>
+    private static List<PackageScanEntry> _tddScanInventory = new();
+
+    /// <summary>The packages the latest compile's scan found, minus the app being compiled.</summary>
+    internal static IReadOnlyList<PackageScanEntry> ScannedPackagesForTdd()
+    {
+        lock (_refSync)
+            return _tddScanInventory.Where(e => _currentAppId == null || e.AppId != _currentAppId.Value).ToList();
+    }
+
     /// <summary>
     /// One .app package the loader's scan set ended up containing, in scan order. This is
     /// the exact candidate list BC's own <c>AbstractSymbolReferenceAnalyzer</c> would build
@@ -1423,6 +1434,7 @@ public sealed partial class BcCompiler
             // one case (a surviving package sharing the excluded app's Name) where it is not
             // provably so and this code falls back to a physically-reduced loader.
             var loaderScanDirs = DeduplicateAppPackageDirs(packageDirs, null, out var scanInventory);
+            _tddScanInventory = scanInventory;
             Mark($"dedup-scan ({scanInventory.Count} pkgs)");
 
             // ── Two memo halves, because they cost three orders of magnitude apart (#2678) ──

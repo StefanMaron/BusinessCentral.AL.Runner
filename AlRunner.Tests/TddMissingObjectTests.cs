@@ -148,8 +148,8 @@ public sealed class TddMissingObjectTests : IDisposable
         // One object per name, in name order, with the ids that order gives, in the file that names it first.
         Assert.Equal(new[]
         {
-            "--tdd: generated codeunit \"Another Missing Codeunit\" (id 65325) in A2SecondFileTests.Codeunit.al: no app of the run declares it",
-            "--tdd: generated codeunit \"No Such Codeunit\" (id 65326) in A1ObjectTests.Codeunit.al: no app of the run declares it",
+            "--tdd: generated codeunit \"Another Missing Codeunit\" (id 65325) in A2SecondFileTests.Codeunit.al: no app of the run and no package it can read declares it",
+            "--tdd: generated codeunit \"No Such Codeunit\" (id 65326) in A1ObjectTests.Codeunit.al: no app of the run and no package it can read declares it",
         }, lines.Where(l => l.StartsWith("--tdd: generated codeunit")).ToList());
         Assert.Contains("--tdd: generated 6 member(s) this run:", stderr);
         Assert.Contains("--tdd: 7 test(s) reach generated stubs this run:", stderr);
@@ -205,7 +205,7 @@ public sealed class TddMissingObjectTests : IDisposable
         Assert.True(exit == 1, $"exit {exit}\n{stderr}");
         using var doc = JsonDocument.Parse(stdout.Trim());
         var tests = doc.RootElement.GetProperty("tests").EnumerateArray().ToList();
-        Assert.Contains("--tdd: generated codeunit \"Another Missing Codeunit\" (id 65325) in A2SecondFileTests.Codeunit.al: no app of the run declares it", stderr);
+        Assert.Contains("--tdd: generated codeunit \"Another Missing Codeunit\" (id 65325) in A2SecondFileTests.Codeunit.al: no app of the run and no package it can read declares it", stderr);
         Assert.Contains("--tdd: codeunit \"No Such Codeunit\" not generated - no free codeunit id in the app's idRanges for it", stderr);
         Assert.DoesNotContain("--tdd: generated codeunit \"No Such Codeunit\"", stderr);
         // Every file names "No Such Codeunit", so none of them compiles.

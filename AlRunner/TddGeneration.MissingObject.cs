@@ -84,6 +84,11 @@ public static partial class TddGeneration
                     Refuse($"another bundle of the run declares it ({Path.GetFileName(declaredIn)}) - declare the dependency on it; an empty codeunit would shadow it");
                     continue;
                 }
+                if (FindPackageDeclaringCodeunit(BcCompiler.ScannedPackagesForTdd(), name) is { } inPackage)
+                {
+                    Refuse(inPackage);
+                    continue;
+                }
                 var id = TddPrecompiledStub.FreeCodeunitId(trees, idRanges, reserved);
                 if (id == null)
                 {
@@ -96,7 +101,7 @@ public static partial class TddGeneration
                 sb.Append($"\ncodeunit {id.Value} {Quote(name)}\n{{\n}}\n");
                 var uses = new List<(string, int)>();
                 foreach (var s in sites) uses.AddRange(UseSitesOf(originalTrees, s.TreeIdx, s.Node));
-                Console.Error.WriteLine($"--tdd: generated codeunit {Quote(name)} (id {id.Value}) in {Path.GetFileName(trees[home].FilePath)}: no app of the run declares it");
+                Console.Error.WriteLine($"--tdd: generated codeunit {Quote(name)} (id {id.Value}) in {Path.GetFileName(trees[home].FilePath)}: no app of the run and no package it can read declares it");
                 result.Add(new TddMissingObject(new TddGeneratedMember(name, TddMissingObject.MemberKind, id.Value.ToString()), uses));
             }
             catch (Exception ex)
@@ -110,6 +115,33 @@ public static partial class TddGeneration
             trees[idx] = NavSyntax.SyntaxTree.ParseObjectText(text + sb, path: trees[idx].FilePath, encoding: null!, parseOptions, default);
         }
         return result;
+    }
+
+    /// <summary>
+    /// The refusal reason when a package of <paramref name="packages"/> declares a codeunit named
+    /// <paramref name="name"/> (any namespace, any case), or cannot be read to rule it out; null when none does (#5446).
+    /// The compile resolves only the packages the app depends on, so a package it leaves out can declare the object
+    /// that is AL0185 here and an empty codeunit added for it would shadow the real one. Packages are taken in name,
+    /// version, path order, so the package named does not depend on the scan order. Trap: an unreadable package is
+    /// not an absent one - it may be the object's home - so it refuses too.
+    /// </summary>
+    internal static string? FindPackageDeclaringCodeunit(IReadOnlyList<BcCompiler.PackageScanEntry> packages, string name)
+    {
+        foreach (var e in packages.OrderBy(p => p.Name, StringComparer.Ordinal).ThenBy(p => p.Version).ThenBy(p => p.Path, StringComparer.Ordinal))
+        {
+            var label = $"the package {e.Name} {e.Version} ({Path.GetFileName(e.Path)})";
+            try
+            {
+                if (Patches.BcAppSymbolCache.Get(e.Path).Objects.Any(o =>
+                        o.Kind == "Codeunit" && string.Equals(o.Name, name, StringComparison.OrdinalIgnoreCase)))
+                    return $"{label} declares it - add the dependency on it to app.json; an empty codeunit would shadow it";
+            }
+            catch (Exception ex)
+            {
+                return $"{label} could not be read ({ex.GetType().Name}: {FirstLine(ex.Message)}), so it cannot be ruled out as the home of the codeunit";
+            }
+        }
+        return null;
     }
 
     private static bool IsPlainObjectName(string written, string name)
