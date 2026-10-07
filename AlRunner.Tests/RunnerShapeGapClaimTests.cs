@@ -413,14 +413,14 @@ public sealed class RunnerShapeGapClaimTests
                 $"RunnerShapeGap.Query surface '{surface}' has no Sites entry stating its claim");
     }
 
-    // ── The nine sites the issue's own measurement could not see ─────────────────────────
+    // ── The executor's sites, which the issue's own measurement could not see ─────────────────────────
 
     [Fact]
-    public void TheIsolatedJoinExecutor_RoutesItsNineRefusalsThroughTheSameFactory()
+    public void TheIsolatedJoinExecutor_RoutesItsRefusalsThroughTheSameFactory()
     {
         // AlRunner.QueryJoin/JoinExecutor.cs is a separate assembly, so it is outside the
         // AlRunner/ tree the issue measured. It spelled its own reason strings and cited
-        // docs/scope.md at all nine — including "query-join-synthesized-subquery", the SAME
+        // docs/scope.md at all nine of its first sites — including "query-join-synthesized-subquery", the SAME
         // shape the in-proc mirror in RecordPatches.QueryProjection.cs refuses, reached down
         // the other path. One shape, two claims, depending on which path found it.
         var src = File.ReadAllText(Path.Combine(RepoRoot, "AlRunner.QueryJoin", "JoinExecutor.cs"));
@@ -428,7 +428,8 @@ public sealed class RunnerShapeGapClaimTests
             .Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)));
 
         Assert.DoesNotContain("docs/scope.md", code, StringComparison.Ordinal);
-        Assert.Equal(9, Regex.Matches(code, @"ctx\.OutOfScope\(").Count);
+        // Nine original sites, and a tenth: ApplyWhereFilters' refusal of a WHERE filter no pass would apply (#5436).
+        Assert.Equal(10, Regex.Matches(code, @"ctx\.OutOfScope\(").Count);
     }
 
     [Fact]

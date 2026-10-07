@@ -395,11 +395,9 @@ public static partial class RecordPatches
     /// <summary>
     /// The text handed to BC as a dataitem <c>FieldFilter.Value</c> for one DataItemTableFilter
     /// condition (#5418). <c>const(Database::"X")</c> is compiler syntax BC replaces with the table
-    /// id before a service tier reads the metadata (Query 522: <c>"Source Type" =
-    /// const(Database::"Item Ledger Entry")</c>), so a const resolves through the resolver
-    /// CalcFormula already uses (#3195) and anything else stays as written. Not applied to a
-    /// query column's ColumnFilter: the AL compiler refuses <c>Database::</c> there
-    /// (<see cref="ResolveObjectReferenceConst"/>).
+    /// id before a service tier reads the metadata, so a const resolves through the resolver
+    /// CalcFormula uses (#3195) and anything else stays as written. Not applied to a ColumnFilter:
+    /// the AL compiler refuses <c>Database::</c> there.
     /// </summary>
     internal static string DataItemTableFilterValue(ParsedColumnFilter cond) =>
         cond.Kind == ParsedColumnFilterKind.Const ? ResolveObjectReferenceConst(cond.Value) : cond.Value;

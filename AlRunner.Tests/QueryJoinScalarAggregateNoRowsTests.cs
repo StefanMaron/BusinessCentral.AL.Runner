@@ -69,6 +69,46 @@ public class QueryJoinScalarAggregateNoRowsTests
             }
         }
 
+        query 75363 "QJS5436 Static None"
+        {
+            QueryType = Normal;
+            elements
+            {
+                dataitem(ForSide; "QJS5436 Entry")
+                {
+                    DataItemTableFilter = Positive = const(false);
+                    filter(ItemNo; "Item No.") { ColumnFilter = ItemNo = const('I-NONE'); }
+                    column(TotalQty; Qty) { Method = Sum; }
+                    dataitem(FromSide; "QJS5436 Entry")
+                    {
+                        DataItemLink = "Entry No." = ForSide."Entry No.";
+                        SqlJoinType = InnerJoin;
+                        DataItemTableFilter = Positive = const(true);
+                    }
+                }
+            }
+        }
+
+        query 75364 "QJS5436 Static One"
+        {
+            QueryType = Normal;
+            elements
+            {
+                dataitem(ForSide; "QJS5436 Entry")
+                {
+                    DataItemTableFilter = Positive = const(false);
+                    filter(ItemNo; "Item No.") { ColumnFilter = ItemNo = const('I-1'); }
+                    column(TotalQty; Qty) { Method = Sum; }
+                    dataitem(FromSide; "QJS5436 Entry")
+                    {
+                        DataItemLink = "Entry No." = ForSide."Entry No.";
+                        SqlJoinType = InnerJoin;
+                        DataItemTableFilter = Positive = const(true);
+                    }
+                }
+            }
+        }
+
         codeunit 75362 "QJS5436 Tests"
         {
             Subtype = Test;
@@ -148,6 +188,36 @@ public class QueryJoinScalarAggregateNoRowsTests
             end;
 
             [Test]
+            procedure StaticColumnFilterSelectingNoJoinedRow_StillReadsOneZeroRow()
+            var
+                Q: Query "QJS5436 Static None";
+                Rows: Text;
+            begin
+                Init();
+                Q.Open();
+                while Q.Read() do
+                    Rows += Format(Q.TotalQty, 0, 9) + ';';
+                Q.Close();
+                if Rows <> '0;' then
+                    Error('expected the one defaulted row 0; got %1', Rows);
+            end;
+
+            [Test]
+            procedure StaticColumnFilterSelectingRows_SumsOnlyThoseRows()
+            var
+                Q: Query "QJS5436 Static One";
+                Rows: Text;
+            begin
+                Init();
+                Q.Open();
+                while Q.Read() do
+                    Rows += Format(Q.TotalQty, 0, 9) + ';';
+                Q.Close();
+                if Rows <> '30;' then
+                    Error('expected only I-1 summed to 30; got %1', Rows);
+            end;
+
+            [Test]
             procedure NoFilter_SumsEveryRow()
             var
                 Q: Query "QJS5436 Scalar";
@@ -173,6 +243,6 @@ public class QueryJoinScalarAggregateNoRowsTests
 
         Assert.Empty(result.CompilationErrors);
         Assert.True(result.ExitCode == 0, $"runner exit {result.ExitCode}:\n{result}");
-        result.AssertCounts(passed: 4, failed: 0, errors: 0);
+        result.AssertCounts(passed: 6, failed: 0, errors: 0);
     }
 }

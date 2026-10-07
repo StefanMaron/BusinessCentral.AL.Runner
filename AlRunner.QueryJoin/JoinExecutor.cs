@@ -502,8 +502,8 @@ public static class JoinExecutor
     /// column that is not a group key. RecordPatches.ApplyJoinRuntimeFilters runs on the
     /// projected rows afterwards as the HAVING pass only, and skips the columns applied here
     /// (RecordPatches.IsAppliedBeforeGrouping, #5436): a scalar aggregate built from no joined
-    /// row has null non-aggregated slots to evaluate them against. A filter whose column is
-    /// not among the query's columns at all is refused by that pass.
+    /// row has null non-aggregated slots to evaluate them against. A WHERE filter whose column
+    /// is not a plan column is refused here, since nothing else would apply it.
     /// </summary>
     private static List<Dictionary<string, object?>> ApplyWhereFilters(JoinContext ctx,
         JoinProjectionPlan plan, List<Dictionary<string, object?>> combos,
@@ -513,7 +513,14 @@ public static class JoinExecutor
         foreach (var f in whereFilters)
         {
             var col = plan.Columns.FirstOrDefault(c => c.Aggregation == "None" && Equals(c.ColumnObj, f.Key));
-            if (col != null) conds.Add((col, f.Value));
+            if (col == null)
+                // Applied nowhere otherwise: the HAVING pass skips non-aggregated columns (#5436).
+                throw ctx.OutOfScope(
+                    "NavQuery (multi-dataitem join)",
+                    "query-join-where-filter-no-plan-column",
+                    "a WHERE filter's column is not a non-aggregated column of the join's projection plan, "
+                    + "so no pass would apply it");
+            conds.Add((col, f.Value));
         }
         if (conds.Count == 0) return combos;
         return combos
