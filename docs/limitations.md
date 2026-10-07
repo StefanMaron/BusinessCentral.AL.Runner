@@ -497,16 +497,21 @@ partial output. The fix is to install the .NET SDK, or unpack the `microsoft.net
 `netstandard.library.ref` NuGet packages under `<dotnet root>/packs/`.
 
 A runtime-only install used to abort the compile with a stack overflow in Cecil's `ExportedType`
-resolution before any object was dropped (#5232). The service tier ships netstandard-era copies of
-`Microsoft.Win32.Registry`, `System.Security.AccessControl`, `System.Security.Principal.Windows`,
-`System.ComponentModel.Annotations` and `System.Numerics.Vectors` that forward some types to
-`mscorlib`; the runtime's `mscorlib` forwards them back to the tier copy (the only one whose public key
-token matches), and BC's resolver follows that loop without a bound. With the packs present they lead
-the probing path and bind real definitions, so the loop never closes. When the packs are missing, the
-runner now answers "not found" for the tier files that forward types and shadow a runtime assembly
-(`BcCompiler.FindForwarderShimsShadowingTheRuntime`), which ends the chain; the run then completes
-with the `[dotnet-ref-packs]` line and the usual AL0185 drops. The shim set is judged from the files,
-and `DotNetForwarderCycleTests` walks the real service tier against the real runtime on every CI leg.
+resolution before any object was dropped (#5232). The service tier ships netstandard-era copies of a
+few System assemblies that forward some types to `mscorlib` (or to a facade pointing back); the
+runtime's facade forwards them back to the tier copy (the only one whose public key token matches),
+and BC's resolver follows that loop without a bound. Measured on every local tier from 27.0 to 28.5
+against runtime 8.0.30, the files on such a loop are exactly `Microsoft.Win32.Registry`,
+`System.Security.AccessControl`, `System.Security.Principal.Windows`,
+`System.ComponentModel.Annotations` and `System.Numerics.Vectors`. With the packs present they lead the
+probing path and bind real definitions, so the loop never closes. When the packs are missing, the
+runner answers "not found" for the tier files that BC's own locator sends round a loop
+(`BcCompiler.FindForwarderLoopMembers`), which ends the chain; the run then completes with the
+`[dotnet-ref-packs]` line and the usual AL0185 drops. The set is judged by walking the forwarders, not
+by a name list or by "has a forwarder": the tier's real implementations that forward one type to
+`System.Runtime` (`System.Text.Json`, `System.Diagnostics.DiagnosticSource`) stay visible, and
+`DotNetForwarderCycleTests` pins both on the real tier on every CI leg. An alias that needs one of the
+hidden assemblies reports AL0185 with AL0451 (assembly not found) rather than AL0452 (type not found).
 
 **A pack for another major is a different fault.** With only another major's
 `Microsoft.NETCore.App.Ref` present the enumeration still falls back to the highest one (the

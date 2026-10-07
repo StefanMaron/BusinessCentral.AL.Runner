@@ -6,17 +6,19 @@
 // is no corpus half.
 //
 // CLAIM: on a runtime-only dotnet install the service tier's netstandard-era copies of a few System
-// assemblies forward types to `mscorlib`, and the runtime's `mscorlib` forwards them back to the
-// tier copy (the only one whose public key token matches), so BC's Cecil follows the loop until the
-// stack is gone (exit 134). The runner hides exactly those copies in that state.
+// assemblies forward types onward and the runtime's facades forward them back to the tier copy (the
+// only one whose public key token matches), so BC's Cecil follows the loop until the stack is gone
+// (exit 134). The runner hides exactly the files that sit on such a loop, and no others: the tier's
+// real implementations that merely forward one type to System.Runtime (System.Text.Json,
+// System.Diagnostics.DiagnosticSource) stay visible.
 //
 // What the whole-pipeline run showed (not repeatable here, because the test host's own dotnet root
 // has packs): a `DotNet` alias of System.Diagnostics.Eventing.Reader.EventRecord compiled against a
 // copy of the .NET 8 runtime with no packs/ aborted before the change and passed after it.
 //
-// TRAP: the chase below mirrors CecilAssemblyResolver.Resolve (locator.GetPathToAssembly(FullName),
-// then read that file); the CONTROL (the raw locator over the same directories finds loops) is what
-// keeps a zero from a walk that cannot see them from reading as a pass.
+// TRAP: the chase mirrors CecilAssemblyResolver.Resolve (locator.GetPathToAssembly(FullName), then
+// read that file); the CONTROL (the raw locator over the same directories finds loops) is what keeps
+// a zero from a walk that cannot see them from reading as a pass.
 
 using Microsoft.Dynamics.Nav.CodeAnalysis.DotNet;
 using Mono.Cecil;
@@ -34,34 +36,62 @@ public sealed class DotNetForwarderCycleTests : IDisposable
     }
 
     // ---------------------------------------------------------------------------------------
-    // Which files are hidden: judged from the files, on synthetic assemblies.
+    // Which files are hidden: judged from the loops, on synthetic assemblies.
     // ---------------------------------------------------------------------------------------
 
-    private static void WriteAssembly(string dir, string name, string? forwardsTypeToAssembly)
+    private const string Fwd = "Some.Ns.Forwarded";
+
+    /// <summary>An assembly that forwards <see cref="Fwd"/> to <paramref name="forwardsTo"/>, or defines it.</summary>
+    private static void WriteAssembly(string dir, string name, string? forwardsTo, bool defines = false)
     {
         Directory.CreateDirectory(dir);
         var asm = AssemblyDefinition.CreateAssembly(
             new AssemblyNameDefinition(name, new Version(1, 0, 0, 0)), name, ModuleKind.Dll);
-        if (forwardsTypeToAssembly != null)
-            asm.MainModule.ExportedTypes.Add(new ExportedType("Some.Ns", "Forwarded", asm.MainModule,
-                new AssemblyNameReference(forwardsTypeToAssembly, new Version(4, 0, 0, 0))));
+        if (forwardsTo != null)
+        {
+            // The reference must be in AssemblyReferences, or Cecil writes the forwarder with no scope.
+            var target = new AssemblyNameReference(forwardsTo, new Version(1, 0, 0, 0));
+            asm.MainModule.AssemblyReferences.Add(target);
+            asm.MainModule.ExportedTypes.Add(new ExportedType("Some.Ns", "Forwarded", asm.MainModule, target));
+        }
+        if (defines)
+            asm.MainModule.Types.Add(new TypeDefinition("Some.Ns", "Forwarded",
+                Mono.Cecil.TypeAttributes.Public | Mono.Cecil.TypeAttributes.Class, asm.MainModule.TypeSystem.Object));
         asm.Write(Path.Combine(dir, name + ".dll"));
     }
 
+    /// <summary>Resolves a reference by simple name to the first probing directory holding it.</summary>
+    private sealed class FirstFoundLocator(IEnumerable<string> dirs) : IAssemblyLocator
+    {
+        public IEnumerable<string> ProbingPaths => dirs;
+        public string? GetPathToAssembly(string assemblyName)
+        {
+            var simple = assemblyName.Split(',')[0];
+            return dirs.Select(d => Path.Combine(d, simple + ".dll")).FirstOrDefault(File.Exists);
+        }
+    }
+
     [Fact]
-    public void OnlyATierFileThatForwardsTypesAndShadowsARuntimeAssemblyIsHidden()
+    public void OnlyTheTierFilesOnAForwarderLoopAreSelected()
     {
         var tier = Path.Combine(_root, "tier");
         var runtime = Path.Combine(_root, "runtime");
-        WriteAssembly(tier, "Shim", forwardsTypeToAssembly: "mscorlib");          // forwards + in runtime: HIDDEN
-        WriteAssembly(runtime, "Shim", forwardsTypeToAssembly: null);
-        WriteAssembly(tier, "RealImpl", forwardsTypeToAssembly: null);            // same name, no forwarders: kept
-        WriteAssembly(runtime, "RealImpl", forwardsTypeToAssembly: null);
-        WriteAssembly(tier, "TierOnlyForwarder", forwardsTypeToAssembly: "mscorlib"); // forwards, no runtime twin: kept
-        WriteAssembly(runtime, "RuntimeOnly", forwardsTypeToAssembly: "mscorlib");  // the runtime dir itself is never hidden
+        // A loop: tier Shim -> runtime Facade -> tier Shim (the facade finds the tier file by name).
+        WriteAssembly(tier, "Shim", forwardsTo: "Facade");
+        WriteAssembly(runtime, "Facade", forwardsTo: "Shim");
+        // NOT a loop: a tier real implementation that also forwards one type, to an assembly that defines it.
+        WriteAssembly(tier, "RealImplWithOneForwarder", forwardsTo: "Core");
+        WriteAssembly(runtime, "Core", forwardsTo: null, defines: true);
+        // NOT a loop: a forwarder whose target is nowhere.
+        WriteAssembly(tier, "ForwardsIntoTheVoid", forwardsTo: "Nowhere");
+        // NOT a loop: a tier file with no forwarders at all.
+        WriteAssembly(tier, "Plain", forwardsTo: null, defines: true);
 
-        var hidden = BcCompiler.FindForwarderShimsShadowingTheRuntime(new[] { tier, runtime }, runtime);
+        var dirs = new[] { tier, runtime };
+        var hidden = BcCompiler.FindForwarderLoopMembers(new FirstFoundLocator(dirs), dirs, runtime);
 
+        // Control: the walk does see the loop from the runtime side too, and the runtime facade is
+        // part of it, yet only the tier file is ever offered for hiding.
         Assert.Equal(new[] { Path.GetFullPath(Path.Combine(tier, "Shim.dll")) }, hidden.ToArray());
     }
 
@@ -85,42 +115,45 @@ public sealed class DotNetForwarderCycleTests : IDisposable
         Assert.Null(locator.GetPathToAssembly("Missing"));
     }
 
-    private static BcCompiler.DotNetRefPackGap Gap(bool aliasesCannotBind)
-        => new("warning", aliasesCannotBind, "cause");
+    // ---------------------------------------------------------------------------------------
+    // The wiring: the call chain GetOrCreateDotNetFactory runs, driven with a forced install shape.
+    // ---------------------------------------------------------------------------------------
 
-    /// <summary>
-    /// The wiring: the hiding applies exactly when the packs are missing. With packs present (null),
-    /// or present for another major (AliasesCannotBind false), BC's own locator is used untouched.
-    /// </summary>
+    private string DotnetRoot(string name, bool withPacks)
+    {
+        var root = Path.Combine(_root, name);
+        var runtimeDir = Path.Combine(root, "shared", "Microsoft.NETCore.App", "8.0.30");
+        Directory.CreateDirectory(runtimeDir);
+        if (withPacks)
+        {
+            Directory.CreateDirectory(Path.Combine(root, "packs", "Microsoft.NETCore.App.Ref", "8.0.30", "ref", "net8.0"));
+            Directory.CreateDirectory(Path.Combine(root, "packs", "NETStandard.Library.Ref", "2.1.0", "ref", "netstandard2.1"));
+        }
+        return runtimeDir + Path.DirectorySeparatorChar;
+    }
+
     [Fact]
-    public void TheHidingIsWiredInOnlyWhenTheReferencePacksAreMissing()
+    public void TheFactoryIsGivenTheHidingLocatorOnlyWhenTheReferencePacksAreMissing()
     {
         var tier = Path.Combine(_root, "tier");
-        var runtime = Path.Combine(_root, "runtime");
-        WriteAssembly(tier, "Shim", forwardsTypeToAssembly: "mscorlib");
-        WriteAssembly(runtime, "Shim", forwardsTypeToAssembly: null);
-        var shim = Path.GetFullPath(Path.Combine(tier, "Shim.dll"));
-        var inner = new FixedLocator(new() { ["Shim"] = shim });
-        var dirs = new[] { tier, runtime };
+        WriteAssembly(tier, "Shim", forwardsTo: "Facade");
 
-        var missing = BcCompiler.GuardAgainstForwarderLoops(inner, dirs, runtime, Gap(aliasesCannotBind: true));
-        Assert.Null(missing.GetPathToAssembly("Shim"));
+        var packless = DotnetRoot("packless", withPacks: false);
+        WriteAssembly(packless, "Facade", forwardsTo: "Shim");
+        var factory = BcCompiler.CreateDotNetResolverFactory(new[] { tier, packless }, packless, null, out var missingLocator);
+        Assert.NotNull(factory);
+        Assert.IsType<BcCompiler.ForwarderShimHidingAssemblyLocator>(missingLocator);
 
-        Assert.Same(inner, BcCompiler.GuardAgainstForwarderLoops(inner, dirs, runtime, gap: null));
-        Assert.Same(inner, BcCompiler.GuardAgainstForwarderLoops(inner, dirs, runtime, Gap(aliasesCannotBind: false)));
-        Assert.Equal(shim, inner.GetPathToAssembly("Shim"));   // control: the shim is findable when not hidden
+        var withPacks = DotnetRoot("withpacks", withPacks: true);
+        BcCompiler.CreateDotNetResolverFactory(new[] { tier, withPacks }, withPacks, null, out var presentLocator);
+        Assert.IsType<AssemblyLocator>(presentLocator);   // BC's own locator, untouched
     }
 
     // ---------------------------------------------------------------------------------------
     // The real service tier and the real runtime: does BC's own locator send Cecil round a loop?
     // ---------------------------------------------------------------------------------------
 
-    /// <summary>
-    /// Forwarder chains that close on themselves, walked the way CecilAssemblyResolver walks them:
-    /// ask the locator for the scope's full name, read that file, look for the type there, follow the
-    /// next ExportedType. A repeat of (file, type) is a loop. Starts from every exported type of every
-    /// assembly in <paramref name="dirs"/>.
-    /// </summary>
+    /// <summary>The loops visible through <paramref name="locator"/>, as "file : type" (the walk of FindForwarderLoopMembers, reported per start).</summary>
     private static List<string> ForwarderLoops(IAssemblyLocator locator, IEnumerable<string> dirs)
     {
         var modules = new Dictionary<string, ModuleDefinition?>(StringComparer.Ordinal);
@@ -161,6 +194,20 @@ public sealed class DotNetForwarderCycleTests : IDisposable
         return loops.ToList();
     }
 
+    // Measured on tier 28.5.54151.55132 against runtime 8.0.30. A tier that needs another entry has
+    // grown a new looping shim: confirm it IS a loop (the control below) before adding it.
+    private static readonly string[] KnownLoopFiles =
+    {
+        "Microsoft.Win32.Registry.dll", "System.ComponentModel.Annotations.dll",
+        "System.Numerics.Vectors.dll", "System.Security.AccessControl.dll",
+        "System.Security.Principal.Windows.dll",
+    };
+
+    // Real implementations that carry a single forwarder to System.Runtime: hiding them turned a
+    // working JsonDocument / Activity alias into AL0185 (review of #5442).
+    private static readonly string[] RealImplementationsThatMustStayVisible =
+        { "System.Text.Json.dll", "System.Diagnostics.DiagnosticSource.dll" };
+
     [SkippableFact]
     public void WithNoReferencePacks_TheRealServiceTierAndRuntimeNoLongerFormAForwarderLoop()
     {
@@ -178,11 +225,18 @@ public sealed class DotNetForwarderCycleTests : IDisposable
             "this service tier and runtime form no forwarder loop without the reference packs, so " +
             "hiding nothing is correct here and this test cannot discriminate");
 
-        var hidden = BcCompiler.FindForwarderShimsShadowingTheRuntime(dirs, runtime);
+        var hidden = BcCompiler.FindForwarderLoopMembers(raw, dirs, runtime);
         var hiding = new BcCompiler.ForwarderShimHidingAssemblyLocator(new AssemblyLocator(dirs), hidden);
+        var hiddenNames = hidden.Select(Path.GetFileName).OrderBy(n => n, StringComparer.Ordinal).ToArray();
 
         Assert.Empty(ForwarderLoops(hiding, dirs));
-        // The hiding is the whole story: it removed files, it did not make the walk blind.
+        // The hiding removed files; it did not make the walk blind.
         Assert.NotEmpty(hidden);
+        // Only loop members, and no real implementation among them.
+        foreach (var name in RealImplementationsThatMustStayVisible)
+            Assert.DoesNotContain(name, hiddenNames);
+        Assert.Empty(hiddenNames.Except(KnownLoopFiles, StringComparer.Ordinal));
+        // Everything hidden is a file that sits in the tier, never one from the runtime directory.
+        Assert.All(hidden, f => Assert.StartsWith(Path.GetFullPath(tier), f, StringComparison.Ordinal));
     }
 }
