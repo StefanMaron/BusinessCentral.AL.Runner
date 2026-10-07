@@ -40,7 +40,7 @@ public sealed class TddPrecompiledTests : IDisposable
 
     // The ids a method of the dep codeunit is dispatched by: BC derives them from the method name, so they
     // are the same on every BC build (read back from the DLL's OnInvoke `case` labels on 27.5 and 28.5). A
-    // wrong id shows as `Function ID -1 was called` in the real-body tests, never as a silent pass.
+    // wrong id shows as `Function ID <id> was called. The object with ID 65300 does not have a member with that ID.` in the real-body tests, never as a silent pass.
     private const int ExistingMethodId = -2135483332;
     private const int TwiceMethodId = 1516892452;
 
@@ -171,9 +171,6 @@ public sealed class TddPrecompiledTests : IDisposable
         using var doc = JsonDocument.Parse(stdout.Trim());
         var root = doc.RootElement;
         var tests = root.GetProperty("tests").EnumerateArray().ToList();
-        Assert.Equal(16, root.GetProperty("total").GetInt32());
-        Assert.Equal(8, root.GetProperty("passed").GetInt32());
-        Assert.Equal(8, root.GetProperty("failed").GetInt32());
         JsonElement Find(string name) => tests.Single(t => t.GetProperty("name").GetString()!.EndsWith("." + name));
 
         // The members the package declares run their real bodies and name no stub.
@@ -231,27 +228,43 @@ public sealed class TddPrecompiledTests : IDisposable
             Assert.Empty(StubsOf(t));
         }
 
-        Assert.Contains("--tdd: generated 4 member(s) this run:", stderr);
+        // Within ONE file the earlier call decides: Ranked(1) assigned to an Integer comes first, so the stub
+        // answers an Integer and the Boolean assignment after it is what no longer compiles (the reverse
+        // would put the error on the first call).
+        var sameFile = Find("DisagreeingShapes_TheEarlierCallInTheFileDecides");
+        Assert.Equal("fail", sameFile.GetProperty("status").GetString());
+        Assert.Contains("Cannot implicitly convert type 'Integer' to 'Boolean'", sameFile.GetProperty("message").GetString());
+        Assert.DoesNotContain("'Boolean' to 'Integer'", sameFile.GetProperty("message").GetString());
+        Assert.Empty(StubsOf(sameFile));
+
+        // Counts last, so a red names the test that broke before it reads as a bare count.
+        Assert.Equal(17, root.GetProperty("total").GetInt32());
+        Assert.Equal(8, root.GetProperty("passed").GetInt32());
+        Assert.Equal(9, root.GetProperty("failed").GetInt32());
+
+        Assert.Contains("--tdd: generated 5 member(s) this run:", stderr);
         Assert.Contains("--tdd: 7 test(s) reach generated stubs this run:", stderr);
         // The generated list is in ordinal member order, and the stub codeunits took their ids in that order:
         // the first member's file got the first free id, and so on (nothing follows the diagnostics' order).
         var lines = stderr.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
-        var listed = lines.SkipWhile(l => !l.StartsWith("--tdd: generated 4 member(s)")).Skip(1).Take(4).Select(l => l.Trim()).ToList();
+        var listed = lines.SkipWhile(l => !l.StartsWith("--tdd: generated 5 member(s)")).Skip(1).Take(5).Select(l => l.Trim()).ToList();
         Assert.Equal(new[]
         {
             "Precompiled Points: procedure \"Bonus\"(Arg1: Boolean): Integer",
             "Precompiled Points: procedure \"CalcPoints\"(Arg1: Integer): Integer",
             "Precompiled Points: procedure \"Pick\"(Arg1: Integer): Integer",
+            "Precompiled Points: procedure \"Ranked\"(Arg1: Integer): Integer",
             "Precompiled Points: procedure \"Shaped\"(Arg1: Integer): Integer",
         }, listed);
         Assert.Equal(new[]
         {
-            "--tdd: stub codeunit \"TDD Stub 65330\" beside precompiled Precompiled Points in PrecompiledPointsMoreTests.Codeunit.al: \"Bonus\", \"CalcPoints\"",
-            "--tdd: stub codeunit \"TDD Stub 65331\" beside precompiled Precompiled Points in A1RefusedTests.Codeunit.al: \"CalcPoints\"",
-            "--tdd: stub codeunit \"TDD Stub 65332\" beside precompiled Precompiled Points in PrecompiledPointsTests.Codeunit.al: \"CalcPoints\"",
-            "--tdd: stub codeunit \"TDD Stub 65333\" beside precompiled Precompiled Points in A6OrderFirstTests.Codeunit.al: \"Pick\"",
-            "--tdd: stub codeunit \"TDD Stub 65334\" beside precompiled Precompiled Points in A7OrderSecondTests.Codeunit.al: \"Pick\"",
-            "--tdd: stub codeunit \"TDD Stub 65335\" beside precompiled Precompiled Points in Tests3ShapeTests.Codeunit.al: \"Shaped\"",
+            "--tdd: stub codeunit \"TDD Stub 65331\" beside precompiled Precompiled Points in PrecompiledPointsMoreTests.Codeunit.al: \"Bonus\", \"CalcPoints\"",
+            "--tdd: stub codeunit \"TDD Stub 65332\" beside precompiled Precompiled Points in A1RefusedTests.Codeunit.al: \"CalcPoints\"",
+            "--tdd: stub codeunit \"TDD Stub 65333\" beside precompiled Precompiled Points in PrecompiledPointsTests.Codeunit.al: \"CalcPoints\"",
+            "--tdd: stub codeunit \"TDD Stub 65334\" beside precompiled Precompiled Points in A6OrderFirstTests.Codeunit.al: \"Pick\"",
+            "--tdd: stub codeunit \"TDD Stub 65335\" beside precompiled Precompiled Points in A7OrderSecondTests.Codeunit.al: \"Pick\"",
+            "--tdd: stub codeunit \"TDD Stub 65336\" beside precompiled Precompiled Points in A8SameFileOrderTests.Codeunit.al: \"Ranked\"",
+            "--tdd: stub codeunit \"TDD Stub 65337\" beside precompiled Precompiled Points in Tests3ShapeTests.Codeunit.al: \"Shaped\"",
         }, lines.Where(l => l.StartsWith("--tdd: stub codeunit")).ToList());
         // A refusal says why, once per member.
         Assert.Contains("--tdd: not generated beside precompiled Precompiled Points: \"Fire\" - no call to it fixes its parameter and return types", stderr);
