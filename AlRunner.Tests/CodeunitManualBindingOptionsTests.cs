@@ -203,10 +203,7 @@ public abstract class Codeunit{id} : Microsoft.Dynamics.Nav.Runtime.NavCodeunit
     protected Codeunit{id}(Microsoft.Dynamics.Nav.Runtime.ITreeObject owner, int objectId)
         : base(owner, objectId) {{ }}
 }}";
-            var refs = AppDomain.CurrentDomain.GetAssemblies()
-                .Where(a => !a.IsDynamic && !string.IsNullOrEmpty(a.Location))
-                .Select(a => MetadataReference.CreateFromFile(a.Location))
-                .ToList();
+            var refs = LoadedAssemblyReferences.Build();
 
             var compilation = CSharpCompilation.Create(
                 $"al-runner-test-manualbinding-{id}-{Guid.NewGuid():N}",

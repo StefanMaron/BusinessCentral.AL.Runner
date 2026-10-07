@@ -63,12 +63,12 @@ public sealed class DependencyR2rChunkModuleIdentityTests : IDisposable
     private readonly string _root = TestScratch.Dir("al-runner-r2r-chunk-module-identity");
     private readonly string _cacheRoot = TestScratch.FlatDir("al-runner-r2r-chunk-module-identity-cache-");
 
-    public void Dispose()
-    {
-        CacheRoots.ResetForTests();
-        try { Directory.Delete(_root, recursive: true); } catch { /* best effort */ }
-        try { Directory.Delete(_cacheRoot, recursive: true); } catch { /* best effort */ }
-    }
+    // Deliberately deletes NOTHING (#5414). The chunks this class loads sit under _cacheRoot, and an
+    // assembly stays in AppDomain.GetAssemblies() with that Location after the directory is gone,
+    // which broke every later class enumerating loaded assemblies. Both directories are owned
+    // scratch (TestScratch), so ScratchDirs removes them at host exit; the stubs are a few KB.
+    // LoadedAssemblyLifetimeGuardTests fails a Directory.Delete added back here.
+    public void Dispose() => CacheRoots.ResetForTests();
 
     private static byte[] CompileStub(string assemblyName)
     {

@@ -92,10 +92,7 @@ public abstract class Codeunit{codeunitId} : Microsoft.Dynamics.Nav.Runtime.NavC
     protected Codeunit{codeunitId}(Microsoft.Dynamics.Nav.Runtime.ITreeObject owner, int id)
         : base(owner, id) {{ }}
 }}";
-        var refs = AppDomain.CurrentDomain.GetAssemblies()
-            .Where(a => !a.IsDynamic && !string.IsNullOrEmpty(a.Location))
-            .Select(a => MetadataReference.CreateFromFile(a.Location))
-            .ToList();
+        var refs = LoadedAssemblyReferences.Build();
 
         var compilation = CSharpCompilation.Create(
             $"al-runner-test-codeunit-{codeunitId}-{Guid.NewGuid():N}",
