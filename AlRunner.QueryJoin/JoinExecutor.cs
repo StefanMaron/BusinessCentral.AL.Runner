@@ -499,11 +499,11 @@ public static class JoinExecutor
     /// <summary>
     /// #5145: keep only the joined rows whose non-aggregated columns satisfy every WHERE
     /// filter. Applied before grouping, so a group totals only its rows inside a filter on a
-    /// column that is not a group key. RecordPatches.ApplyJoinRuntimeFilters still runs on
-    /// the projected rows afterwards; it answers the same for these columns, because every row
-    /// left in a group passed here, and it remains the HAVING pass for aggregated columns.
-    /// A filter whose column is not a non-aggregated plan column is left to that pass, which
-    /// refuses a column it cannot locate.
+    /// column that is not a group key. RecordPatches.ApplyJoinRuntimeFilters runs on the
+    /// projected rows afterwards as the HAVING pass only, and skips the columns applied here
+    /// (RecordPatches.IsAppliedBeforeGrouping, #5436): a scalar aggregate built from no joined
+    /// row has null non-aggregated slots to evaluate them against. A filter whose column is
+    /// not among the query's columns at all is refused by that pass.
     /// </summary>
     private static List<Dictionary<string, object?>> ApplyWhereFilters(JoinContext ctx,
         JoinProjectionPlan plan, List<Dictionary<string, object?>> combos,
