@@ -34,10 +34,7 @@ public sealed class ExtensionMetaApplicationObjectTests
 
     private static void CompileAndLoad(string source)
     {
-        var refs = AppDomain.CurrentDomain.GetAssemblies()
-            .Where(a => !a.IsDynamic && !string.IsNullOrEmpty(a.Location))
-            .Select(a => MetadataReference.CreateFromFile(a.Location))
-            .ToList();
+        var refs = LoadedAssemblyReferences.Build();
         var compilation = CSharpCompilation.Create(
             $"al-runner-test-extension-meta-{Guid.NewGuid():N}",
             new[] { CSharpSyntaxTree.ParseText(source) },
