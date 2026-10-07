@@ -22,6 +22,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **testpage:** a TestPage field spells its expected and shown values the way BC's control does
 - **coverage:** GetMetaApplicationObject serves tableextension, pageextension and reportextension lookups
 - **testpage:** a TestPage variable opens again after its closing action
 - **server:** the cross-request module reuse fingerprint names dependency packages by content
