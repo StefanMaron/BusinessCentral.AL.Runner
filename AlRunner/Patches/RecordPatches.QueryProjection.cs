@@ -1518,6 +1518,7 @@ public static partial class RecordPatches
                         "query-join-runtime-filter-unresolved-column",
                         "a runtime filter's column could not be located in the query's own " +
                         "DataItems/QueryColumns");
+                if (IsAppliedBeforeGrouping((NCLMetaQueryColumn)key)) continue;
                 conds.Add((slot, expr));
             }
 
@@ -1538,6 +1539,7 @@ public static partial class RecordPatches
                     "query-join-static-columnfilter-unresolved-column",
                     "a static ColumnFilter's column could not be located in the query's own " +
                     "DataItems/QueryColumns");
+            if (IsAppliedBeforeGrouping(col)) continue;
             conds.Add((slot, expr));
         }
         if (conds.Count == 0) return rows;
@@ -1560,6 +1562,19 @@ public static partial class RecordPatches
             return true;
         });
     }
+
+    /// <summary>
+    /// True for a condition the join executor has already applied to the joined rows before
+    /// grouping (JoinExecutor.ApplyWhereFilters, #5145): a column that is neither aggregated nor a
+    /// FlowFilter. ApplyJoinRuntimeFilters leaves it out, so it is only the HAVING pass.
+    /// Observably equivalent to BC's WHERE-then-GROUP BY: every row of a group already passed, so
+    /// the second look answers the same. It does not for a scalar aggregate built from no joined
+    /// row, whose non-aggregated slots are null, and which BC still returns (#5436, corpus
+    /// codeunit 69980). Trap: the executor's plan and ComputeJoinColumnSlotMap list the same
+    /// columns by design; change them together.
+    /// </summary>
+    private static bool IsAppliedBeforeGrouping(NCLMetaQueryColumn column) =>
+        column.AggregationType == AggregationType.None && !IsFlowFilterColumn(column);
 
     /// <summary>Invoke BC's FilterExpression.Evaluate(NavValue, ISortingRulesProvider) by reflection.</summary>
     private static bool EvaluateFilterExpression(object expr, object navValue, object? sortingRules)
