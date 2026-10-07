@@ -908,7 +908,9 @@ to fall through to `Convert.ToString(value, InvariantCulture)`, which spelled a 
 more differently from the control and could never match it.
 
 The text BC shows, measured on a service tier (corpus codeunit 69932 "TPF Tests", the probe
-revision of corpus PR 558, every cloud leg 27.0 to 28.5):
+revision of corpus PR 558, every cloud leg 27.0 to 29.0). A list page's row reads the same text,
+and its draft line reads the blank row's: `''` for a Date, Time, DateTime and Duration, but `0.00`,
+`No`, the first caption and the braced null Guid for the rest (codeunit 69935):
 
 | field | text | the runner's source |
 |---|---|---|
