@@ -16,6 +16,9 @@ namespace AlRunner.Tests;
 /// Both scans are textual, like ScratchDirOwnershipGuardTests, because the offender and the victim
 /// are different classes that may run in either order, or on different lanes. A runtime check can
 /// only see the damage if the victim runs after the offender.
+///
+/// SCOPE: a tripwire, not a proof. It reads one file at a time, so a load made through a helper in
+/// another file, or through an AssemblyLoadContext enumeration, is not seen.
 /// </summary>
 public sealed class LoadedAssemblyLifetimeGuardTests
 {
@@ -30,10 +33,23 @@ public sealed class LoadedAssemblyLifetimeGuardTests
         "LoadFromAssemblyPath(",
         "Assembly.LoadFrom(",
         "Assembly.LoadFile(",
+        "Assembly.UnsafeLoadFrom(",
         ".LoadAll(",
     ];
 
-    internal static readonly string[] DeleteExpressions = ["Directory.Delete(", "File.Delete("];
+    /// <summary>Every spelling of a delete this project uses or could reach for: the static
+    /// <c>Directory</c>/<c>File</c> calls, the <c>DirectoryInfo</c>/<c>FileInfo</c> instance forms, and
+    /// <c>FileSystem.Delete*</c>. A file that loads and deletes is allowlisted, never scanned around.</summary>
+    internal static readonly string[] DeleteExpressions =
+    [
+        "Directory.Delete(",
+        "File.Delete(",
+        ".Delete(true",
+        ".Delete(recursive",
+        ".Delete()",
+        "FileSystem.DeleteDirectory(",
+        "FileSystem.DeleteFile(",
+    ];
 
     /// <summary>
     /// Files that load an assembly from a path AND delete something, with why the deletion cannot
@@ -113,6 +129,15 @@ public sealed class LoadedAssemblyLifetimeGuardTests
     }
 
     [Fact]
+    public void EveryAllowlistEntry_StatesItsReason()
+    {
+        var blank = Allowed.Where(kv => string.IsNullOrWhiteSpace(kv.Value)).Select(kv => kv.Key).ToList();
+        Assert.True(blank.Count == 0,
+            "These Allowed entries carry no reason, so nothing says why their deletions cannot remove a "
+            + "loaded file: " + string.Join(", ", blank));
+    }
+
+    [Fact]
     public void EveryAllowlistEntry_StillLoadsAndDeletes_SoTheListCannotGoStale()
     {
         var sources = Sources();
@@ -152,7 +177,7 @@ public sealed class LoadedAssemblyLifetimeGuardTests
     /// reads a loaded assembly's path. <c>typeof(X).Assembly.Location</c> is a pinned assembly and is
     /// not matched.</summary>
     internal static readonly System.Text.RegularExpressions.Regex ReferenceFromLoopVariable =
-        new(@"CreateFromFile\(\s*\w+\.Location\s*\)", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        new(@"CreateFromFile\(\s*\w+\.Location!?\s*[,)]", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     internal static bool BuildsReferencesFromLoadedLocations(string source)
         => Contains(source, ["GetAssemblies()"])
@@ -180,6 +205,10 @@ public sealed class LoadedAssemblyLifetimeGuardTests
     {
         Assert.True(BuildsReferencesFromLoadedLocations(
             "var refs = AppDomain.CurrentDomain.GetAssemblies()\n  .Select(a => MetadataReference.CreateFromFile(a.Location))"));
+        Assert.True(BuildsReferencesFromLoadedLocations(
+            "var refs = AppDomain.CurrentDomain.GetAssemblies()\n  .Select(a => MetadataReference.CreateFromFile(a.Location!))"));
+        Assert.True(BuildsReferencesFromLoadedLocations(
+            "var refs = AppDomain.CurrentDomain.GetAssemblies()\n  .Select(a => MetadataReference.CreateFromFile(a.Location, props))"));
         Assert.False(BuildsReferencesFromLoadedLocations(
             "var r = MetadataReference.CreateFromFile(typeof(object).Assembly.Location);"));
         Assert.False(BuildsReferencesFromLoadedLocations(
