@@ -1087,7 +1087,7 @@ internal partial class LiveNavTestPage
     /// CLIENT action, so pressing it drives the logical form's close right there, whoever opened
     /// the page. <c>OnQueryClosePage</c> is raised with the action's result, then <c>OnClosePage</c>,
     /// and the variable is shut: every later call raises "The TestPage is not open." and an
-    /// <c>Open*</c> opens it again. Corpus codeunit "TPC Closing Action Probes"
+    /// <c>Open*</c> opens it again. Corpus codeunit "TPC Closing Action Tests"
     /// (StefanMaron/BusinessCentral.AL.Language.Tests#555), identical on every cloud leg.
     ///
     /// <para>Two routes reach here and a veto means the same on both. On the RunModal route a

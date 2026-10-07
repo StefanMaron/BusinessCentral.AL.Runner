@@ -228,7 +228,7 @@ codeunit 65863 "Tcm Close Message Tests"
     // #3593 makes the built-in OK invoked from a [ModalPageHandler] attempt the close, and #5400
     // makes the one invoked on a page the TEST opened attempt it too: BC's OK action closes the
     // form, which raises OnQueryClosePage with OK and then OnClosePage, and every later call on
-    // the variable raises "The TestPage is not open." (corpus codeunit "TPC Closing Actions",
+    // the variable raises "The TestPage is not open." (corpus codeunit "TPC Closing Action Tests",
     // StefanMaron/BusinessCentral.AL.Language.Tests#555). A page the test opened is not closed
     // twice by it: the OK is the only close attempt, so the trigger is raised once, and the
     // variable's own Close() afterwards has nothing left to do.

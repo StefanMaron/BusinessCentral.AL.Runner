@@ -408,9 +408,8 @@ internal partial class LiveNavTestPage
                     _page.FlushParts();
                 // OK() raises nothing when the table refuses the row, then or when the page goes
                 // out of scope (corpus 60045 DelayedCard_DuplicateKey_OK, #4624).
-                var refusalsBefore = _page._validationErrors.Count;
-                _page.FlushRow(_result is FormResult.OK ? RefusedInsert.Record : RefusedInsert.Raise);
-                saveRefused = _page._validationErrors.Count > refusalsBefore;
+                // True when the row's insert was refused and recorded: the close is refused with it.
+                saveRefused = _page.FlushRow(_result is FormResult.OK ? RefusedInsert.Record : RefusedInsert.Raise);
             }
 
             // On BC this invoke IS the close attempt -- see AttemptHandlerDrivenClose.

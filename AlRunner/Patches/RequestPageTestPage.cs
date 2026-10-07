@@ -56,9 +56,9 @@ internal sealed class RequestPageTestPage : MockITestPage
     // Set by the first built-in OK/Cancel the handler invokes: BC's action closes the request page
     // right there, so every later call on the handler's variable raises "The TestPage is not open."
     // and a second OK/Cancel cannot overwrite the first one's result (corpus codeunit "TPC Closing
-    // Action Probes", StefanMaron/BusinessCentral.AL.Language.Tests#555). The close TRIGGERS still run
+    // Action Tests", StefanMaron/BusinessCentral.AL.Language.Tests#555). The close TRIGGERS still run
     // when the handler returns: BC raises them at the invoke, so a handler that read their effect
-    // between the two would differ.
+    // between the two would differ (#5407).
     private bool _closedByAction;
 
     /// <summary>Whether a built-in action has closed the page, which is what
