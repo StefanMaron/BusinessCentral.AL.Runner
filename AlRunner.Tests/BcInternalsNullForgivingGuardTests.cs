@@ -346,7 +346,13 @@ public sealed class BcInternalsNullForgivingGuardTests
         // 131 -> 132 for NavServerHandle.ObjectType in DotNetInteropShims.ReadObjectType (#3222),
         // a BcShape.Property: a silent null would name the interface instead of the handle's type
         // in the dotnet-platform-unsupported refusal for a failed DotNet member call.
-        Assert.Equal(132, converted);
+        //
+        // 132 -> 136 for the four BcShape.Property reads of a record on another company
+        // (RecordPatches.CompanyStores.cs, #5349): NavRecord.RecordImplementation, then
+        // RecordImplementation.Session, NavSession.Database and NavDatabase.CompanyTokens. A silent
+        // null on the first would route every record to the session company's store, and on the
+        // other three would send a clone of a record on another company back to the session company.
+        Assert.Equal(136, converted);
     }
 
     /// <summary>

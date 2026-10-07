@@ -12,7 +12,9 @@
 //     builds the working record of every row-wise bulk write from that name, and "" put the clone
 //     back on the session company (a DeleteAll through a record on another company emptied the
 //     session company's table);
-//   - the read hook that routes RecordImplementation.dataAccess is still the one every record read goes through.
+//   - the read hook that routes RecordImplementation.dataAccess is still the one every record read goes through;
+//   - TableRelation validation reads the related table through the record's company token, not through
+//     DataAccessSource.GetDataAccessForTable (which has no company and answered the session company's rows).
 using System.Reflection;
 using AlRunner.Patches;
 using Microsoft.Dynamics.Nav.Runtime;
@@ -86,5 +88,23 @@ public sealed class CompanyStoreBindingTests
             .Methods.Single(m => m.Name == "MoveNext");
 
         Assert.Contains(Called(deleteAll), n => n.Contains("RecordPatches::RecordImplementation_LiveDataAccess"));
+    }
+
+    [SkippableFact]
+    public void ValidateRelation_ReadsTheRelatedTableThroughTheRecordsCompanyToken()
+    {
+        Skip.IfNot(File.Exists(NclPath), $"the Ncl is not present at '{NclPath}'.");
+        using var asm = AssemblyDefinition.ReadAssembly(NclPath);
+        NclRewriteMarker.SkipUnlessRewritten(asm.MainModule, NclPath);
+
+        var machine = asm.MainModule.GetType(Rt + "RecordImplementation")!.NestedTypes
+            .Single(t => t.Name.StartsWith("<ValidateRelation>d__"));
+        var moveNext = machine.Methods.Single(m => m.Name == "MoveNext");
+        var called = Called(moveNext);
+
+        Assert.Single(called, n => n.Contains("RecordPatches::GetDataAccessForTableInCompany"));
+        Assert.DoesNotContain(called, n => n.Contains("DataAccessSource::GetDataAccessForTable"));
+        Assert.Contains(moveNext.Body.Instructions, i => i.OpCode == OpCodes.Ldfld
+            && i.Operand is FieldReference f && f.Name == "companyToken" && f.DeclaringType.Name == machine.Name);
     }
 }

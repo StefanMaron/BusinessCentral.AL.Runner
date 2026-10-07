@@ -23,11 +23,11 @@
 //
 // WHAT IS NOT ROUTED
 //   Anything that asks DataAccessSource.GetDataAccessForTable for a table WITHOUT a record in hand
-//   still gets the session-company store: RecordImplementation.ValidateRelation (TableRelation
-//   validation), NavDataTransfer, Query objects, and the runner's own AutoIncrement high-water
-//   read. A record on another company that validates a TableRelation therefore checks the
-//   session company's related rows. FlowField sources ARE routed (FlowFieldPatches asks
-//   GetDataAccessForTableInCompany with the record's token). See docs/limitations.md.
+//   still gets the session-company store: NavDataTransfer, Query objects, and the runner's own
+//   AutoIncrement high-water read. FlowField sources and TableRelation validation ARE routed:
+//   both ask GetDataAccessForTableInCompany with the record's token (FlowFieldPatches directly,
+//   RecordImplementation.ValidateRelation through NclCecilRewrite's call-site rewrite).
+//   See docs/limitations.md.
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -188,6 +188,19 @@ public static partial class RecordPatches
     public static object GetDataAccessForTableInCompany(object source, NCLMetaTable table, int companyToken)
     {
         var sessionStore = NavDataAccessSource_GetDataAccessForTable(source, table, false);
+        return companyToken == 0 ? sessionStore : CompanyStoreFor(sessionStore, table, companyToken);
+    }
+
+    /// <summary>
+    /// The same, with <c>isTemporary</c>: the exact shape of the call
+    /// <c>RecordImplementation.ValidateRelation</c> makes, which the Cecil pass
+    /// (<c>RewriteNcl_ValidateRelationCompanyStore</c>) re-points here with the state machine's own
+    /// <c>companyToken</c>.
+    /// </summary>
+    public static object GetDataAccessForTableInCompany(
+        object source, NCLMetaTable table, bool isTemporary, int companyToken)
+    {
+        var sessionStore = NavDataAccessSource_GetDataAccessForTable(source, table, isTemporary);
         return companyToken == 0 ? sessionStore : CompanyStoreFor(sessionStore, table, companyToken);
     }
 

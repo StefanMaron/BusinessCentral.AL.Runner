@@ -513,6 +513,7 @@ public static partial class NclCecilRewrite
         RewriteNcl_Runtime(asm);
         RewriteNcl_ExternalEvents(asm);
         RewriteNcl_SqlConnection(asm);
+        RewriteNcl_ValidateRelationCompanyStore(asm);
         // Last: it rewrites every read of RecordImplementation.dataAccess, including any an
         // earlier pass emitted.
         RewriteNcl_RecordDataAccessReads(asm);
