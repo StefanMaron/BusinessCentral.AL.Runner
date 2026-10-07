@@ -368,7 +368,7 @@ public sealed class BackupReaderProvisioningTests : IDisposable
     }
 
     /// <summary>Every platform the reader release publishes a binary for (linux, osx: x64 and
-    /// arm64; win: x64 — read off the v0.1.2 release) carries a full SHA-256 in the pin.</summary>
+    /// arm64; win: x64 — read off the v0.2.1 release) carries a full SHA-256 in the pin.</summary>
     [Theory]
     [InlineData("linux-x64")]
     [InlineData("linux-arm64")]

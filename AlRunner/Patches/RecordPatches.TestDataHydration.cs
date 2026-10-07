@@ -281,8 +281,9 @@ public static partial class RecordPatches
     /// 99,977 numbers left in the backup.
     ///
     /// Two counts, not one, because they mean different things: a `&lt;sql&gt;$&lt;app id&gt;` column
-    /// says an app is outside this run's closure (case (a)), while a bare name says this
-    /// build's table has no such field (case (c)).
+    /// of an app outside this run's closure (case (a)), while a bare name — or such a column of an
+    /// app inside it — says this build's table has no such field (case (c)). See the overload
+    /// that takes the closure.
     ///
     /// The one refusal left is a row shape that shares NO column with the table: that is a
     /// mismatch, and hydrating it would insert rows made entirely of defaults.
@@ -300,6 +301,27 @@ public static partial class RecordPatches
     internal static TestDataColumnPlan PlanTestDataColumns(
         IReadOnlySet<string> fieldNames, IEnumerable<string> columnNames,
         IReadOnlyDictionary<string, string> sqlColumnAliases)
+        => PlanTestDataColumns(fieldNames, columnNames, sqlColumnAliases, null);
+
+    /// <summary>
+    /// As above, and a raw `&lt;sql&gt;$&lt;app id&gt;` column is judged against
+    /// <paramref name="installedAppIds"/>, the apps of this run's closure (#5385).
+    ///
+    /// CLAIM: the app id says WHERE the column was stored, never whether the app is installed. BC 29
+    /// stores table-extension fields as columns of the base table under that same name (BC 28: the
+    /// `$ext` companion), so the raw form turns up for apps that ARE in the closure — Base
+    /// Application's own extensions of Business Foundation tables — whenever the reader did not map
+    /// it to an AL name. Such a column is mapped by its SQL identifier when this table has that
+    /// field (BC allows one field of a name per table, extensions included), and otherwise
+    /// counted as absent from this build — case (c), not case (a). Only an app outside the closure
+    /// is counted as uninstalled. CITATION: measured on the BC 29.0.54011.55816 W1 backup, #5385.
+    /// TRAP: <paramref name="installedAppIds"/> null or empty is "closure unknown", which keeps the
+    /// pre-#5385 answer (every raw column is an uninstalled app's).
+    /// </summary>
+    internal static TestDataColumnPlan PlanTestDataColumns(
+        IReadOnlySet<string> fieldNames, IEnumerable<string> columnNames,
+        IReadOnlyDictionary<string, string> sqlColumnAliases,
+        IReadOnlySet<Guid>? installedAppIds)
     {
         var distinct = columnNames.Distinct(StringComparer.Ordinal).ToList();
         var present = new HashSet<string>(distinct, StringComparer.Ordinal);
@@ -307,17 +329,33 @@ public static partial class RecordPatches
         var bySqlName = new Dictionary<string, string>(StringComparer.Ordinal);
         var fromUninstalledApps = new List<string>();
         var notInThisBuild = new List<string>();
+        var closureKnown = installedAppIds is { Count: > 0 };
         foreach (var name in distinct)
         {
             if (fieldNames.Contains(name)) mapped.Add(name);
-            else if (BackupCatalog.TryParseUnresolvedExtensionColumn(name, out _, out _)) fromUninstalledApps.Add(name);
-            else if (sqlColumnAliases.TryGetValue(name, out var field) && fieldNames.Contains(field)
-                     && !present.Contains(field))
-                bySqlName[name] = field;
+            else if (BackupCatalog.TryParseUnresolvedExtensionColumn(name, out var sql, out var appId))
+            {
+                if (!closureKnown || !installedAppIds!.Contains(appId)) fromUninstalledApps.Add(name);
+                else if (FieldForSqlName(sql, fieldNames, sqlColumnAliases) is { } field && !present.Contains(field)
+                         && !bySqlName.ContainsValue(field))
+                    bySqlName[name] = field;
+                else notInThisBuild.Add(name);
+            }
+            else if (sqlColumnAliases.TryGetValue(name, out var aliased) && fieldNames.Contains(aliased)
+                     && !present.Contains(aliased))
+                bySqlName[name] = aliased;
             else notInThisBuild.Add(name);
         }
         return new TestDataColumnPlan(mapped, fromUninstalledApps, notInThisBuild, bySqlName);
     }
+
+    /// <summary>The field of the table whose SQL column name is <paramref name="sqlName"/>: the
+    /// AL name itself when it is a field, otherwise the one field whose SQL name it is.</summary>
+    private static string? FieldForSqlName(
+        string sqlName, IReadOnlySet<string> fieldNames, IReadOnlyDictionary<string, string> sqlColumnAliases)
+        => fieldNames.Contains(sqlName) ? sqlName
+         : sqlColumnAliases.TryGetValue(sqlName, out var field) && fieldNames.Contains(field) ? field
+         : null;
 
     /// <summary>
     /// Everything BC's own SQL-cell reader reads off the field it is converting for. There are
@@ -398,7 +436,8 @@ public static partial class RecordPatches
         int tableId, string tableNameForDiagnostics,
         IReadOnlyList<IReadOnlyDictionary<string, JsonElement>> rows,
         object? intoSource,
-        out NCLMetaTable? metaTable, out NavValue[][] pristineRows)
+        out NCLMetaTable? metaTable, out NavValue[][] pristineRows,
+        IReadOnlySet<Guid>? installedAppIds = null)
     {
         metaTable = null;
         pristineRows = Array.Empty<NavValue[]>();
@@ -426,7 +465,8 @@ public static partial class RecordPatches
             (IReadOnlySet<string>)new HashSet<string>(fieldByName.Keys, StringComparer.Ordinal),
             rows.SelectMany(r => r.Keys),
             BuildTestDataSqlColumnAliases(
-                fieldByName.Values.Select(f => (f.FieldName, (Func<string?>)(() => f.SqlColumnName)))));
+                fieldByName.Values.Select(f => (f.FieldName, (Func<string?>)(() => f.SqlColumnName)))),
+            installedAppIds);
         if (plan.MappedBySqlName.Count > 0)
             rows = rows.Select(r => (IReadOnlyDictionary<string, JsonElement>)r.ToDictionary(
                 kv => plan.MappedBySqlName.TryGetValue(kv.Key, out var field) ? field : kv.Key,
