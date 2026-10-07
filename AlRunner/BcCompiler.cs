@@ -622,8 +622,9 @@ public sealed partial class BcCompiler
                 Console.Error.WriteLine(
                     "[BcCompiler-diag] DotNet probing paths:\n  " + string.Join("\n  ", probingPaths));
 
-            var locator = new NavDotNet.AssemblyLocator(probingPaths);
-            _dotNetResolverFactory = new NavDotNet.DotNetResolverFactory(locator);
+            _dotNetResolverFactory = CreateDotNetResolverFactory(
+                probingPaths, System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(),
+                Environment.GetEnvironmentVariable("DOTNET_ROOT"), out _);
             return _dotNetResolverFactory;
         }
     }
@@ -810,6 +811,9 @@ public sealed partial class BcCompiler
         // Ncl.dll was built against (BC 28 = .NET 8 → System.Runtime, 8.0.0.0), NOT simply the
         // highest pack installed (a net10 ref pack would bind System.Uri to System.Runtime,
         // 10.0.0.0 and break the same conversion). Pin to the running shared-framework major.
+        // The running major IS Ncl's by construction (net8.0 build below BC 29, net10.0 variant from
+        // 29; docs/limitations.md#bc-29-and-later-run-on-net-10): a net8.0 build does not start on a
+        // box whose only runtime is 9/10 unless DOTNET_ROLL_FORWARD is set (#5232).
         var coreRef = Path.Combine(packs, "Microsoft.NETCore.App.Ref");
         if (Directory.Exists(coreRef))
         {
