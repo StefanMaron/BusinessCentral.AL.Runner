@@ -20,6 +20,8 @@
 // $HOME/binary-only setup deliberately does not have.
 using System.Diagnostics;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using Xunit;
 
@@ -57,7 +59,15 @@ public sealed class ProvisionExplicitModesTests
     private static readonly string ThisBuildsEngineVersion =
         AlRunner.Infrastructure.BcArtifacts.EngineBuiltVersion()?.ToString() ?? RealVersion;
 
+    /// <summary>Cap for a spawn that must NOT reach the network (<see cref="OfflineCdnEnvironment"/>):
+    /// it answers in about a second, so a spawn running past this has gone online.</summary>
+    private const int OfflineSpawnTimeoutMs = 60_000;
+
     private static (int ExitCode, string StdErr) Run(string isolatedHome, params string[] args)
+        => Run(isolatedHome, SpawnTimeoutMs, null, args);
+
+    private static (int ExitCode, string StdErr) Run(
+        string isolatedHome, int spawnTimeoutMs, IReadOnlyDictionary<string, string>? environment, params string[] args)
     {
         var argLine = TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner")) + " " + string.Join(' ', args);
         var psi = new ProcessStartInfo
@@ -74,6 +84,8 @@ public sealed class ProvisionExplicitModesTests
         // NEVER existed — the exact "clean tool install, no artifact cache" scenario,
         // independent of whatever the machine actually running this test has cached.
         psi.Environment["HOME"] = isolatedHome;
+        if (environment != null)
+            foreach (var (name, value) in environment) psi.Environment[name] = value;
 
         var errSb = new StringBuilder();
         using var proc = Process.Start(psi)!;
@@ -81,17 +93,50 @@ public sealed class ProvisionExplicitModesTests
         proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (errSb) errSb.AppendLine(e.Data); };
         proc.BeginOutputReadLine();
         proc.BeginErrorReadLine();
-        if (!proc.WaitForExit(SpawnTimeoutMs))
+        if (!proc.WaitForExit(spawnTimeoutMs))
         {
             try { proc.Kill(entireProcessTree: true); } catch { }
             throw new TimeoutException(
-                $"al-runner did not exit within {SpawnTimeoutMs / 1000}s for: {argLine}. If the test machine " +
+                $"al-runner did not exit within {spawnTimeoutMs / 1000}s for: {argLine}. If the test machine " +
                 "has no network reachability to the BC artifact CDN this will hang instead " +
                 "of failing fast.");
         }
         proc.WaitForExit();
         lock (errSb) return (proc.ExitCode, errSb.ToString());
     }
+
+    /// <summary>
+    /// Environment that makes the spawned runner's every CDN request fail at once: a proxy on a
+    /// loopback port nothing listens on. SocketsHttpHandler reads the proxy variables on Linux and
+    /// connects there instead of the CDN, so the answer is a refused connection in well under a
+    /// second whatever state the real CDN is in. #5420: a SLOW CDN made the live version of these
+    /// resolution facts exceed <see cref="SpawnTimeoutMs"/>. Measured with a proxy that accepts and
+    /// never answers: the probe for the exact build waits out HttpClient's 100 s default twice
+    /// (it retries an undetermined answer once), so 200 s before any download starts.
+    ///
+    /// Windows resolves its proxy from system settings and ignores these variables, so the facts
+    /// that use this skip there (<see cref="SkipUnlessEnvironmentProxyIsHonoured"/>).
+    /// </summary>
+    private static IReadOnlyDictionary<string, string> OfflineCdnEnvironment()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop(); // bound-then-closed: connecting is refused
+
+        var proxy = $"http://127.0.0.1:{port}";
+        return new Dictionary<string, string>
+        {
+            ["HTTPS_PROXY"] = proxy, ["https_proxy"] = proxy,
+            ["HTTP_PROXY"] = proxy, ["http_proxy"] = proxy,
+            ["ALL_PROXY"] = proxy, ["all_proxy"] = proxy,
+            ["NO_PROXY"] = "", ["no_proxy"] = "",
+        };
+    }
+
+    private static void SkipUnlessEnvironmentProxyIsHonoured()
+        => TestArtifacts.SkipIf(OperatingSystem.IsWindows(),
+            "the offline CDN needs the proxy environment variables, which .NET ignores on Windows.");
 
     private static string NewIsolatedHome()
     {
@@ -116,9 +161,10 @@ public sealed class ProvisionExplicitModesTests
     /// exists — a no-op that created an empty directory would also pass a bare
     /// Directory.Exists check.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void TestApps_FreshCache_DownloadsRealSetIntoCanonicalDir()
     {
+        LiveCdnGate.Require();
         var home = NewIsolatedHome();
         try
         {
@@ -152,9 +198,10 @@ public sealed class ProvisionExplicitModesTests
     /// FIRST invocation wrote it. A test that only checked "exit 0" would pass even if the
     /// runner silently re-downloaded every time, which is the failure this guards against.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void TestApps_SecondInvocationWithoutForce_DoesNotRedownload()
     {
+        LiveCdnGate.Require();
         var home = NewIsolatedHome();
         try
         {
@@ -188,9 +235,10 @@ public sealed class ProvisionExplicitModesTests
     /// with one unrelated .app, run without --force, and the run must NOT say "already
     /// present" — it must actually fetch the real set, landing the sentinel.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void TestApps_OnlyUnrelatedAppPresent_DoesNotShortCircuit_DownloadsTheRealSet()
     {
+        LiveCdnGate.Require();
         var home = NewIsolatedHome();
         try
         {
@@ -220,9 +268,10 @@ public sealed class ProvisionExplicitModesTests
     /// though the directory already looks populated. Proven the same way as the negative
     /// test above, inverted — the marker's write time MUST move.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void TestApps_Force_RedownloadsEvenWhenAlreadyPresent()
     {
+        LiveCdnGate.Require();
         var home = NewIsolatedHome();
         try
         {
@@ -252,9 +301,10 @@ public sealed class ProvisionExplicitModesTests
     /// `resolve-version` mode from the installed binary: prints the latest full version for
     /// a prefix to stdout and exits 0. No artifact cache needed at all.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void ResolveVersion_PrintsFullVersionToStdout()
     {
+        LiveCdnGate.Require();
         var argLine = TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner"))
             + " provision --resolve-version 28.1";
         var psi = new ProcessStartInfo
@@ -288,9 +338,10 @@ public sealed class ProvisionExplicitModesTests
     /// Exercises a real failure (a version prefix the public BC CDN index does not carry),
     /// not a mocked one.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void ResolveVersion_NonexistentPrefix_ExitsExecutionErrorNotTestFailureCode()
     {
+        LiveCdnGate.Require();
         var argLine = TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner"))
             + " provision --resolve-version 999.9";
         var psi = new ProcessStartInfo
@@ -318,29 +369,40 @@ public sealed class ProvisionExplicitModesTests
     /// determine which BC version to provision" even though the binary's own build version
     /// (`BcArtifacts.EngineBuiltVersion()`, baked in at compile time — no file needed) answers
     /// the question on every other code path ("selecting BC 28.1.49838.53910, the exact build
-    /// this binary was compiled against"). This test proves the fix resolves and downloads
-    /// into the canonical directory for THAT exact version — not merely that the process
-    /// doesn't crash.
+    /// this binary was compiled against").
+    ///
+    /// #5420: this is a RESOLUTION claim, and resolution finishes before any download starts, so
+    /// the fact runs against a CDN that refuses every connection (<see cref="OfflineCdnEnvironment"/>)
+    /// and asserts on what the runner says it will fetch: the engine's exact build, and the
+    /// canonical directory for it. It used to download ~20 MB from the live CDN, and a slow CDN
+    /// turned the required unit step red. That a download lands is proven by the explicit
+    /// `--bc-version` facts above, which share the same download path.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void TestApps_NoBcVersionNoBundle_ResolvesEngineBuiltVersion()
     {
+        SkipUnlessEnvironmentProxyIsHonoured();
         var home = NewIsolatedHome();
         try
         {
             var testAppsDir = TestAppsDirFor(home, ThisBuildsEngineVersion);
             Assert.False(Directory.Exists(testAppsDir), "precondition: fresh cache must not already have this dir");
 
-            var (exit, stderr) = Run(home, "provision", "--test-apps");
+            var (exit, stderr) = Run(home, OfflineSpawnTimeoutMs, OfflineCdnEnvironment(), "provision", "--test-apps");
 
-            Assert.True(exit == 0,
-                $"provision --test-apps with no --bc-version must resolve the engine's own build. stderr:\n{stderr}");
             Assert.DoesNotContain("cannot determine which BC version to provision", stderr, StringComparison.Ordinal);
-            Assert.True(Directory.Exists(testAppsDir),
-                $"expected {testAppsDir} (this binary's own engine build, {ThisBuildsEngineVersion}) to exist. stderr:\n{stderr}");
-            var apps = Directory.GetFiles(testAppsDir, "*.app");
-            Assert.True(apps.Length > 10,
-                $"expected more than 10 .app files, got {apps.Length}: {string.Join(", ", apps.Select(Path.GetFileName))}");
+            // The CDN was unreachable by construction, so the exact build could not be confirmed and
+            // the resolver held its tier rather than demoting (#2981): proof the offline condition
+            // held, and that the answer is the engine's build, not something the CDN supplied.
+            Assert.Contains($"targeting BC {ThisBuildsEngineVersion} (this binary's own engine build is " +
+                $"{ThisBuildsEngineVersion}; tier 'cdn-exact-undetermined')", stderr, StringComparison.Ordinal);
+            Assert.Contains($"fetching Microsoft test-toolkit apps for BC {ThisBuildsEngineVersion} → {testAppsDir}",
+                stderr, StringComparison.Ordinal);
+            // Nothing could be downloaded, so the run is the execution error the exit ladder names
+            // for a provisioning failure (#2208), and no toolkit landed.
+            Assert.Equal(2, exit);
+            Assert.False(Directory.Exists(testAppsDir) && Directory.GetFiles(testAppsDir, "*.app").Length > 0,
+                $"no .app can have been downloaded from a refusing CDN. stderr:\n{stderr}");
         }
         finally
         {
@@ -355,12 +417,13 @@ public sealed class ProvisionExplicitModesTests
     /// manifest field and silently fetch the wrong major's platform-apps set into a
     /// directory the actual engine never scans. This proves the fix ignores the manifest
     /// major for version SELECTION (a mismatch is a warning only) and still targets this
-    /// binary's own engine build — asserting on the concrete resulting directory name, not
-    /// just "some directory got created".
+    /// binary's own engine build — asserting on the concrete target directory the runner
+    /// names, not just "some directory got created".
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void TestApps_BundleDeclaresOlderMajor_StillTargetsEngineMajor()
     {
+        SkipUnlessEnvironmentProxyIsHonoured();
         // The bundle's declared major must genuinely differ from THIS build's engine
         // major — a CI matrix leg builds against 27.x as often as 28.x (bc-tests.yml), so
         // a hardcoded "27" collided with the engine's own major on a 27.x leg and made
@@ -378,11 +441,15 @@ public sealed class ProvisionExplicitModesTests
             var testAppsDir = TestAppsDirFor(home, ThisBuildsEngineVersion); // the ENGINE's own build, not the bundle's major
             Assert.False(Directory.Exists(testAppsDir), "precondition: fresh cache must not already have this dir");
 
-            var (exit, stderr) = Run(home, "provision", "--test-apps", "--force", bundleDir);
+            // #5420: version SELECTION is the claim, so the CDN refuses every connection and the
+            // assertion is on the target the runner announces, not on a ~20 MB download.
+            var (exit, stderr) = Run(home, OfflineSpawnTimeoutMs, OfflineCdnEnvironment(),
+                "provision", "--test-apps", "--force", bundleDir);
 
-            Assert.True(exit == 0, $"provision --test-apps must exit 0. stderr:\n{stderr}");
-            Assert.True(Directory.Exists(testAppsDir),
-                $"expected {testAppsDir} (the engine's own build {ThisBuildsEngineVersion}, not the bundle's major {bundleMajor}) to exist. stderr:\n{stderr}");
+            Assert.Equal(2, exit);
+            Assert.Contains($"fetching Microsoft test-toolkit apps for BC {ThisBuildsEngineVersion} → {testAppsDir}",
+                stderr, StringComparison.Ordinal);
+            Assert.DoesNotContain($"for BC {bundleMajor}.", stderr, StringComparison.Ordinal);
             var cacheRoot = TestArtifacts.StandardCacheDir(home);
             var versionDirs = Directory.Exists(cacheRoot)
                 ? Directory.GetDirectories(cacheRoot).Select(Path.GetFileName).ToArray()
@@ -500,9 +567,10 @@ public sealed class ProvisionExplicitModesTests
     /// --test-apps chosen over --platform-apps/--service-tier for the same ~20MB-vs-100+MB
     /// reason the rest of this file already prefers it (see file header).
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void ResolveVersion_CombinedWithTestApps_PrintsVersionAndDownloads()
     {
+        LiveCdnGate.Require();
         var home = NewIsolatedHome();
         try
         {
