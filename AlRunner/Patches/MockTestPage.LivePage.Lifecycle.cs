@@ -196,6 +196,9 @@ internal partial class LiveNavTestPage
         _opened = true;
         _detached = false;
         _tornDown = false;
+        // A reopened variable is a fresh page: what the last closing action recorded is not the new
+        // page's answer, so a Close() on a reopened StandardDialog reports Cancel, not the old OK.
+        _invokedFormResult = null;
         _rowExpressionsRaised = false;
         _staticEditableOverride = viewMode != Microsoft.Dynamics.Nav.Types.Metadata.ViewMode.View
                                   && (_page?.PageEditable ?? true);

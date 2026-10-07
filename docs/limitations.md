@@ -2242,9 +2242,25 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   Only a *refused* close is delivered twice, and that asymmetry is what the fix has to preserve:
   an allowed close still raises `OnQueryClosePage` exactly **once**, because the first attempt
   succeeds and closes the form, so the round trip's own attempt finds nothing to do — the result
-  corpus codeunit 60276 "MQC Tests" measured on a real tier. A page the *test* opened is
-  unaffected in either direction: BC's client never presses its OK button, so
-  `Card.OpenNew(); …; Card.OK().Invoke();` remains a row commit and not a close.
+  corpus codeunit 60276 "MQC Tests" measured on a real tier.
+
+  A page the *test* opened closes the same way
+  ([#5400](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/5400)): this section
+  used to say BC's client never presses its OK button, which no service tier had been asked, and a
+  `Card.OK().Invoke();` left the variable open, so the `OpenEdit()` after it raised "The TestPage
+  is already open." (19 Microsoft tests in four buckets did exactly that). Measured on every cloud
+  leg (corpus codeunit "TPC Closing Action Tests",
+  [#555](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/555)): the built-in
+  OK and Cancel close the page, test-opened, handler-opened or request page alike —
+  `OnQueryClosePage` with the action's result, then `OnClosePage` — every later call raises "The
+  TestPage is not open." and an `Open*` opens the variable again on the first row. An OK that does
+  not close leaves the variable open and usable: a veto from `OnQueryClosePage`, or a save the
+  table refuses (nothing is raised, the page counts one validation error). A card or a list offers
+  no Cancel. What the runner still does differently: a request page's close triggers run when the
+  handler returns rather than at the invoke, a request-page handler that closes nothing reports
+  `None` to `OnQueryClosePage` where BC reports `Cancel`, and `P.Close()` inside a
+  `[ModalPageHandler]` does not make `RunModal` raise "could not close the page … as it has
+  already been closed".
 
 <a id="virtual-table-shape-gaps"></a>
 

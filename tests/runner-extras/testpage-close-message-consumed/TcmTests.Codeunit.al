@@ -222,29 +222,27 @@ codeunit 65863 "Tcm Close Message Tests"
             'TestPage.Close() must raise OnQueryClosePage exactly once -- this route has a single close attempt and #3593 does not touch it');
     end;
 
-    // CLAIM 7, and the OTHER constraint on claim 5: a page the TEST opened is the test's to
-    // close, and its OK().Invoke() is not a client close.
+    // CLAIM 7, and the OTHER constraint on claim 5: a page the TEST opened is closed by its own
+    // OK().Invoke() exactly ONCE.
     //
-    // #3593 makes the built-in OK invoked from a [ModalPageHandler] attempt the close, because
-    // on BC that invoke is the client pressing OK. It must NOT do so for a page the test opened
-    // itself: BC's client never presses that page's OK button, and
-    // Card.OpenNew(); ...SetValue(...); Card.OK().Invoke(); followed by more calls on the same
-    // variable is ordinary AL that predates this issue by a long way.
+    // #3593 makes the built-in OK invoked from a [ModalPageHandler] attempt the close, and #5400
+    // makes the one invoked on a page the TEST opened attempt it too: BC's OK action closes the
+    // form, which raises OnQueryClosePage with OK and then OnClosePage, and every later call on
+    // the variable raises "The TestPage is not open." (corpus codeunit "TPC Closing Action Tests",
+    // StefanMaron/BusinessCentral.AL.Language.Tests#555). A page the test opened is not closed
+    // twice by it: the OK is the only close attempt, so the trigger is raised once, and the
+    // variable's own Close() afterwards has nothing left to do.
     //
-    // Two independent observations, so the arm cannot pass on a technicality. The trigger must
-    // NOT have been raised at all -- OK().Invoke() on this route is a row commit, not a close --
-    // and the page must still be drivable afterwards, which a page whose close ran would not be:
-    // #3593's success path calls ForceCloseForm, and a subsequent field read on a form BC has
-    // closed does not answer 99.
-    //
-    // Removing the guard turns this arm red and leaves every other arm in this bundle, and the
-    // whole al-language corpus at the current pin, green -- measured, which is why the arm is
-    // here rather than assumed unnecessary.
+    // Two independent observations, so the arm cannot pass on a technicality: the count of
+    // raises is exactly one (a runner that closed on OK AND again at Dispose, or on OK and again
+    // when the variable is read, reads two), and the variable is shut (a runner that raised the
+    // trigger but left the page open reads the value).
     [Test]
-    procedure TestPageOwnOkInvoke_DoesNotCloseThePageTheTestOpened()
+    procedure TestPageOwnOkInvoke_ClosesThePageTheTestOpenedOnce()
     var
         Row: Record "Tcm Row";
         Card: TestPage "Tcm Allow Card";
+        Value: Text;
     begin
         Initialize();
 
@@ -252,10 +250,22 @@ codeunit 65863 "Tcm Close Message Tests"
         Card."Set ID".SetValue(99);
         Card.OK().Invoke();
 
-        Assert.IsTrue(not Row.Get('QCP'),
-            'OK().Invoke() on a page the TEST opened must not attempt the close -- BC''s client does not press that page''s OK button, so OnQueryClosePage must not have been raised');
-        Assert.AreEqual('99', Format(Card."Set ID".Value()),
-            'the page the test opened must still be drivable after its own OK().Invoke() -- a close would have torn the form down, and a torn-down form cannot answer this value');
+        Assert.IsTrue(Row.Get('QCP'),
+            'OK().Invoke() on a page the TEST opened must attempt the close: BC raises OnQueryClosePage when the OK action closes the form');
+        Assert.AreEqual(1, Row."Set ID",
+            'the close attempt must be raised exactly once for one OK().Invoke()');
+
+        asserterror Value := Card."Set ID".Value();
+        Assert.IsTrue(StrPos(GetLastErrorText(), 'The TestPage is not open') > 0,
+            StrSubstNo('a read after OK().Invoke() must raise BC''s "The TestPage is not open."; got "%1".', GetLastErrorText()));
+
+        asserterror Card.Close();
+        Assert.IsTrue(StrPos(GetLastErrorText(), 'The TestPage is not open') > 0,
+            StrSubstNo('Close() after OK().Invoke() must raise BC''s "The TestPage is not open."; got "%1".', GetLastErrorText()));
+
+        Row.Get('QCP');
+        Assert.AreEqual(1, Row."Set ID",
+            'a Close() the variable refused must not have attempted the close again');
     end;
 
     // Invoked by the allowed-close arm. Same OK().Invoke() shape as TcmOkHandler, against a page

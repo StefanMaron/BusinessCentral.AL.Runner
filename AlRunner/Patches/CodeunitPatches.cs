@@ -925,7 +925,9 @@ public static partial class BcRuntime
     {
         if (self == null) return false;
         var testPageField = FindInstanceField(self.GetType(), "testPage");
-        return testPageField?.GetValue(self) is LiveNavTestPage live && live.IsDetached;
+        var testPage = testPageField?.GetValue(self);
+        return testPage is LiveNavTestPage live ? live.IsDetached
+            : testPage is AlRunner.Patches.RequestPageTestPage request && request.IsDetached;
     }
 
     /// <summary>

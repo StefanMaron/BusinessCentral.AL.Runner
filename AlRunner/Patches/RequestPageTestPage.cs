@@ -53,6 +53,18 @@ internal sealed class RequestPageTestPage : MockITestPage
     private RunnerPageInstance? _pageInstance;
     private FormResult _formResult = FormResult.None;
 
+    // Set by the first built-in OK/Cancel the handler invokes: BC's action closes the request page
+    // right there, so every later call on the handler's variable raises "The TestPage is not open."
+    // and a second OK/Cancel cannot overwrite the first one's result (corpus codeunit "TPC Closing
+    // Action Tests", StefanMaron/BusinessCentral.AL.Language.Tests#555). The close TRIGGERS still run
+    // when the handler returns: BC raises them at the invoke, so a handler that read their effect
+    // between the two would differ (#5407).
+    private bool _closedByAction;
+
+    /// <summary>Whether a built-in action has closed the page, which is what
+    /// <c>NavTestPageBase.CheckPageOpened</c> answers "not open" from.</summary>
+    internal bool IsDetached => _closedByAction;
+
     private readonly Guid _formHandle;
 
     private RequestPageTestPage(object requestPageForm, object report, int reportId, bool offersOk)
@@ -360,7 +372,11 @@ internal sealed class RequestPageTestPage : MockITestPage
             _result = result;
         }
 
-        public void Invoke() => _page._formResult = _result;
+        public void Invoke()
+        {
+            _page._formResult = _result;
+            _page._closedByAction = true;
+        }
         public bool Visible => true;
         public bool Enabled => true;
     }

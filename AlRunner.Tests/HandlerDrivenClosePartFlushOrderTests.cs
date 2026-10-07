@@ -131,12 +131,14 @@ public sealed class HandlerDrivenClosePartFlushOrderTests
 
     // ── The built-in OK on a page the TEST opened — issue #4146 ─────────────────────────────
     //
-    // AttemptHandlerDrivenClose returns before its FlushParts() when the test opened the page
-    // (`_opened`), so `Card.OpenEdit(); Card.Lines.New(); ...SetValue(...); Card.OK().Invoke();`
-    // saved the host row and dropped the part row. The BC claim is corpus codeunit 60760
-    // "OKP Ok Part Row Tests" (StefanMaron/BusinessCentral.AL.Language.Tests#354), which also
-    // drives the behaviour; this pins where the flush lives, since the handler route's second
-    // FlushParts() would hide its loss from any modal-route test.
+    // The parts are saved BEFORE the host row (a header OnModify reads the part's lines), and
+    // AttemptHandlerDrivenClose's own FlushParts() runs after Invoke() has flushed the host row,
+    // so it cannot stand in for this one: `Card.OpenEdit(); Card.Lines.New(); ...SetValue(...);
+    // Card.OK().Invoke();` saved the host row and dropped the part row before #4146. The BC claim
+    // is corpus codeunit 60760 "OKP Ok Part Row Tests"
+    // (StefanMaron/BusinessCentral.AL.Language.Tests#354), which also drives the behaviour; this
+    // pins where the flush lives, since the close attempt's second FlushParts() would hide its
+    // loss from any modal-route test.
 
     [Fact]
     public void BuiltInOkInvoke_FlushesThePartsThenTheRow()
