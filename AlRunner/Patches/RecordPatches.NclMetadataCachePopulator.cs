@@ -241,6 +241,15 @@ public static partial class RecordPatches
                 return meta;
         }
 
+        else if (objectType is ObjectType.TableExtension or ObjectType.PageExtension or ObjectType.ReportExtension)
+        {
+            // #5384: code coverage resolves the metadata of every object whose method scope it enters
+            // (ALCodeEnvironment.GetOrAssignScopeId), extensions included.
+            var meta = EnsureExtensionMetaApplicationObject(objectType, objectId);
+            if (meta != null)
+                return meta;
+        }
+
         // BC's OWN exception type, not a plain InvalidOperationException. This is not
         // cosmetic: NCLMetadata.TryGetMetaApplicationObject is implemented as
         // `try { GetMetaApplicationObject(…) } catch (NavMetadataNotFoundException) { }

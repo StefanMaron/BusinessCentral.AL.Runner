@@ -10,6 +10,7 @@
         "app-group-visibility-install-dep": { "tests": 1 },
         "app-group-visibility-subscriber": { "tests": 1 },
         "bundle-page-over-dep-table": { "tests": 2 },
+        "code-coverage-extension-metadata": { "tests": 4 },
         "code-coverage-line-rows": { "tests": 7 },
         "crm-proxy-version": { "tests": 5 },
         "date-virtual-table-window": { "tests": 11 },

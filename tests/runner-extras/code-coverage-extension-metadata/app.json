@@ -1,0 +1,18 @@
+{
+  "id": "5d2e8a41-7c36-4b9f-a0d5-3e61c8f7b294",
+  "name": "Runner Extras - Code Coverage Extension Metadata",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #5384: code coverage recording resolves the metadata of every object whose method scope it enters, so a procedure declared in a tableextension or a pageextension must resolve too.",
+  "description": "Runner-specific: NCLMetadata.GetMetaApplicationObject answered 'object does not exist' for ObjectType.TableExtension and ObjectType.PageExtension, which failed any call into an extension while recording and left recording on for later tests. What BC answers for the recorded call itself is corpus codeunit 'Test Code Cov Table Extension'.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 66700,
+      "to": 66709
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}

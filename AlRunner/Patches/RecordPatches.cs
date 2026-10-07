@@ -488,6 +488,7 @@ public static partial class RecordPatches
         // #4100: BC's page-definition cache keys on (owner package id, page id) and the runner
         // supplies no owner, so every bundle's page N shares one key.
         RunnerMetaApplicationObjectLoader.ResetAllMetaObjectCaches();
+        ClearMetaExtensionObjects();
         _parsedPages.Clear();
         _parsedPageExtensions.Clear();
         _parsedReports.Clear();
@@ -1543,6 +1544,10 @@ public static partial class RecordPatches
             // and asks each one), and without an arm such a receiver fell to the table default
             // and resolved Record{extId} — a different object, usually absent.
             "TableExtension" => FindTableExtensionType(id),
+            // ReportExtension{id} — without it a reportextension fell to Record{id} (null), and BC's
+            // Code Coverage row read built the extension's source info with no methods: only the Object
+            // row came back, no line rows or hits, and no error (#5384).
+            "ReportExtension" => FindClrTypeByName($"ReportExtension{id}"),
             "Report"   => FindClrTypeByName($"Report{id}"),
             "CodeUnit" => FindClrTypeByName($"Codeunit{id}"),
             _          => FindRecordType(id),
