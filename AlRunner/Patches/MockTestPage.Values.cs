@@ -415,10 +415,42 @@ internal static class TestPageNumericValue
     /// BC's answer, not the runner's — the runner only applies it.
     /// </param>
     internal static string? Format(NavValue? navValue, string? controlFormat = null)
-    {
-        if (navValue is not NavDecimal d) return null;
+        => navValue is NavDecimal d
+            ? Render(Convert.ToDecimal(d.ClientObject, CultureInfo.InvariantCulture), controlFormat)
+            : null;
 
-        var value = Convert.ToDecimal(d.ClientObject, CultureInfo.InvariantCulture);
+    /// <summary>
+    /// The same rendering for an already-unwrapped CLR value, as ValueToString sees it.
+    /// <c>NavTestField.ALAssertEquals</c> and <c>ALSetValue</c> (BC, precompiled) convert the
+    /// caller's value to the field's own type first, so a decimal control hands over a CLR
+    /// <c>decimal</c>; the expected side must be spelled the way the getter spells the control's
+    /// text, or an ordinal compare can never match a value of 1,000 or more (#5411). Anything
+    /// that is not a <c>decimal</c> is declined, so a control of another type keeps its own arm.
+    /// </summary>
+    internal static string? FormatObject(object? value, string? controlFormat = null)
+        => value is decimal d ? Render(d, controlFormat) : null;
+
+    /// <summary>
+    /// A blank text written to a numeric control is zero: BC's client formatter reads empty text as
+    /// <c>default</c> (<c>NavDecimalFormatter.StringToValue</c>, <c>NavBaseIntFormatter.StringToValue</c>,
+    /// 28.1). It is what a typed zero becomes on a BlankZero control, whose ValueToString is ''.
+    /// </summary>
+    internal static bool TryResolveBlank(NavType type, string value, out NavValue? zero)
+    {
+        zero = null;
+        if (!string.IsNullOrWhiteSpace(value)) return false;
+        zero = type switch
+        {
+            NavType.Decimal => NavDecimal.Create((Decimal18)0m),
+            NavType.Integer => NavInteger.Create(0),
+            NavType.BigInteger => NavBigInteger.Create(0L),
+            _ => null,
+        };
+        return zero != null;
+    }
+
+    private static string Render(decimal value, string? controlFormat)
+    {
         if (string.IsNullOrEmpty(controlFormat))
             return value.ToString(NoControlFormat, CultureInfo.InvariantCulture);
 
@@ -629,6 +661,9 @@ internal static class TestPageTemporalValue
     internal static bool TryResolve(NavType type, string value, out NavValue? resolved)
     {
         resolved = null;
+        // #5369: a Duration control's text is BC's own AL spelling ('1 hour 2 minutes'), which
+        // the NavText fall-through cannot evaluate into a Duration; BC's evaluator can.
+        if (type == NavType.Duration) return TryEvaluateThroughBc(type, value, out resolved);
         if (type is not (NavType.Date or NavType.DateTime or NavType.Time)) return false;
 
         return TryResolveRoundTrip(type, value, out resolved)
@@ -726,6 +761,7 @@ internal static class TestPageTemporalValue
             NavType.Date => "NavDate",
             NavType.DateFormula => "NavDateFormula",
             NavType.DateTime => "NavDateTime",
+            NavType.Duration => "NavDuration",
             _ => "NavTime",
         };
         // Both pre-invoke steps THROW rather than decline (#3560). Declining sends the caller

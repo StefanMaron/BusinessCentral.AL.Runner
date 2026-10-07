@@ -935,6 +935,52 @@ all eight cloud legs.
   is what BC's own body would answer anyway, because `NavForm.PageExtensions` is rewritten to an
   empty list. See the comment at that rewrite for why it is kept rather than deleted.
 
+<a id="testpage-field-text"></a>
+
+## `TestPage` field text — what a control shows, and what `AssertEquals` expects
+
+A `TestPage` field answers `Value()` with the control's text and `AssertEquals(<expected>)` compares
+text. BC's `NavTestField.ALAssertEquals` converts a non-text expected value to the field's own
+type and spells it through the control's formatter, then compares it ordinally, so both sides have
+to be spelled alike. The runner's `Value` getters and `ValueToString` (the formatter's stand-in, on
+`LiveNavTestField` and `PageVariableTestField`) share one helper per type for that reason
+([#5411](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/5411),
+[#5369](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/5369)). The expected side used
+to fall through to `Convert.ToString(value, InvariantCulture)`, which spelled a Decimal of 1,000 or
+more differently from the control and could never match it.
+
+The text BC shows, measured on a service tier (corpus codeunit 69932 "TPF Tests", the probe
+revision of corpus PR 558, every cloud leg 27.0 to 29.0). A list page's row reads the same text,
+and its draft line reads the blank row's: `''` for a Date, Time, DateTime and Duration, but `0.00`,
+`No`, the first caption and the braced null Guid for the rest (codeunit 69935):
+
+| field | text | the runner's source |
+|---|---|---|
+| Integer, BigInteger | plain digits, no thousands separator | `Convert.ToString` (already right) |
+| Decimal | the control's own format: thousands separators, the `DecimalPlaces` or `AutoFormat` places | `TestPageNumericValue`, BC's `GetDecimalString` result ([above](#testpage-decimal-formatting)) |
+| BlankZero, BlankNumbers | `''` for a blanked number, on both sides | `TestPageBlanking`, a port of `NavBlankNumbersDecorator.BlankFormatApplies` |
+| Boolean | `Yes` / `No` | `TestPageBooleanValue` |
+| Option, Enum | the caption: the control's `OptionCaption`, else the source field's, else the enum value's | `TestPageOptionValue`, `RunnerPageInstance.TryGetOptionCaptions` |
+| Date, Time, DateTime | the en-US short forms (`d`, `T`, `g`): `3/2/2024`, `12:34:56 PM`, `3/2/2024 12:34 PM` with no seconds; blank is `''` | `TestPageTemporalText` |
+| Guid | braced; the null Guid is not blank | `NavFormatEvaluateHelper.Format`, BC's own |
+| Duration | `Format()`'s words (`1 hour 2 minutes 3 seconds`); zero is `''` | `NavFormatEvaluateHelper.Format`, BC's own |
+| Media, MediaSet | a Media shows its id, a MediaSet the id of its first media (not the set's id), lowercase; `''` with no media | `TestPageMediaText` |
+
+`SetValue(<typed value>)` is spelled the same way and read back by the client's own parser, which is
+why a typed DateTime loses its seconds and a blank text written to a numeric control is zero; the
+runner reads a Duration spelling through BC's evaluator, as it does a temporal one.
+
+What is not covered:
+
+- **A control on a precompiled page** has no control definition, so `BlankZero` and `BlankNumbers`
+  are not applied to it: it keeps reading `0.00` where BC reads `''`. `AssertEquals(0)` is
+  unaffected, both sides being spelled alike.
+- **The space before AM/PM** is whatever the runtime's culture data holds (U+202F from CLDR 42 on,
+  U+0020 before), on the service tier and in the runner alike. The corpus test normalizes it.
+- **`MockITestField`**, the degraded handle for a page with no live instance, stores text and
+  declares `FieldType = Text`, so `ALAssertEquals` never hands it a typed value.
+- **A MediaSet of several media** was not probed (one medium was); DateFormula, RecordId and BLOB controls were not either.
+
 ## Behavioural differences — same API, different semantics
 
 These don't crash, but they behave differently from real BC. Tests that assert on
