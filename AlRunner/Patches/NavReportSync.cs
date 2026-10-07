@@ -2064,7 +2064,7 @@ public static partial class NavReportSync
 
     /// <summary>
     /// Refuses running a report one of whose reportextensions could not be bound whole: a
-    /// precompiled one that adds data items or columns, whose deltas are not merged (#4837). BC
+    /// precompiled one whose added data items or columns could not be merged (#4837). BC
     /// would run them. Opening the request page alone is unaffected, which is why this sits at
     /// the run, not at binding.
     /// </summary>
@@ -2073,8 +2073,9 @@ public static partial class NavReportSync
         if (!_extensionsWithUnboundReportBehaviour.TryGetValue(navReport, out var unbound) || unbound.ExtensionIds.Count == 0) return;
         throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             $"Report {unbound.ReportId} run with reportextension(s) {string.Join(", ", unbound.ExtensionIds)}",
-            "not-yet-implemented — these reportextensions could not be bound to the report whole: a precompiled one that "
-            + "adds data items or columns is not merged into the report's metadata yet (#4837), so running it would skip them");
+            "not-yet-implemented — these reportextensions could not be bound to the report whole: a precompiled one's added "
+            + "data items or columns could not be merged into the report's metadata (what is derived, and what is not: "
+            + "docs/report-metadata-from-bc.md#precompiled-reportextension-deltas), so running it would skip them");
     }
 
     // MetaReport -> the reportextensions whose runtime deltas were merged into it (#4918).
@@ -2085,8 +2086,10 @@ public static partial class NavReportSync
         => _mergedExtensionDeltas.TryGetValue(metaReport, out var merged) ? merged : Array.Empty<int>();
 
     /// <summary>
-    /// BC's <c>NCLMetaReport.ApplyReportExtensions</c> for the source-compiled reportextensions of
-    /// <paramref name="reportId"/>: each one's emitted runtime-delta document, parsed by BC's own
+    /// BC's <c>NCLMetaReport.ApplyReportExtensions</c> for the reportextensions of
+    /// <paramref name="reportId"/>: a source-compiled one's emitted runtime-delta document, or a
+    /// precompiled one's, derived from its symbol file and source (<c>PrecompiledReportExtensionDeltasFor</c>,
+    /// #4837), parsed by BC's own
     /// <c>NavAppObjectMetadataRuntimeDeltas.FromXml</c> and applied by BC's own
     /// <c>MetadataRuntimeDeltaApplicator</c>, exactly as <c>NCLApplicationObjectExtension.ApplyRuntimeDeltas</c>
     /// does (decompiled bc284). This is what puts an added data item and an added column into the
@@ -2094,12 +2097,45 @@ public static partial class NavReportSync
     /// A document BC's parser or applicator cannot take refuses rather than dropping the extension.
     /// </summary>
     internal static object ApplyReportExtensionDeltas(int reportId, object metaReport)
-        => ApplyReportExtensionDeltas(reportId, metaReport, AlRunner.Patches.RecordPatches.SourceReportExtensionDeltasFor(reportId));
+        => ApplyReportExtensionDeltas(reportId, metaReport,
+            AlRunner.Patches.RecordPatches.PrecompiledReportExtensionDeltasFor(reportId),
+            AlRunner.Patches.RecordPatches.SourceReportExtensionDeltasFor(reportId));
+
+    /// <summary>The same, over given precompiled and source delta documents (the unit under test).</summary>
+    internal static object ApplyReportExtensionDeltas(int reportId, object metaReport,
+        IReadOnlyList<(int ExtensionId, string Xml)> precompiled, IReadOnlyList<(int ExtensionId, string Xml)> source)
+    {
+        var merged = new HashSet<int>();
+        // A precompiled extension's document is derived by the runner from its symbol file and
+        // source, so one BC's parser or applicator takes badly leaves that extension unmerged —
+        // running its report then refuses (ThrowIfExtensionReportBehaviourIsUnbound) — rather than
+        // taking down the report's metadata, which opening its request page needs (#4837).
+        foreach (var document in precompiled)
+        {
+            try { metaReport = ApplyDocuments(reportId, metaReport, new[] { document }, merged); }
+            catch (AlRunner.Infrastructure.RunnerOutOfScopeException ex)
+            {
+                Console.Error.WriteLine($"[NavReportSync] precompiled reportextension {document.ExtensionId} of report {reportId} "
+                    + $"is not merged into its metadata: {ex.Message}");
+            }
+        }
+        metaReport = ApplyDocuments(reportId, metaReport, source, merged);
+        if (merged.Count > 0) _mergedExtensionDeltas.AddOrUpdate(metaReport, merged);
+        return metaReport;
+    }
 
     /// <summary>The same, over given delta documents (the unit under test in ReportExtensionBindingTests).</summary>
     internal static object ApplyReportExtensionDeltas(int reportId, object metaReport, IReadOnlyList<(int ExtensionId, string Xml)> documents)
     {
         var merged = new HashSet<int>();
+        metaReport = ApplyDocuments(reportId, metaReport, documents, merged);
+        if (merged.Count > 0) _mergedExtensionDeltas.AddOrUpdate(metaReport, merged);
+        return metaReport;
+    }
+
+    private static object ApplyDocuments(int reportId, object metaReport,
+        IReadOnlyList<(int ExtensionId, string Xml)> documents, HashSet<int> merged)
+    {
         foreach (var (extensionId, xml) in documents)
         {
             var document = System.Xml.Linq.XDocument.Parse(xml);
@@ -2141,7 +2177,6 @@ public static partial class NavReportSync
             }
             merged.Add(extensionId);
         }
-        if (merged.Count > 0) _mergedExtensionDeltas.AddOrUpdate(metaReport, merged);
         return metaReport;
     }
 
@@ -2206,9 +2241,9 @@ public static partial class NavReportSync
     ///
     /// <para>Trap: <c>RegisterDataItems</c> looks every added data item up in the report's
     /// MetaReport, so the whole call is made only for an extension whose deltas
-    /// <see cref="ApplyReportExtensionDeltas"/> merged, or one that adds nothing to the dataset. A
-    /// precompiled extension that does add to it is not merged (#4837): it gets only the
-    /// request-page step, as before, and running the report refuses
+    /// <see cref="ApplyReportExtensionDeltas(int, object)"/> merged, or one that adds nothing to the dataset. A
+    /// precompiled extension whose deltas could not be derived (#4837) gets only the
+    /// request-page step, and running the report refuses
     /// (<see cref="ThrowIfExtensionReportBehaviourIsUnbound"/>).</para>
     ///
     /// <para>An extension the metadata names but whose compiled type is not loaded refuses.</para>

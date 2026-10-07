@@ -125,7 +125,14 @@ internal static partial class BcAppSymbolCache
         int Id, string Name, string TargetName,
         List<RequestPageControlSymbol> RequestPageAddedControls,
         Dictionary<string, string> RequestPageAreaModifications,
-        Dictionary<string, Dictionary<string, string>>? RequestPageCaptionModifications = null);
+        Dictionary<string, Dictionary<string, string>>? RequestPageCaptionModifications = null,
+        // #4837 — the data items it adds (flattened, absolute Indentation; the root ones name their
+        // parent in OwningDataItemName), the columns it states at extension level, and the source
+        // file that says where each root item is anchored. Trailing + optional; the shape change
+        // re-keys the cache.
+        List<ReportDataItemSymbol>? DataItems = null,
+        List<ReportColumnSymbol>? Columns = null,
+        string? ReferenceSourceFileName = null);
 
     /// <summary>
     /// One profile as SymbolReference.json states it. <c>ProfileId</c> is the profile object's
@@ -810,7 +817,10 @@ internal static partial class BcAppSymbolCache
         // over the Integer virtual table runs the data item across that whole table instead of
         // once — every Number in [-1000000000..1000000000] since #3485 — which reads as a hang
         // (#3370).
-        int MaxIteration = 0);
+        int MaxIteration = 0,
+        // The data item this one is nested under, as the symbol file states it (#4837). For a
+        // reportextension's root item that is the PARENT of its anchor, not the anchor.
+        string? OwningDataItemName = null);
 
     /// <summary>
     /// One <c>column(Name; SourceExpr)</c> of a report data item, as SymbolReference.json
@@ -2693,7 +2703,11 @@ internal static partial class BcAppSymbolCache
                         bag[property] = text;
                     }
             }
-        return new ReportExtensionSymbol(id, name, target, added, modifications, captionModifications);
+        var dataItems = new List<ReportDataItemSymbol>();
+        CollectReportDataItems(rx, indentation: 1, dataItems);
+        return new ReportExtensionSymbol(id, name, target, added, modifications, captionModifications,
+            dataItems, ParseReportColumns(rx),
+            rx.TryGetProperty("ReferenceSourceFileName", out var rsf) ? rsf.GetString() : null);
     }
 
     private static string? ReadRequestPageProperty(JsonElement report, string name)
@@ -2835,7 +2849,8 @@ internal static partial class BcAppSymbolCache
                 ParseReportColumns(di),
                 RecordPatches.TableViewText(dataItemLink), dataItemLinkReference,
                 printOnlyIfDetail is "1" or "true" or "True",
-                maxIteration));
+                maxIteration,
+                di.TryGetProperty("OwningDataItemName", out var owner) ? owner.GetString() : null));
             CollectReportDataItems(di, indent + 1, into);
         }
     }
