@@ -58,8 +58,10 @@ Two designs stay inside it; this is the second.
 - **Nothing follows the order the compiler reports the missing calls in**, because it changes between runs.
   A member called two ways (an assignment fixes its types, an expression does not) takes its shape from the
   first call, in file then position order, that fixes it; members and the stubs' ids go in key order.
-  `AL_RUNNER_TDD_DIAG_ORDER=reverse` feeds the diagnostics backwards (a test seam used by
-  `TddPrecompiledTests`) and the outcome must not change.
+  Two calls to one member that disagree on a shape are decided by file, then position, never by position
+  alone. `AL_RUNNER_TDD_DIAG_ORDER=reverse` feeds the diagnostics backwards (a test seam used by
+  `TddPrecompiledTests`) and the outcome must not change. One stderr line per stub codeunit names the id it
+  took (`--tdd: stub codeunit "TDD Stub N" beside precompiled X in F: "M"`), so the id assignment is pinned.
 - **A refusal says why**, once per member, on stderr (`--tdd: not generated beside precompiled X: "M" - ...`):
   a call that is not through a plain variable, no call that fixes the types, no free id in `idRanges`, or
   the exception that stopped it. The tests are still reported FAILED naming the missing symbol.

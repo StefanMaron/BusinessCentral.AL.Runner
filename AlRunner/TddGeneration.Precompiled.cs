@@ -125,7 +125,7 @@ public static partial class TddGeneration
                     var id = TddPrecompiledStub.FreeCodeunitId(trees, idRanges, taken);
                     if (id == null) { idsFound = false; break; }
                     taken.Add(id.Value);
-                    fresh.Add(new TddPrecompiledStub.Group { StubId = id.Value, TreeIdx = treeSites.Key });
+                    fresh.Add(new TddPrecompiledStub.Group { StubId = id.Value, TreeIdx = treeSites.Key, ObjectName = first.TargetObjectName });
                 }
                 if (!idsFound)
                 {
@@ -138,6 +138,7 @@ public static partial class TddGeneration
                 {
                     var group = groups[$"{first.TargetObjectName}|{treeSites.Key}"];
                     group.Procedures.Add($"procedure {sig}\n    begin\n    end;");
+                    group.MemberNames.Add(first.MemberName);
                     group.Sites.AddRange(treeSites);
                 }
                 pending.Add((key, new TddGeneratedMember(first.TargetObjectName, "procedure", sig),

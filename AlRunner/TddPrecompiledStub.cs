@@ -25,6 +25,8 @@ internal static class TddPrecompiledStub
     {
         public int StubId;
         public int TreeIdx;
+        public string ObjectName = "";
+        public readonly List<string> MemberNames = new();
         public readonly List<string> Procedures = new();
         public readonly List<Site> Sites = new();
     }
@@ -114,6 +116,12 @@ internal static class TddPrecompiledStub
         }
         foreach (var (idx, sb) in appended)
             Edit(idx, trees[idx].GetText().Length, 0, sb.ToString());
+
+        // One line per stub codeunit, so the ids it took are observable (they follow member key order).
+        foreach (var g in groups)
+            Console.Error.WriteLine(
+                $"--tdd: stub codeunit {Quote(StubName(g.StubId))} beside precompiled {g.ObjectName} in " +
+                $"{Path.GetFileName(trees[g.TreeIdx].FilePath)}: {string.Join(", ", g.MemberNames.Select(Quote))}");
 
         foreach (var (idx, list) in edits)
         {

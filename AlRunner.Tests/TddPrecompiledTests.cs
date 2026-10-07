@@ -3,11 +3,14 @@
 // (--tdd turning a compile error into a generated stub the tests run against), so it lives here, not in
 // the al-language corpus. Two shapes of package: symbols plus a precompiled DLL (.deps-bin, Tier 1), and
 // symbols plus the app's own source (compiled by the run, Tier 3). The design: docs/tdd-precompiled.md.
+// The DLL is compiled from dep/ by the runner under test, once per test run: a DLL checked in was built
+// against one BC major's Ncl and threw MissingMethodException (ALMethodScope.ALFinally) on 27.5.
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -35,6 +38,23 @@ public sealed class TddPrecompiledTests : IDisposable
         try { Directory.Delete(_scratch, recursive: true); } catch { }
     }
 
+    // The ids a method of the dep codeunit is dispatched by: BC derives them from the method name, so they
+    // are the same on every BC build (read back from the DLL's OnInvoke `case` labels on 27.5 and 28.5). A
+    // wrong id shows as `Function ID -1 was called` in the real-body tests, never as a silent pass.
+    private const int ExistingMethodId = -2135483332;
+    private const int TwiceMethodId = 1516892452;
+
+    /// <summary>The fixture's dep/ app compiled by the runner under test, as the DLL a package ships.</summary>
+    private static readonly Lazy<byte[]> DepDll = new(() =>
+    {
+        var cache = Path.Combine(TestScratch.Dir("al-runner-tdd-precompiled-dep"), "cache");
+        var (stdout, stderr, exit) = RunRunner($"--cache \"{cache}\"", $"\"{Path.Combine(FixtureRoot, "dep")}\"");
+        Assert.True(exit == 0, $"compiling dep/ exit {exit}\n{stdout}\n{stderr}");
+        var dlls = Directory.GetFiles(cache, "*.dll", SearchOption.TopDirectoryOnly);
+        Assert.True(dlls.Length == 1, $"expected one DLL in {cache}, found {dlls.Length}: {string.Join(", ", dlls)}");
+        return File.ReadAllBytes(dlls[0]);
+    }, LazyThreadSafetyMode.ExecutionAndPublication);
+
     /// <summary>The package of the fixture's dep app: what a compiled .app carries, with the ids of the
     /// methods in the DLL (the call dispatches by them), and optionally the source.</summary>
     private static byte[] BuildDepApp(bool embedSource)
@@ -49,11 +69,12 @@ public sealed class TddPrecompiledTests : IDisposable
             """;
         var symbols = """
             {"Codeunits":[{"Id":65300,"Name":"Precompiled Points","Methods":[
-              {"Id":-2135483332,"Name":"Existing","ReturnTypeDefinition":{"Name":"Integer"},"Properties":[]},
-              {"Id":1516892452,"Name":"Twice","ReturnTypeDefinition":{"Name":"Integer"},"Parameters":[{"Name":"Value","TypeDefinition":{"Name":"Integer"}}],"Properties":[]}
+              {"Id":@EXISTING@,"Name":"Existing","ReturnTypeDefinition":{"Name":"Integer"},"Properties":[]},
+              {"Id":@TWICE@,"Name":"Twice","ReturnTypeDefinition":{"Name":"Integer"},"Parameters":[{"Name":"Value","TypeDefinition":{"Name":"Integer"}}],"Properties":[]}
             ],"ReferenceSourceFileName":"PrecompiledPoints.Codeunit.al","Properties":[]}],
             "AppId":"@APPID@","Name":"Tdd Precompiled Dep","Publisher":"AL Runner Fixtures","Version":"1.0.0.0"}
-            """.Replace("@APPID@", DepAppId);
+            """.Replace("@APPID@", DepAppId)
+            .Replace("@EXISTING@", ExistingMethodId.ToString()).Replace("@TWICE@", TwiceMethodId.ToString());
         using var zipBuffer = new MemoryStream();
         using (var zip = new ZipArchive(zipBuffer, ZipArchiveMode.Create, leaveOpen: true))
         {
@@ -95,7 +116,7 @@ public sealed class TddPrecompiledTests : IDisposable
         if (withDll)
         {
             Directory.CreateDirectory(Path.Combine(dir, ".deps-bin"));
-            File.Copy(Path.Combine(FixtureRoot, DepFileStem + ".dll"), Path.Combine(dir, ".deps-bin", DepFileStem + ".dll"));
+            File.WriteAllBytes(Path.Combine(dir, ".deps-bin", DepFileStem + ".dll"), DepDll.Value);
         }
         return dir;
     }
@@ -139,6 +160,7 @@ public sealed class TddPrecompiledTests : IDisposable
 
     private const string CalcPointsStub = "Precompiled Points: procedure \"CalcPoints\"(Arg1: Integer): Integer";
     private const string ShapedStub = "Precompiled Points: procedure \"Shaped\"(Arg1: Integer): Integer";
+    private const string PickStub = "Precompiled Points: procedure \"Pick\"(Arg1: Integer): Integer";
     private const string BonusStub = "Precompiled Points: procedure \"Bonus\"(Arg1: Boolean): Integer";
 
     /// <summary>The outcome both package shapes must give.</summary>
@@ -149,9 +171,9 @@ public sealed class TddPrecompiledTests : IDisposable
         using var doc = JsonDocument.Parse(stdout.Trim());
         var root = doc.RootElement;
         var tests = root.GetProperty("tests").EnumerateArray().ToList();
-        Assert.Equal(14, root.GetProperty("total").GetInt32());
-        Assert.Equal(7, root.GetProperty("passed").GetInt32());
-        Assert.Equal(7, root.GetProperty("failed").GetInt32());
+        Assert.Equal(16, root.GetProperty("total").GetInt32());
+        Assert.Equal(8, root.GetProperty("passed").GetInt32());
+        Assert.Equal(8, root.GetProperty("failed").GetInt32());
         JsonElement Find(string name) => tests.Single(t => t.GetProperty("name").GetString()!.EndsWith("." + name));
 
         // The members the package declares run their real bodies and name no stub.
@@ -182,6 +204,17 @@ public sealed class TddPrecompiledTests : IDisposable
             Assert.Equal(new[] { ShapedStub }, StubsOf(t));
         }
 
+        // Two files call "Pick" with shapes that disagree. The documented order (file, then position) makes
+        // A6 the first although its call sits further down, so its Integer result is the stub's, and A7's
+        // Boolean assignment no longer compiles. Whichever order the compiler reported them in.
+        var firstFile = Find("DisagreeingShapes_TheFirstFileDecides");
+        Assert.Equal("pass", firstFile.GetProperty("status").GetString());
+        Assert.Equal(new[] { PickStub }, StubsOf(firstFile));
+        var secondFile = Find("DisagreeingShapes_TheSecondFileLoses");
+        Assert.Equal("fail", secondFile.GetProperty("status").GetString());
+        Assert.Contains("AL0122", secondFile.GetProperty("message").GetString());
+        Assert.Empty(StubsOf(secondFile));
+
         // The stub is empty: the test's own assertion is the red of the loop, and it still names the stub.
         var own = Find("MissingMember_AssertsItsOwnResult");
         Assert.Equal("fail", own.GetProperty("status").GetString());
@@ -198,8 +231,28 @@ public sealed class TddPrecompiledTests : IDisposable
             Assert.Empty(StubsOf(t));
         }
 
-        Assert.Contains("--tdd: generated 3 member(s) this run:", stderr);
-        Assert.Contains("--tdd: 6 test(s) reach generated stubs this run:", stderr);
+        Assert.Contains("--tdd: generated 4 member(s) this run:", stderr);
+        Assert.Contains("--tdd: 7 test(s) reach generated stubs this run:", stderr);
+        // The generated list is in ordinal member order, and the stub codeunits took their ids in that order:
+        // the first member's file got the first free id, and so on (nothing follows the diagnostics' order).
+        var lines = stderr.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
+        var listed = lines.SkipWhile(l => !l.StartsWith("--tdd: generated 4 member(s)")).Skip(1).Take(4).Select(l => l.Trim()).ToList();
+        Assert.Equal(new[]
+        {
+            "Precompiled Points: procedure \"Bonus\"(Arg1: Boolean): Integer",
+            "Precompiled Points: procedure \"CalcPoints\"(Arg1: Integer): Integer",
+            "Precompiled Points: procedure \"Pick\"(Arg1: Integer): Integer",
+            "Precompiled Points: procedure \"Shaped\"(Arg1: Integer): Integer",
+        }, listed);
+        Assert.Equal(new[]
+        {
+            "--tdd: stub codeunit \"TDD Stub 65330\" beside precompiled Precompiled Points in PrecompiledPointsMoreTests.Codeunit.al: \"Bonus\", \"CalcPoints\"",
+            "--tdd: stub codeunit \"TDD Stub 65331\" beside precompiled Precompiled Points in A1RefusedTests.Codeunit.al: \"CalcPoints\"",
+            "--tdd: stub codeunit \"TDD Stub 65332\" beside precompiled Precompiled Points in PrecompiledPointsTests.Codeunit.al: \"CalcPoints\"",
+            "--tdd: stub codeunit \"TDD Stub 65333\" beside precompiled Precompiled Points in A6OrderFirstTests.Codeunit.al: \"Pick\"",
+            "--tdd: stub codeunit \"TDD Stub 65334\" beside precompiled Precompiled Points in A7OrderSecondTests.Codeunit.al: \"Pick\"",
+            "--tdd: stub codeunit \"TDD Stub 65335\" beside precompiled Precompiled Points in Tests3ShapeTests.Codeunit.al: \"Shaped\"",
+        }, lines.Where(l => l.StartsWith("--tdd: stub codeunit")).ToList());
         // A refusal says why, once per member.
         Assert.Contains("--tdd: not generated beside precompiled Precompiled Points: \"Fire\" - no call to it fixes its parameter and return types", stderr);
         Assert.Contains("--tdd: not generated beside precompiled Precompiled Points: \"MixedCall\" - a call to it is not through a plain variable", stderr);
