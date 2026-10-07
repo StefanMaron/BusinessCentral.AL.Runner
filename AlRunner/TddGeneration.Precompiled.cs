@@ -44,7 +44,12 @@ public static partial class TddGeneration
         Dictionary<string, TddGeneratedMember> generatedByKey, Dictionary<string, List<NavDiag.Diagnostic>> diagsByKey)
     {
         var byKey = new Dictionary<string, List<(NavDiag.Diagnostic Diag, Target Target)>>(StringComparer.Ordinal);
-        foreach (var diag in emitResult.Diagnostics)
+        // Test seam: AL_RUNNER_TDD_DIAG_ORDER=reverse feeds the diagnostics in the opposite order, so a test can
+        // show that nothing below depends on the order the emit happens to report them in (it varies between runs).
+        IEnumerable<NavDiag.Diagnostic> diagnostics = emitResult.Diagnostics;
+        if (Environment.GetEnvironmentVariable("AL_RUNNER_TDD_DIAG_ORDER") == "reverse")
+            diagnostics = diagnostics.Reverse();
+        foreach (var diag in diagnostics)
         {
             if (diag.Severity != NavDiag.DiagnosticSeverity.Error || diag.Id != MemberNotFoundDiagnosticId) continue;
             if (!diag.Location.IsInSource || diag.Location.SourceTree == null) continue;
@@ -56,7 +61,11 @@ public static partial class TddGeneration
                 if (!byKey.TryGetValue(key, out var list)) byKey[key] = list = new();
                 list.Add((diag, t));
             }
-            catch { /* best-effort, as the loop in Generate: the diagnostic stays for the refuse path */ }
+            catch (Exception ex)
+            {
+                // Refused, and said why: the diagnostic stays for the refuse path, which names only the missing symbol.
+                Console.Error.WriteLine($"--tdd: not generated beside a precompiled object ({diag.Location.GetLineSpan()}): {ex.GetType().Name}: {FirstLine(ex.Message)}");
+            }
         }
         if (byKey.Count == 0) return;
 
@@ -64,18 +73,44 @@ public static partial class TddGeneration
         var reserved = new HashSet<int>();
         var groups = new Dictionary<string, TddPrecompiledStub.Group>(StringComparer.OrdinalIgnoreCase);
         var pending = new List<(string Key, TddGeneratedMember Member, List<NavDiag.Diagnostic> Diags)>();
-        foreach (var (key, entries) in byKey)
+        // Members in key order, and each member's sites in file then position order: the emit reports
+        // diagnostics in an order that changes between runs, and neither the shape a member is inferred
+        // from, nor the stub ids, nor the order of the generated list may follow it.
+        foreach (var (key, unordered) in byKey.OrderBy(k => k.Key, StringComparer.Ordinal))
         {
+            var entries = unordered
+                .OrderBy(e => Array.IndexOf(originalTrees, e.Diag.Location.SourceTree))
+                .ThenBy(e => e.Diag.Location.SourceSpan.Start)
+                .ToList();
+            var obj = entries[0].Target.TargetObjectName;
+            var member = entries[0].Target.MemberName;
+            void Refuse(string reason) =>
+                Console.Error.WriteLine($"--tdd: not generated beside precompiled {obj}: \"{member}\" - {reason}");
             try
             {
                 var first = entries[0].Target;
                 var sites = new List<TddPrecompiledStub.Site>();
                 foreach (var (diag, target) in entries)
                     if (TddPrecompiledStub.SiteOf(originalTrees, diag.Location.SourceTree, target.Mae) is { } site) sites.Add(site);
-                if (sites.Count != entries.Count) continue; // a call that cannot be pointed at a stub would still fail
-                if (first.Mae!.Parent is not NavSyntax.InvocationExpressionSyntax inv) continue;
-                var shape = InferProcedureShape(compilation, inv, null);
-                if (shape == null) continue;
+                if (sites.Count != entries.Count)
+                {
+                    Refuse("a call to it is not through a plain variable inside a codeunit, so it cannot be pointed at a stub");
+                    continue; // a call that cannot be pointed at a stub would still fail
+                }
+                // The first call, in that order, whose shape the call site fixes.
+                (List<string> ParamTypes, string ReturnType)? shape = null;
+                foreach (var (_, target) in entries)
+                    if (target.Mae!.Parent is NavSyntax.InvocationExpressionSyntax inv
+                        && InferProcedureShape(compilation, inv, null) is { } inferred)
+                    {
+                        shape = inferred;
+                        break;
+                    }
+                if (shape == null)
+                {
+                    Refuse("no call to it fixes its parameter and return types (a bare statement, a Text argument, ...)");
+                    continue;
+                }
 
                 var quotedName = Quote(first.MemberName);
                 var sig = $"{quotedName}({ParamListText(shape.Value.ParamTypes)}): {shape.Value.ReturnType}";
@@ -88,11 +123,15 @@ public static partial class TddGeneration
                 {
                     if (groups.ContainsKey($"{first.TargetObjectName}|{treeSites.Key}")) continue;
                     var id = TddPrecompiledStub.FreeCodeunitId(trees, idRanges, taken);
-                    if (id == null) { idsFound = false; break; } // no free codeunit id in the app's ranges
+                    if (id == null) { idsFound = false; break; }
                     taken.Add(id.Value);
                     fresh.Add(new TddPrecompiledStub.Group { StubId = id.Value, TreeIdx = treeSites.Key });
                 }
-                if (!idsFound) continue;
+                if (!idsFound)
+                {
+                    Refuse("no free codeunit id in the app's idRanges for the generated stub");
+                    continue;
+                }
                 reserved.UnionWith(taken);
                 foreach (var g in fresh) groups[$"{first.TargetObjectName}|{g.TreeIdx}"] = g;
                 foreach (var treeSites in perTree)
@@ -104,7 +143,10 @@ public static partial class TddGeneration
                 pending.Add((key, new TddGeneratedMember(first.TargetObjectName, "procedure", sig),
                     entries.Select(e => e.Diag).ToList()));
             }
-            catch { /* best-effort */ }
+            catch (Exception ex)
+            {
+                Refuse($"{ex.GetType().Name}: {FirstLine(ex.Message)}");
+            }
         }
         if (groups.Count == 0) return;
         TddPrecompiledStub.Apply(trees, parseOptions, groups.Values.ToList());
@@ -114,4 +156,6 @@ public static partial class TddGeneration
             diagsByKey[key] = diags;
         }
     }
+
+    private static string FirstLine(string message) => message.Split('\n', 2)[0];
 }

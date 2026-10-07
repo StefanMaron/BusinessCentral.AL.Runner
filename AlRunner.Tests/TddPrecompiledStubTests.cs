@@ -105,7 +105,7 @@ public sealed class TddPrecompiledStubTests
         TddPrecompiledStub.Apply(trees, parseOptions, new[] { missing, other });
 
         var text = trees[0].GetText().ToString();
-        Assert.Empty(trees[0].GetDiagnostics().Where(d => d.Severity == Microsoft.Dynamics.Nav.CodeAnalysis.Diagnostics.DiagnosticSeverity.Error));
+        Assert.DoesNotContain(trees[0].GetDiagnostics(), d => d.Severity == Microsoft.Dynamics.Nav.CodeAnalysis.Diagnostics.DiagnosticSeverity.Error);
         Assert.Contains("R := TddStub10.Missing(1);", text);
         Assert.Contains("R := TddStub10.Missing(3);", text);
         Assert.Contains("R := TddStub11.Other(true);", text);

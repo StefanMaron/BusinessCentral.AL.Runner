@@ -100,7 +100,11 @@ public sealed class TddPrecompiledTests : IDisposable
         return dir;
     }
 
-    private static (string StdOut, string StdErr, int Exit) RunRunner(params string[] extraArgs)
+    private static (string StdOut, string StdErr, int Exit) RunRunner(params string[] extraArgs) =>
+        RunRunnerWithEnv(null, extraArgs);
+
+    private static (string StdOut, string StdErr, int Exit) RunRunnerWithEnv(
+        (string Name, string Value)? env, params string[] extraArgs)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
@@ -111,6 +115,7 @@ public sealed class TddPrecompiledTests : IDisposable
             RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
         };
+        if (env is { } e) psi.Environment[e.Name] = e.Value;
         var outSb = new StringBuilder();
         var errSb = new StringBuilder();
         using var p = Process.Start(psi)!;
@@ -133,6 +138,7 @@ public sealed class TddPrecompiledTests : IDisposable
             : Array.Empty<string>();
 
     private const string CalcPointsStub = "Precompiled Points: procedure \"CalcPoints\"(Arg1: Integer): Integer";
+    private const string ShapedStub = "Precompiled Points: procedure \"Shaped\"(Arg1: Integer): Integer";
     private const string BonusStub = "Precompiled Points: procedure \"Bonus\"(Arg1: Boolean): Integer";
 
     /// <summary>The outcome both package shapes must give.</summary>
@@ -143,9 +149,9 @@ public sealed class TddPrecompiledTests : IDisposable
         using var doc = JsonDocument.Parse(stdout.Trim());
         var root = doc.RootElement;
         var tests = root.GetProperty("tests").EnumerateArray().ToList();
-        Assert.Equal(11, root.GetProperty("total").GetInt32());
-        Assert.Equal(5, root.GetProperty("passed").GetInt32());
-        Assert.Equal(6, root.GetProperty("failed").GetInt32());
+        Assert.Equal(14, root.GetProperty("total").GetInt32());
+        Assert.Equal(7, root.GetProperty("passed").GetInt32());
+        Assert.Equal(7, root.GetProperty("failed").GetInt32());
         JsonElement Find(string name) => tests.Single(t => t.GetProperty("name").GetString()!.EndsWith("." + name));
 
         // The members the package declares run their real bodies and name no stub.
@@ -167,6 +173,15 @@ public sealed class TddPrecompiledTests : IDisposable
         Assert.Equal("pass", second.GetProperty("status").GetString());
         Assert.Equal(new[] { BonusStub }, StubsOf(second));
 
+        // One member called inside an expression and through an assignment: the stub takes the shape of the
+        // call that fixes it, and both tests name it, whichever call the compiler reported first.
+        foreach (var name in new[] { "MixedShapes_TheCallThatFixesTheTypes", "MixedShapes_TheCallInsideAnExpression" })
+        {
+            var t = Find(name);
+            Assert.Equal("pass", t.GetProperty("status").GetString());
+            Assert.Equal(new[] { ShapedStub }, StubsOf(t));
+        }
+
         // The stub is empty: the test's own assertion is the red of the loop, and it still names the stub.
         var own = Find("MissingMember_AssertsItsOwnResult");
         Assert.Equal("fail", own.GetProperty("status").GetString());
@@ -174,7 +189,7 @@ public sealed class TddPrecompiledTests : IDisposable
         Assert.Equal(new[] { CalcPointsStub }, StubsOf(own));
 
         // What --tdd refuses to stub drops its object, reported FAILED naming the missing symbol.
-        foreach (var name in new[] { "TextArgument_IsRefused", "StubbableCall_InTheSameDroppedFile", "ArrayElementQualifier_IsRefused", "PlainSite_OfAMemberAnotherSiteCannotStub_IsRefused", "NewOverloadOfAnExistingProcedure_IsRefused" })
+        foreach (var name in new[] { "TextArgument_IsRefused", "StubbableCall_InTheSameDroppedFile", "ArrayElementQualifier_IsRefused", "PlainSite_OfAMemberAnotherSiteCannotStub_IsRefused", "NewOverloadOfAnExistingProcedure_IsRefused", "BareStatement_IsRefused" })
         {
             var t = Find(name);
             Assert.Equal("fail", t.GetProperty("status").GetString());
@@ -183,8 +198,11 @@ public sealed class TddPrecompiledTests : IDisposable
             Assert.Empty(StubsOf(t));
         }
 
-        Assert.Contains("--tdd: generated 2 member(s) this run:", stderr);
-        Assert.Contains("--tdd: 4 test(s) reach generated stubs this run:", stderr);
+        Assert.Contains("--tdd: generated 3 member(s) this run:", stderr);
+        Assert.Contains("--tdd: 6 test(s) reach generated stubs this run:", stderr);
+        // A refusal says why, once per member.
+        Assert.Contains("--tdd: not generated beside precompiled Precompiled Points: \"Fire\" - no call to it fixes its parameter and return types", stderr);
+        Assert.Contains("--tdd: not generated beside precompiled Precompiled Points: \"MixedCall\" - a call to it is not through a plain variable", stderr);
         Assert.DoesNotContain("no members were generated", stdout + stderr);
     }
 
@@ -220,5 +238,50 @@ public sealed class TddPrecompiledTests : IDisposable
 
         AssertTheRun(run);
         Assert.Equal(before, HashTree(test));
+    }
+
+    /// <summary>
+    /// The compiler reports the missing calls in an order that changes between runs. Fed in the opposite
+    /// order, the run must give the outcome of the ordinary one: the shape of a member called both ways
+    /// comes from the call that fixes it, not from whichever was reported first.
+    /// </summary>
+    [SkippableFact]
+    public void PrecompiledDll_ReversedDiagnosticOrder_GivesTheSameOutcome()
+    {
+        TestArtifacts.SkipIfMissing();
+        var test = MakeTestFolder("test-reversed", withDll: true);
+
+        var run = RunRunnerWithEnv(("AL_RUNNER_TDD_DIAG_ORDER", "reverse"),
+            "--tdd", $"--cache \"{Path.Combine(_scratch, "cache-reversed")}\"", "--output-json", $"\"{test}\"");
+
+        AssertTheRun(run);
+    }
+
+    /// <summary>
+    /// A test app whose idRanges hold no free codeunit id for the stub: nothing is generated, every test that
+    /// names a missing member is FAILED as before, and the run says that the id was the reason.
+    /// </summary>
+    [SkippableFact]
+    public void NoFreeCodeunitId_RefusesAndSaysSo()
+    {
+        TestArtifacts.SkipIfMissing();
+        var test = MakeTestFolder("test-no-ids", withDll: true);
+        var ids = Directory.GetFiles(test, "*.al")
+            .Select(f => System.Text.RegularExpressions.Regex.Match(File.ReadAllText(f), @"^codeunit (\d+) ", System.Text.RegularExpressions.RegexOptions.Multiline))
+            .Where(m => m.Success).Select(m => int.Parse(m.Groups[1].Value)).ToList();
+        var manifest = Path.Combine(test, "app.json");
+        File.WriteAllText(manifest, File.ReadAllText(manifest)
+            .Replace("\"from\": 65320", $"\"from\": {ids.Min()}").Replace("\"to\": 65339", $"\"to\": {ids.Max()}"));
+
+        var (stdout, stderr, exit) = RunRunner("--tdd", $"--cache \"{Path.Combine(_scratch, "cache-no-ids")}\"", "--output-json", $"\"{test}\"");
+
+        Assert.True(exit == 1, $"exit {exit}\n{stderr}");
+        using var doc = JsonDocument.Parse(stdout.Trim());
+        var tests = doc.RootElement.GetProperty("tests").EnumerateArray().ToList();
+        Assert.All(tests, t => Assert.Empty(StubsOf(t)));
+        Assert.Contains("no free codeunit id in the app's idRanges for the generated stub", stderr);
+        Assert.Contains("no members were generated", stdout + stderr);
+        // Every file of the fixture names a missing member, so each object is dropped and each test FAILED.
+        Assert.All(tests, t => Assert.Equal("fail", t.GetProperty("status").GetString()));
     }
 }

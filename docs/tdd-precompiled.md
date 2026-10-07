@@ -55,8 +55,26 @@ Two designs stay inside it; this is the second.
   re-parsed (`TddPrecompiledStub.Apply`). They run before the other generation of the same pass mutates a tree.
 - **Only AL0132 (a missing procedure).** AL0126 (an existing procedure called with an argument count none of
   its overloads takes) is not taken: `GenerateBesidePrecompiled` filters on the diagnostic id.
+- **Nothing follows the order the compiler reports the missing calls in**, because it changes between runs.
+  A member called two ways (an assignment fixes its types, an expression does not) takes its shape from the
+  first call, in file then position order, that fixes it; members and the stubs' ids go in key order.
+  `AL_RUNNER_TDD_DIAG_ORDER=reverse` feeds the diagnostics backwards (a test seam used by
+  `TddPrecompiledTests`) and the outcome must not change.
+- **A refusal says why**, once per member, on stderr (`--tdd: not generated beside precompiled X: "M" - ...`):
+  a call that is not through a plain variable, no call that fixes the types, no free id in `idRanges`, or
+  the exception that stopped it. The tests are still reported FAILED naming the missing symbol.
 - The stub is a different instance from the variable it replaces. It has no state and an empty body, so no
   test can tell, but a stub that later gets a body would have to.
+
+## A typo cannot be told from a missing member
+
+A stub for a member that does not exist anywhere is exactly what a typo looks like: `Twicee(1)` on a package
+codeunit that declares `Twice` is stubbed, and a test that assigns the result and never checks it passes.
+On a source codeunit that was already so (the deliberate empty-body-returns-default design, #5147); this
+extends it to objects the developer does not own, including Microsoft's. The run is annotated (`generatedStubs`,
+the `reaches generated stub(s)` line, the closing list), so it is never silent, but a test that reaches a stub
+should assert its result: that assertion is what fails (`Expected 25, got 0`). Whether to refuse or
+distinctly label a stub of a Microsoft-published object is #5437.
 
 ## Not covered (reported FAILED as before)
 
