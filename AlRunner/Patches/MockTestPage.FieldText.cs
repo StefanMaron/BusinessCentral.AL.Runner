@@ -102,9 +102,9 @@ internal static class TestPageTemporalText
 }
 
 /// <summary>
-/// Guid and Duration read as AL's own <c>Format()</c> default does ('{GUID}', '1 hour 2 minutes'),
-/// because that is what the control shows; a zero Duration is <c>''</c>. The text comes from BC's
-/// own <c>NavFormatEvaluateHelper.Format</c> rather than a copy of its rules.
+/// Guid and Duration read as AL's own <c>Format()</c> default does ('{GUID}', '1 hour 2 minutes',
+/// and '' for a zero Duration, as the control shows), because that is the text the control shows.
+/// It comes from BC's own <c>NavFormatEvaluateHelper.Format</c> rather than a copy of its rules.
 /// </summary>
 internal static class TestPageGuidDurationText
 {
@@ -114,7 +114,7 @@ internal static class TestPageGuidDurationText
         => navValue switch
         {
             NavGuid => NavFormatEvaluateHelper.Format(Session, navValue),
-            NavDuration d => d.IsZeroOrEmpty ? string.Empty : NavFormatEvaluateHelper.Format(Session, navValue),
+            NavDuration => NavFormatEvaluateHelper.Format(Session, navValue),
             _ => null,
         };
 
@@ -122,9 +122,7 @@ internal static class TestPageGuidDurationText
         => value switch
         {
             Guid g => NavFormatEvaluateHelper.Format(Session, NavGuid.Create(g)),
-            TimeSpan ts => ts.Ticks == 0
-                ? string.Empty
-                : NavFormatEvaluateHelper.Format(Session, NavDuration.CreateFromObject(ts)),
+            TimeSpan ts => NavFormatEvaluateHelper.Format(Session, NavDuration.CreateFromObject(ts)),
             _ => null,
         };
 }
