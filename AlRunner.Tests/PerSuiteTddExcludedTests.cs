@@ -59,13 +59,14 @@ public sealed class PerSuiteTddExcludedTests
         }
     }
 
-    // A variable of a codeunit nobody declares: BC answers AL0185 and drops the object.
+    // A variable of a TABLE nobody declares: BC answers AL0185 and drops the object. (A missing CODEUNIT is no
+    // longer the unrecoverable case under --tdd: it is generated, #5431.)
     private static string Broken(int id, string name, int tests = 1)
     {
         var sb = new StringBuilder();
         sb.Append($"codeunit {id} \"{name}\"\n{{\n    Subtype = Test;\n\n");
-        sb.Append("    [Test]\n    procedure Works()\n    var\n        Api: Codeunit \"TD Excl Does Not Exist\";\n");
-        sb.Append("    begin\n        Api.Foo();\n    end;\n");
+        sb.Append("    [Test]\n    procedure Works()\n    var\n        Api: Record \"TD Excl Does Not Exist\";\n");
+        sb.Append("    begin\n        Api.Init();\n    end;\n");
         for (var n = 2; n <= tests; n++)
             sb.Append($"\n    [Test]\n    procedure Works{n}()\n    begin\n    end;\n");
         sb.Append("}\n");

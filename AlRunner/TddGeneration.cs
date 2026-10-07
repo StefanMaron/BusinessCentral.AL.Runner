@@ -16,7 +16,9 @@
 // (TddCrossBundle.cs), recompiled by re-running the cycle. A procedure of a codeunit declared by neither
 // (a package's: .app symbols, a DLL or embedded source) is stubbed BESIDE the object in a new codeunit of
 // this compile, never in it (#5037, TddPrecompiledStub.cs, docs/tdd-precompiled.md); any other symbol
-// declared by neither, or one BC couldn't resolve at all, is refused for a structural reason. And because
+// declared by neither, or one BC couldn't resolve at all, is refused for a structural reason. A codeunit no app
+// declares at all (AL0185) is first added as an empty object of the compile (TddGeneration.MissingObject.cs,
+// docs/tdd-missing-object.md), and the members its calls need are then generated as for any object. And because
 // generation runs strictly BEFORE the
 // pre-existing exclude-and-retry loop, a wrong guess is caught for free: if a generated member
 // still doesn't make its referencing object compile (a bad inferred type, a shape this file
@@ -86,10 +88,11 @@ public static partial class TddGeneration
         NavCA.Compilation compilation,
         NavSyntax.SyntaxTree[] trees,
         NavCA.ParseOptions parseOptions,
-        NavEmit.EmitResult emitResult,
+        NavEmit.EmitResult? emitResult,
         string? moduleName = null,
         bool hasDependents = false,
-        string? manifestAppJsonPath = null)
+        string? manifestAppJsonPath = null,
+        IReadOnlyList<TddMissingObject>? missingObjects = null)
     {
         // Snapshot BEFORE any mutation: once a tree in `trees` is replaced (a second missing
         // member found on an object already patched earlier in this same pass), the ORIGINAL
@@ -115,10 +118,33 @@ public static partial class TddGeneration
 
         // #5037: a procedure missing from a precompiled codeunit is stubbed beside it, in these trees,
         // before the loop below changes any of them (the edits are offsets into the trees as parsed).
-        GenerateBesidePrecompiled(compilation, originalTrees, trees, parseOptions, emitResult, manifestAppJsonPath,
-            generatedByKey, diagsByKey);
+        // emitResult is null when the compile still threw after a missing object was added (#5431): then only the
+        // objects are reported, with the tests that reach them.
+        if (emitResult != null)
+            GenerateBesidePrecompiled(compilation, originalTrees, trees, parseOptions, emitResult, manifestAppJsonPath,
+                generatedByKey, diagsByKey);
+        // #5431: an object added to a file of THIS compile before it was recompiled. Its tests are the ones that
+        // reach a use of it, found in the trees as they are now.
+        var useSitesByKey = new Dictionary<string, List<(NavSyntax.SyntaxTree Tree, int Position)>>(StringComparer.Ordinal);
+        foreach (var missing in missingObjects ?? Array.Empty<TddMissingObject>())
+        {
+            var key = $"object|{missing.Member.ObjectDisplayName.ToLowerInvariant()}";
+            generatedByKey[key] = missing.Member;
+            diagsByKey[key] = new List<NavDiag.Diagnostic>();
+            useSitesByKey[key] = missing.UseSites
+                .Select(u => (Tree: Array.Find(originalTrees, t => string.Equals(t.FilePath, u.FilePath, StringComparison.Ordinal)), u.Position))
+                .Where(u => u.Tree != null).Select(u => (u.Tree!, u.Position)).ToList();
+        }
 
-        foreach (var diag in emitResult.Diagnostics)
+        // File, then position, then id: the emit reports these in an order that changes between runs, and the shape a
+        // member is inferred from is the first call that fixes it (#5244), which must not follow that order (#5431).
+        // AL_RUNNER_TDD_DIAG_ORDER=reverse feeds the diagnostics backwards first, so a test shows it does not matter.
+        IEnumerable<NavDiag.Diagnostic> fed = emitResult?.Diagnostics ?? Enumerable.Empty<NavDiag.Diagnostic>();
+        if (Environment.GetEnvironmentVariable("AL_RUNNER_TDD_DIAG_ORDER") == "reverse") fed = fed.Reverse();
+        foreach (var diag in fed
+            .OrderBy(d => d.Location.SourceTree == null ? int.MaxValue : Array.IndexOf(originalTrees, d.Location.SourceTree))
+            .ThenBy(d => d.Location.IsInSource ? d.Location.SourceSpan.Start : -1)
+            .ThenBy(d => d.Id, StringComparer.Ordinal))
         {
             if (diag.Severity != NavDiag.DiagnosticSeverity.Error) continue;
             if (diag.Id != MemberNotFoundDiagnosticId && diag.Id != NoOverloadForArgumentCountDiagnosticId) continue;
@@ -174,12 +200,18 @@ public static partial class TddGeneration
                 foreach (var diag in diagsByKey[key])
                     foreach (var label in callGraph.TestsReaching(diag))
                         if (!deps.Contains(label)) deps.Add(label);
+                var uses = useSitesByKey.GetValueOrDefault(key) ?? new();
+                foreach (var (useTree, usePosition) in uses)
+                    foreach (var label in callGraph.TestsReaching(useTree, usePosition))
+                        if (!deps.Contains(label)) deps.Add(label);
                 // #5161: generated into another bundle, so a bundle compiled after this one reaches
                 // the member through whichever procedures of this compile lead to a call site.
                 // The same for a member generated into THIS compile when another bundle depends on it
                 // (#5271): its tests are not in this compile, they call into it.
                 if (member.GeneratedIntoFile != null || hasDependents)
-                    TddCrossBundle.RecordReaching(diagsByKey[key].SelectMany(callGraph.ProcedureKeysReaching), member);
+                    TddCrossBundle.RecordReaching(
+                        diagsByKey[key].SelectMany(callGraph.ProcedureKeysReaching)
+                            .Concat(uses.SelectMany(u => callGraph.ProcedureKeysReaching(u.Tree, u.Position))), member);
             }
             catch (Exception ex)
             {

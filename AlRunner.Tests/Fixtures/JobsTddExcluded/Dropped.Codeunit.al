@@ -8,9 +8,9 @@ codeunit 51000 "Jobs Excl Dropped"
     [Test]
     procedure Dropped_A()
     var
-        Missing: Codeunit "This Codeunit Does Not Exist At All";
+        Missing: Record "This Table Does Not Exist At All";
     begin
-        Missing.DoSomething();
+        Missing.Init();
     end;
 
     [Test]

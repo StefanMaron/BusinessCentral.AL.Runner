@@ -1,0 +1,10 @@
+{
+  "id": "9a5b7c43-ae68-4db4-8f7a-4b1c6d8a0e25",
+  "name": "Runner Tests Fixture - Tdd Missing Object Undeclared Test",
+  "publisher": "AL Runner Fixtures",
+  "version": "1.0.0.0",
+  "dependencies": [],
+  "idRanges": [ { "from": 65360, "to": 65379 } ],
+  "runtime": "14.0",
+  "features": []
+}
