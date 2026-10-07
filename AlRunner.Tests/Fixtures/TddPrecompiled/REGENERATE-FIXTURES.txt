@@ -1,0 +1,15 @@
+How AL_Runner_Fixtures_Tdd_Precompiled_Dep_1.0.0.0.dll was produced (#5037)
+==========================================================================
+
+The DLL is the dep/ app compiled by the runner as an ordinary bundle; TddPrecompiledTests writes the
+matching package (.app: manifest, SymbolReference.json, optionally src/) at test time, so the symbols
+stay readable in the test source. The symbols name each method by the id its DLL dispatches on (the
+`case` labels of Codeunit65300.OnInvoke), so a rebuilt DLL needs those ids read back and the two
+constants in TddPrecompiledTests.BuildDepApp updated:
+
+  dotnet run --project AlRunner -c Release -- --cache /tmp/tdd-pre-dep AlRunner.Tests/Fixtures/TddPrecompiled/dep
+  cp "$(ls -t /tmp/tdd-pre-dep/*.dll | head -1)" \
+     AlRunner.Tests/Fixtures/TddPrecompiled/AL_Runner_Fixtures_Tdd_Precompiled_Dep_1.0.0.0.dll
+  ilspycmd AlRunner.Tests/Fixtures/TddPrecompiled/AL_Runner_Fixtures_Tdd_Precompiled_Dep_1.0.0.0.dll | grep -A1 'case '
+
+The dep/ source must never sit inside the test/ folder: the test app would compile it as its own.

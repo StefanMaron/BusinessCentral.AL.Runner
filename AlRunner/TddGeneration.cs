@@ -53,7 +53,7 @@ public sealed record TddGeneratedMember(string ObjectDisplayName, string MemberK
     public string? GeneratedIntoFile { get; init; }
 }
 
-public static class TddGeneration
+public static partial class TddGeneration
 {
     private const string MemberNotFoundDiagnosticId = "AL0132";
     // #5228: "No overload for method 'X' takes N arguments" — the procedure exists, the call has an
@@ -87,7 +87,8 @@ public static class TddGeneration
         NavCA.ParseOptions parseOptions,
         NavEmit.EmitResult emitResult,
         string? moduleName = null,
-        bool hasDependents = false)
+        bool hasDependents = false,
+        string? manifestAppJsonPath = null)
     {
         // Snapshot BEFORE any mutation: once a tree in `trees` is replaced (a second missing
         // member found on an object already patched earlier in this same pass), the ORIGINAL
@@ -111,6 +112,11 @@ public static class TddGeneration
         var crossSeen = new HashSet<string>(StringComparer.Ordinal);
         var blockedKeys = new HashSet<string>(StringComparer.Ordinal);
 
+        // #5037: a procedure missing from a precompiled codeunit is stubbed beside it, in these trees,
+        // before the loop below changes any of them (the edits are offsets into the trees as parsed).
+        GenerateBesidePrecompiled(compilation, originalTrees, trees, parseOptions, emitResult, manifestAppJsonPath,
+            generatedByKey, diagsByKey);
+
         foreach (var diag in emitResult.Diagnostics)
         {
             if (diag.Severity != NavDiag.DiagnosticSeverity.Error) continue;
@@ -121,6 +127,7 @@ public static class TddGeneration
             {
                 var target = ResolveTarget(compilation, originalTrees, diag);
                 if (target == null) continue; // unrecognized shape / unresolvable qualifier — refuse
+                if (target.Value.Precompiled) continue; // GenerateBesidePrecompiled above
 
                 var key = target.Value.CrossFile != null
                     ? CrossKey(target.Value.CrossFile, target.Value.Kind, target.Value.MemberKey)
@@ -282,7 +289,14 @@ public static class TddGeneration
             // Declared outside this compile: generatable only when another SOURCE bundle of the
             // run declares it (#5037). A precompiled dependency matches no registered source.
             var cross = TddCrossBundle.FindObject(SyntaxTypeFor(kind), qualType.Name);
-            if (cross == null) return null;
+            if (cross == null)
+            {
+                // A codeunit of a loaded package (#5037): nothing to add the member to, so GenerateBesidePrecompiled.
+                // An overload is refused: a stub beside the object would shadow nothing it can see.
+                return kind == "procedure" && !overload && IsPackagedObject(qualType) && mae != null
+                    ? new Target(kind, -1, qualType.Name, memberName, mae, null, null, Precompiled: true)
+                    : null;
+            }
             return new Target(kind, -1, qualType.Name, memberName, mae, cross.Value.FilePath, overloadKey);
         }
         var targetTreeIdx = Array.IndexOf(originalTrees, declLoc.SourceTree);
@@ -295,7 +309,8 @@ public static class TddGeneration
     /// the procedure exists and the call needs another overload of it.</summary>
     private readonly record struct Target(
         string Kind, int TargetTreeIdx, string TargetObjectName, string MemberName,
-        NavSyntax.MemberAccessExpressionSyntax? Mae, string? CrossFile, string? OverloadKey = null)
+        NavSyntax.MemberAccessExpressionSyntax? Mae, string? CrossFile, string? OverloadKey = null,
+        bool Precompiled = false)
     {
         public bool IsOverload => OverloadKey != null;
         public string MemberKey => OverloadKey == null ? MemberName : $"{MemberName}({OverloadKey})";
@@ -435,19 +450,12 @@ public static class TddGeneration
                 .Any(m => Unquote(IdentTextOf(m.Name)).Equals(procName, StringComparison.OrdinalIgnoreCase)))
             return null;
 
-        var paramTypes = new List<string>();
-        foreach (var arg in inv.ArgumentList.Arguments)
-        {
-            var t = InferAlTypeText(compilation, arg, typeAllowed);
-            if (t == null) return null; // any un-inferable argument refuses the WHOLE procedure
-            paramTypes.Add(t);
-        }
-
-        var returnType = InferReturnTypeText(compilation, inv, typeAllowed);
-        if (returnType == null) return null; // includes the "bare statement" refuse case
+        var shape = InferProcedureShape(compilation, inv, typeAllowed);
+        if (shape == null) return null; // an un-inferable argument or return type refuses the WHOLE procedure
+        var (paramTypes, returnType) = shape.Value;
 
         var quotedName = Quote(procName);
-        var paramList = string.Join("; ", paramTypes.Select((t, i) => $"Arg{i + 1}: {t}"));
+        var paramList = ParamListText(paramTypes);
         // #5147: an empty body, so the call returns the type's default and the test's own
         // assertion decides its result — the red of the red-green loop.
         var snippet =

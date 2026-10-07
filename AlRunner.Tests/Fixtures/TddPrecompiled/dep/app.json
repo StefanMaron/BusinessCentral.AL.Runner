@@ -1,0 +1,10 @@
+{
+  "id": "3c5e7a10-8b24-4d96-b1f3-5a7d2e9c4086",
+  "name": "Tdd Precompiled Dep",
+  "publisher": "AL Runner Fixtures",
+  "version": "1.0.0.0",
+  "dependencies": [],
+  "idRanges": [ { "from": 65300, "to": 65319 } ],
+  "runtime": "14.0",
+  "features": []
+}

@@ -2068,7 +2068,7 @@ public sealed partial class BcCompiler
         var tddGeneratedMembers = new List<TddGeneratedMember>();
         if (_tddMode && caught == null && emitResult != null && !emitResult.Success)
         {
-            var newlyGenerated = TddGeneration.Generate(compilation, trees, parseOpts, emitResult, moduleName, TddCrossBundle.IsSourceImpl(appId));
+            var newlyGenerated = TddGeneration.Generate(compilation, trees, parseOpts, emitResult, moduleName, TddCrossBundle.IsSourceImpl(appId), manifestAppJsonPath);
             // A member generated into another bundle (#5037) is invisible to this compile until
             // that bundle is recompiled — Program.cs re-runs the cycle for it, so only a member
             // generated into this module's own trees is worth a recompile here.
