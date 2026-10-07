@@ -15,7 +15,7 @@
 //
 // ── The key, and why it cannot collide ─────────────────────────────────────────────────
 //
-// The key is (device, inode, size, mtime). All four, deliberately:
+// The key is (device, inode, size, mtime, ctime). All five, deliberately:
 //
 //   * An inode number is unique only WITHIN a device. Two package-cache roots on different
 //     filesystems — `$HOME` on one mount, an artifacts directory on another, which is a
@@ -34,6 +34,15 @@
 //     timestamp tick — is a strictly smaller window than the same-length-same-mtime
 //     collision a stat-only key is exposed to for two files that both still exist.
 //
+//   * ctime (#5409) is what closes that window. mtime is writable from user space
+//     (`utime`, `cp -p`, `rsync -t`, reproducible-build pipelines), so a file rewritten IN PLACE to the
+//     same length with its mtime put back kept its key, and a deleted file's inode reused by a new file
+//     of the same length and mtime did too. ctime cannot be set from user space: a new file starts a new
+//     ctime and every write, `utime` included, moves it. A READ does not, so an unchanged package keeps
+//     its key and its memoized hash. What does move it without changing bytes (chmod, rename, a new
+//     hard link) only costs one re-hash. The window left is a rewrite inside one kernel timestamp
+//     tick of the state that was hashed (milliseconds).
+//
 // So the key never says "same file" for two files that exist at once, which is the only
 // claim the memo above it makes. It is NOT a content identity and must never be persisted
 // to disk or shared between processes: an inode number means nothing on another machine,
@@ -48,8 +57,10 @@
 // arch-specific and glibc did not export a plain `stat` symbol before 2.33.
 //
 // Anywhere `statx` is unavailable — Windows, macOS, a libc without it — TryGetStableKey
-// returns null and every caller falls back to path keying, i.e. exactly today's behaviour:
-// duplicated work, never a wrong answer. The same is true of the `cp -a` fallback in the
+// returns null and RunnerFingerprint falls back to (path, length, mtime), i.e. exactly the
+// pre-#3036 behaviour: duplicated work, and the in-place same-size same-mtime rewrite that ctime
+// closes here stays open there, because .NET exposes no ctime. Where statx answers but declines
+// ctime, the memo is bypassed outright (Declined): a file is re-hashed per call, never keyed weaker. The same is true of the `cp -a` fallback in the
 // provisioning action above: if the hard link cannot be made (typically because the two
 // directories are on different filesystems) the copy is a genuinely separate file with its
 // own inode, this returns two different keys, and both copies are hashed — which is
@@ -73,33 +84,52 @@ internal static class FileIdentity
     /// <para>Never persist this. See the header for why it is meaningless off this machine
     /// and meaningless on it once the file is unlinked.</para>
     /// </summary>
-    internal static string? TryGetStableKey(string fullPath)
+    internal static string? TryGetStableKey(string fullPath) => Probe(fullPath).Key;
+
+    /// <summary>
+    /// <see cref="TryGetStableKey"/> plus the one answer a null cannot give: <c>Declined</c> is the
+    /// filesystem answering but refusing a field the key needs (ctime), where the caller must NOT fall
+    /// back to a weaker key and re-reads the file instead. <c>Key == null &amp;&amp; !Declined</c> is the
+    /// platform not answering at all, which keeps its documented fallback.
+    /// </summary>
+    internal static (string? Key, bool Declined) Probe(string fullPath)
     {
-        if (!_statxUsable) return null;
+        if (!_statxUsable) return (null, false);
         try
         {
             var buf = new StatxBuffer();
             // AT_FDCWD with an absolute path; flags 0 = follow symlinks. The mask is a
             // request, not a promise — the kernel reports what it actually filled in
             // stx_mask.
-            const uint wanted = StatxIno | StatxSize | StatxMtime;
-            var rc = statx(AT_FDCWD, fullPath, 0, wanted, ref buf);
-            if (rc != 0) return null;
-            // ALL THREE, not just the inode. Size and mtime are what bound inode reuse (see
-            // the header), so a filesystem that reported an inode and declined the other two
-            // would silently hand back `ino|maj:min:ino|0|0.0` — a key carrying none of the
-            // anti-aliasing weight, for every file on that mount. Answering null instead
-            // costs the dedup and keeps the fallback's guarantees. Defensive rather than
-            // observed: the mask measured on this repo's filesystems is 0x9fff.
-            if ((buf.Mask & wanted) != wanted) return null;
-            return string.Create(
-                System.Globalization.CultureInfo.InvariantCulture,
-                $"ino|{buf.DevMajor}:{buf.DevMinor}:{buf.Ino}|{buf.Size}|{buf.MtimeSec}.{buf.MtimeNsec}");
+            var rc = statx(AT_FDCWD, fullPath, 0, Wanted, ref buf);
+            if (rc != 0) return (null, false);
+            return KeyFromStatx(buf.Mask, buf.DevMajor, buf.DevMinor, buf.Ino, buf.Size,
+                buf.MtimeSec, buf.MtimeNsec, buf.CtimeSec, buf.CtimeNsec);
         }
-        catch (EntryPointNotFoundException) { _statxUsable = false; return null; }
-        catch (DllNotFoundException) { _statxUsable = false; return null; }
-        catch (PlatformNotSupportedException) { _statxUsable = false; return null; }
-        catch { return null; }
+        catch (EntryPointNotFoundException) { _statxUsable = false; return (null, false); }
+        catch (DllNotFoundException) { _statxUsable = false; return (null, false); }
+        catch (PlatformNotSupportedException) { _statxUsable = false; return (null, false); }
+        catch { return (null, false); }
+    }
+
+    /// <summary>
+    /// The key out of what statx reported. ALL of inode, size, mtime and ctime, not just the inode: a
+    /// filesystem that reported an inode and declined the rest would silently hand back
+    /// `ino|maj:min:ino|0|0.0|0.0`, a key carrying none of the anti-aliasing weight, for every file on
+    /// that mount. Missing ino/size/mtime answers null (the path fallback, as before); missing ctime
+    /// answers Declined, because the fallback key is weaker than this one and the bytes would be
+    /// served stale (#5409). Defensive rather than observed: the mask measured on this repo's
+    /// filesystems is 0x9fff, which includes ctime.
+    /// </summary>
+    internal static (string? Key, bool Declined) KeyFromStatx(uint mask, uint devMajor, uint devMinor,
+        ulong ino, ulong size, long mtimeSec, uint mtimeNsec, long ctimeSec, uint ctimeNsec)
+    {
+        const uint identity = StatxIno | StatxSize | StatxMtime;
+        if ((mask & identity) != identity) return (null, false);
+        if ((mask & StatxCtime) != StatxCtime) return (null, true);
+        return (string.Create(
+            System.Globalization.CultureInfo.InvariantCulture,
+            $"ino|{devMajor}:{devMinor}:{ino}|{size}|{mtimeSec}.{mtimeNsec}|{ctimeSec}.{ctimeNsec}"), false);
     }
 
     // Latched off the first time the P/Invoke itself proves unavailable, so a platform
@@ -108,9 +138,11 @@ internal static class FileIdentity
     private static volatile bool _statxUsable = RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
 
     private const int AT_FDCWD = -100;
+    private const uint StatxCtime = 0x00000080;
     private const uint StatxMtime = 0x00000040;
     private const uint StatxIno = 0x00000100;
     private const uint StatxSize = 0x00000200;
+    private const uint Wanted = StatxIno | StatxSize | StatxMtime | StatxCtime;
 
     // struct statx, uapi/linux/stat.h — 256 bytes, identical layout on every architecture.
     // Only the fields this type reads are declared; the rest is covered by Size.
@@ -120,6 +152,8 @@ internal static class FileIdentity
         [FieldOffset(0)] public uint Mask;
         [FieldOffset(32)] public ulong Ino;
         [FieldOffset(40)] public ulong Size;
+        [FieldOffset(96)] public long CtimeSec;    // stx_ctime.tv_sec
+        [FieldOffset(104)] public uint CtimeNsec;  // stx_ctime.tv_nsec
         [FieldOffset(112)] public long MtimeSec;   // stx_mtime.tv_sec
         [FieldOffset(120)] public uint MtimeNsec;  // stx_mtime.tv_nsec
         [FieldOffset(136)] public uint DevMajor;

@@ -6588,7 +6588,7 @@ return strictExitCode ? computedExitCode : 0;
         // materialized from the OTHER module's Type.
         Assembly? reusedAsm = null;
         var sourceFingerprint = BundleSourceFingerprint(bucketRoot, allPaths, fileHashes,
-            ordered.Select(o => $"{o.Manifest.AppId}|{o.Manifest.Version}|{Path.GetFullPath(o.AppPath)}"));
+            ordered.Select(o => DependencyFingerprintTerm(o.Manifest, o.AppPath)));
         if (bundleId != null)
         {
             try
