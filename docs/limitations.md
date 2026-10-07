@@ -2478,6 +2478,14 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
     ([#2261](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2261)), with one
     declared exception: a companion column owned by an app **outside this run's app closure**
     has no AL field in this run's schema, so it is dropped and counted in the summary.
+  - BC 29 stores those fields as columns of the base table itself, named
+    `<field>$<app id>`, and has no `$ext` companions
+    ([#5385](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/5385)). Reader
+    v0.2.1 and later maps such a column to the AL field name when the app's symbols were given;
+    a column it leaves raw is mapped by the runner when its app id is in the run's closure and
+    the table has that field, and counted as absent from this build when it has not. Only an app
+    outside the closure is counted as uninstalled. The once-per-run merge check needs a companion
+    to read, so on a BC 29 backup it does not run.
   - Date, DateTime, Time and DateFormula values are rebuilt
     ([#2259](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2259)), as are
     Blob, Media, MediaSet, RecordId and Duration

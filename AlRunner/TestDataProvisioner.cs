@@ -706,7 +706,8 @@ internal static class TestDataProvisioner
         var toHydrate = TestDataNormalization.Apply(entry.AlTableId.Value, entry.TableName, rows);
 
         return RecordPatches.HydrateTestDataTable(
-            entry.AlTableId.Value, entry.TableName, toHydrate, intoSource, out metaTable, out pristineRows);
+            entry.AlTableId.Value, entry.TableName, toHydrate, intoSource, out metaTable, out pristineRows,
+            SymbolManifests(symbols).Select(m => m.AppId).ToHashSet());
     }
 
     /// <summary>

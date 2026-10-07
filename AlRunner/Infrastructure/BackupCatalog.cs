@@ -109,11 +109,12 @@ internal static class BackupCatalog
     // A merged read leaves a column in that raw form when the app that owns it is NOT among
     // the `--symbols` the reader was given, because it then has no AL field name or id for it.
     //
-    // That is not an error: the runner passes its OWN app closure as symbols, so an app the
-    // reader could not resolve is an app this run does not have installed either, and the AL
-    // record this run builds genuinely has no such field. See
-    // RecordPatches.HydrateTestDataTable for what is done with them (dropped, counted, and
-    // reported — never silently, and never confused with a column the runner SHOULD know).
+    // The runner passes its OWN app closure as symbols, so a column of an app outside that
+    // closure is an app this run does not have installed, and the AL record this run builds
+    // genuinely has no such field. A column of an app INSIDE the closure is not that: BC 29 stores
+    // every table-extension field under this name in the base table, and a reader older than
+    // v0.2.1 leaves them raw (#5385). See RecordPatches.PlanTestDataColumns for what is done with
+    // each (mapped, or dropped and counted, never silently).
     private static readonly Regex UnresolvedExtensionColumn = new(
         @"^(?<sql>.+)\$(?<app>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
         RegexOptions.Compiled);
