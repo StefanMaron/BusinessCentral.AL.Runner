@@ -141,18 +141,25 @@ public sealed class TestPageFieldTextTests
     [InlineData(NavType.DateTime, "2024-03-02T12:34:56", "3/2/2024 12:34 PM")]   // seconds are not shown
     [InlineData(NavType.DateTime, "2024-03-02T00:00:00", "3/2/2024 12:00 AM")]
     public void TemporalFormatObject_UsesTheShortFormOfItsOwnType(NavType type, string iso, string expected)
-        => Assert.Equal(expected, TestPageTemporalText.FormatObject(
-            DateTime.Parse(iso, CultureInfo.InvariantCulture), type));
+        => Assert.Equal(expected, Plain(TestPageTemporalText.FormatObject(
+            DateTime.Parse(iso, CultureInfo.InvariantCulture), type)));
+
+    // The space before AM/PM is U+202F where the runtime's culture data is CLDR 42 or newer and
+    // U+0020 before it, on BC's tier and here alike; the rows above are written with U+0020.
+    private static string? Plain(string? text) => text?.Replace('\u202f', ' ').Replace('\u00a0', ' ');
 
     [Fact]
     public void TemporalFormatObject_UtcKindDateTime_ReadsAsLocalTime_LikeBcsFormatter()
     {
+        // A fixed zone, so the conversion cannot be the identity on a UTC machine.
+        var plusFive = TimeZoneInfo.CreateCustomTimeZone("+5", TimeSpan.FromHours(5), "+5", "+5");
         var utc = new DateTime(2024, 3, 2, 12, 34, 56, DateTimeKind.Utc);
-        var local = TimeZoneInfo.ConvertTimeFromUtc(utc, TimeZoneInfo.Local);
-        Assert.Equal(local.ToString("M/d/yyyy h:mm tt", CultureInfo.InvariantCulture),
-                     TestPageTemporalText.FormatObject(utc, NavType.DateTime));
-        // A Date carries no time of day, so it is never shifted.
-        Assert.Equal("3/2/2024", TestPageTemporalText.FormatObject(utc, NavType.Date));
+        Assert.Equal("3/2/2024 5:34 PM", Plain(TestPageTemporalText.FormatObject(utc, NavType.DateTime, plusFive)));
+        // BC's ALSetValue hands a DateTime over already local, and that is never shifted again.
+        var local = new DateTime(2024, 3, 2, 12, 34, 56, DateTimeKind.Unspecified);
+        Assert.Equal("3/2/2024 12:34 PM", Plain(TestPageTemporalText.FormatObject(local, NavType.DateTime, plusFive)));
+        // A Date or a Time carries no zone of its own, so it is never shifted.
+        Assert.Equal("3/2/2024", TestPageTemporalText.FormatObject(utc, NavType.Date, plusFive));
     }
 
     [Theory]

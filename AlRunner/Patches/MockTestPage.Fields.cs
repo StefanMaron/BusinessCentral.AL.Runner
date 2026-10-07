@@ -97,6 +97,7 @@ internal sealed class LiveNavTestField : ITestField
                // #5369: the control's own spelling of a Date/Time/DateTime, Guid and Duration.
                ?? TestPageTemporalText.Format(_record.GetFieldValue(_fieldNo) as NavValue)
                ?? TestPageGuidDurationText.Format(_record.GetFieldValue(_fieldNo) as NavValue)
+               ?? TestPageMediaText.Format(_record.GetFieldValue(_fieldNo) as NavValue)
                ?? Convert.ToString(ObjectValue, CultureInfo.InvariantCulture)
                ?? string.Empty;
         // appendRefreshSuffix: true — a Rec-bound control stages a row edit, and real BC's
@@ -494,6 +495,7 @@ internal sealed class PageVariableTestField : ITestField
                ?? TestPageBlankTemporalValue.Format(RunnerPageInstance.GetValue(_expression))
                ?? TestPageTemporalText.Format(RunnerPageInstance.GetValue(_expression))
                ?? TestPageGuidDurationText.Format(RunnerPageInstance.GetValue(_expression))
+               ?? TestPageMediaText.Format(RunnerPageInstance.GetValue(_expression))
                ?? Convert.ToString(ObjectValue, CultureInfo.InvariantCulture)
                ?? string.Empty;
         // appendRefreshSuffix: false — a page-global control stages no row edit, so there is

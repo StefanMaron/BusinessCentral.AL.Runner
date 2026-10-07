@@ -57,19 +57,17 @@ internal static class TestPageBlanking
 }
 
 /// <summary>
-/// Date, Time and DateTime in the spelling the control shows: the session culture's short date
-/// and time (en-US, the runner's pinned session language), not the AL <c>Format()</c> default.
-/// The patterns are the measured ones (corpus codeunit 69932, every required leg), written out
-/// because the formatter that owns them (<c>NavBaseDateTimeFormatter</c>) is in the assembly the
-/// runner cannot load. A blank temporal is <see cref="TestPageBlankTemporalValue"/>'s.
+/// Date, Time and DateTime in the spelling the control shows: the en-US culture's short date,
+/// long time and short date-time patterns (the runner's pinned session language is 1033), not the
+/// AL <c>Format()</c> default. The patterns come from the runtime's culture data, as BC's own
+/// formatter takes them, so the space before AM/PM is whatever that data holds (U+202F from CLDR
+/// 42 on). A blank temporal is <see cref="TestPageBlankTemporalValue"/>'s.
+/// Measured: corpus codeunit 69932 (docs/limitations.md#testpage-field-text).
 /// </summary>
 internal static class TestPageTemporalText
 {
     private static NavSession Session => (NavSession)BcRuntime.SkeletonSession!;
-
-    private const string DatePattern = "M/d/yyyy";
-    private const string TimePattern = "h:mm:ss tt";
-    private const string DateTimePattern = "M/d/yyyy h:mm tt";
+    private static readonly CultureInfo Culture = CultureInfo.GetCultureInfo("en-US");
 
     internal static string? Format(NavValue? navValue)
     {
@@ -77,7 +75,7 @@ internal static class TestPageTemporalText
         {
             case NavDateTime dateTime when !dateTime.IsZeroOrEmpty:
                 return dateTime.GetClientLocalValue(Session)
-                    .ToString(DateTimePattern, CultureInfo.InvariantCulture);
+                    .ToString("g", Culture);
             case NavDate or NavTime when navValue is NavDateTimeValue { IsZeroOrEmpty: false }:
                 return FormatObject(LiveNavTestPage.Unwrap(navValue), navValue is NavDate ? NavType.Date : NavType.Time);
             default:
@@ -88,16 +86,16 @@ internal static class TestPageTemporalText
     /// <summary>The same rule for ValueToString, which sees only the CLR <c>DateTime</c> and the
     /// control's field type. A UTC-kind value is converted to local first, as BC's formatter
     /// does; BC's ALSetValue hands a DateTime over already local.</summary>
-    internal static string? FormatObject(object? value, NavType fieldType)
+    internal static string? FormatObject(object? value, NavType fieldType, TimeZoneInfo? zone = null)
     {
         if (value is not DateTime dt || dt == default) return null;
         if (fieldType == NavType.DateTime && dt.Kind == DateTimeKind.Utc)
-            dt = TimeZoneInfo.ConvertTimeFromUtc(dt, TimeZoneInfo.Local);
+            dt = TimeZoneInfo.ConvertTimeFromUtc(dt, zone ?? TimeZoneInfo.Local);
         return fieldType switch
         {
-            NavType.Date => dt.ToString(DatePattern, CultureInfo.InvariantCulture),
-            NavType.Time => dt.ToString(TimePattern, CultureInfo.InvariantCulture),
-            NavType.DateTime => dt.ToString(DateTimePattern, CultureInfo.InvariantCulture),
+            NavType.Date => dt.ToString("d", Culture),
+            NavType.Time => dt.ToString("T", Culture),
+            NavType.DateTime => dt.ToString("g", Culture),
             _ => null,
         };
     }
@@ -130,3 +128,17 @@ internal static class TestPageGuidDurationText
             _ => null,
         };
 }
+
+/// <summary>
+/// A Media or MediaSet control shows the media's id as lowercase hyphenated text, and nothing
+/// when no media is set (corpus codeunits 69932 and 69934). Without this arm the getter answered
+/// the CLR type name of the value's payload.
+/// </summary>
+internal static class TestPageMediaText
+{
+    internal static string? Format(NavValue? navValue)
+        => navValue is NavMediaValueBase media
+            ? media.ALMediaId == Guid.Empty ? string.Empty : media.ALMediaId.ToString("D", CultureInfo.InvariantCulture)
+            : null;
+}
+
