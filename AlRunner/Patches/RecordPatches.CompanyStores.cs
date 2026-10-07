@@ -1,33 +1,14 @@
-// RecordPatches.CompanyStores — one row store per (table, company) for a per-company table.
+// RecordPatches.CompanyStores — one row store per (table, company) for a per-company table (#5349).
 //
-// BC keeps a per-company table's rows apart by company token: a record opened on another company
-// (Record.ChangeCompany, Record.CurrentCompany over a company name, RecordRef.ChangeCompany) reads
-// and writes that company's own rows. The runner's store is one in-memory TempTableDataProvider per
-// (DataAccessSource, table) that ignores the token, so before #5349 every company but the session's
-// own was refused (CompanyAccessPatches), because granting it would have shared one set of rows.
-//
-// HOW IT IS DONE
-//   The session company is token 0 and keeps the store GetDataAccessForTableCore hands out. Every
-//   other company gets a SIBLING store of its own, created lazily the first time a record on that
-//   company reads RecordImplementation.dataAccess, and held weakly against the session-company
-//   store it shadows (_companyStores). Because the siblings hang off that store, they die with it:
-//   ResetPerTestState and the install-baseline restore replace the session-company store at a
-//   test-codeunit boundary, and the other companies' rows go with it, exactly as the Company row
-//   that made them accessible does.
-//
-//   The routing point is the read hook BC's record code already goes through,
-//   RecordImplementation_LiveDataAccess (every `ldfld RecordImplementation.dataAccess`, #4781). It
-//   asks the record's own TableState for its company token and swaps in the sibling store. Nothing
-//   is done until a non-session company has been granted (_anyCompanyDataAccess), so a run that
-//   never calls ChangeCompany pays one volatile read per DataAccess read.
-//
-// WHAT IS NOT ROUTED
-//   Anything that asks DataAccessSource.GetDataAccessForTable for a table WITHOUT a record in hand
-//   still gets the session-company store: NavDataTransfer, Query objects, and the runner's own
-//   AutoIncrement high-water read. FlowField sources and TableRelation validation ARE routed:
-//   both ask GetDataAccessForTableInCompany with the record's token (FlowFieldPatches directly,
-//   RecordImplementation.ValidateRelation through NclCecilRewrite's call-site rewrite).
-//   See docs/limitations.md.
+// The session company is token 0 and keeps the store GetDataAccessForTableCore hands out. Every
+// other company gets a SIBLING store created on first use and held weakly against the session-company
+// store it shadows (_companyStores), so ResetPerTestState and the install-baseline restore drop it with
+// the store they replace. The routing point is RecordImplementation_LiveDataAccess, the read hook every
+// `ldfld RecordImplementation.dataAccess` already goes through; it does nothing until a non-session
+// company has been granted (_anyCompanyDataAccess). Callers that ask GetDataAccessForTable without a
+// record (NavDataTransfer, Query objects, the AutoIncrement high-water read) still get the session
+// company's store; FlowField sources and TableRelation validation are routed explicitly. The rest of
+// the design and what is not covered: docs/limitations.md, "Company context".
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.CompilerServices;
