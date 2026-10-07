@@ -118,13 +118,19 @@ public static partial class RecordPatches
     /// </summary>
     public static object? RecordImplementation_LiveDataAccess(object recordImplementation, object? dataAccess)
     {
-        if (!_anyRetiredDataAccess || dataAccess == null
-            || !_retiredDataAccess.TryGetValue(dataAccess, out var retired))
-            return dataAccess;
-        var meta = (NCLMetaTable)RebindField(recordImplementation.GetType(), "metaTable").GetValue(recordImplementation)!;
-        var live = NavDataAccessSource_GetDataAccessForTable(retired.Source, meta, false);
-        RebindField(recordImplementation.GetType(), "dataAccess").SetValue(recordImplementation, live);
-        return live;
+        if (_anyRetiredDataAccess && dataAccess != null
+            && _retiredDataAccess.TryGetValue(dataAccess, out var retired))
+        {
+            var meta = (NCLMetaTable)RebindField(recordImplementation.GetType(), "metaTable").GetValue(recordImplementation)!;
+            var live = NavDataAccessSource_GetDataAccessForTable(retired.Source, meta, false);
+            RebindField(recordImplementation.GetType(), "dataAccess").SetValue(recordImplementation, live);
+            dataAccess = live;
+        }
+        // A record on another company reads that company's own store (#5349); the field keeps the
+        // session company's, so a record that changes company again, or back, is routed afresh.
+        return _anyCompanyDataAccess && dataAccess != null
+            ? RouteToCompanyStore(recordImplementation, dataAccess)
+            : dataAccess;
     }
 
     private static FieldInfo RebindField(Type type, string name)

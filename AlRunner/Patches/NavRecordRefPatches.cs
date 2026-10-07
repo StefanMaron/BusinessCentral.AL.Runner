@@ -698,12 +698,14 @@ public static partial class BcRuntime
     // registration — see the comment in BcRuntime.cs's ApplyAllPatches for the empirical
     // evidence (#1883 follow-up).
 
-    // RecordImplementation.GetActiveCompany — touched by NavRecord.CloneRecord.
-    // Real impl: Session.Database.CompanyTokens.Get(tableState.CompanyNameToken). Both
-    // Database and tableState are null on the skeleton; return empty string. AL code
-    // that compares company names will see "" == "" which is fine for most tests.
+    // RecordImplementation.GetActiveCompany — touched by NavRecord.CloneRecord(keepCompany).
+    // Real impl: Session.Database.CompanyTokens.Get(tableState.CompanyNameToken). The session
+    // company is token 0, whose name in the token table is "" — which is what this answered for
+    // every record until #5349. A record on another company answers BC's own token-table name for
+    // it (RecordPatches.ActiveCompanyNameOf), so its clone stays on that company's rows.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    public static string RecordImplementation_GetActiveCompany(object self) => "";
+    public static string RecordImplementation_GetActiveCompany(object self)
+        => RecordPatches.ActiveCompanyNameOf(self);
 
     // NavSession.GetPermissionSet — skeleton has no Permissions object, causing NREs on
     // permission checks during CalcFields, HasReadPermission, HasWritePermission, etc.

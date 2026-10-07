@@ -1,0 +1,18 @@
+{
+  "id": "3b8f0d52-6c1e-4a97-9e45-7d2a1c8b5e63",
+  "name": "Runner Extras - Company Store Isolation",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #5349: the rows a test writes into another company die with the test codeunit, like every other row the runner holds.",
+  "description": "Runner-mechanism claim. That a record on another company reads and writes that company's own rows is BC behaviour and is measured upstream (corpus codeunits 69970 to 69975). What is pinned here is the runner's own lifetime rule for the per-company stores it keeps beside the session company's: ResetPerTestState drops them with the store they shadow, so one codeunit's rows in another company never reach the next codeunit. See docs/limitations.md.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 66800,
+      "to": 66809
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}

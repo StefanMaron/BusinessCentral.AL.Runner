@@ -160,19 +160,14 @@ public static class FlowFieldPatches
         _fRecImplSession = tRecImpl.GetField("session", BindingFlags.NonPublic | BindingFlags.Instance)
             ?? tRecImpl.BaseType?.GetField("session", BindingFlags.NonPublic | BindingFlags.Instance);
 
-        // TableState
+        // TableState. The field is `companyNameToken` (lower-case c; CompanyNameToken is the
+        // property over it). A lookup for the upper-case spelling answered null and left every
+        // FlowField calculated for company token 0, whatever company its record was on (#5349).
         var tTableState = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.TableState");
-        _fTableStateCompanyNameToken = tTableState?.GetField("CompanyNameToken",
-            BindingFlags.NonPublic | BindingFlags.Instance);
-        if (_fTableStateCompanyNameToken == null)
-        {
-            // Property-backed
-            var p = tTableState?.GetProperty("CompanyNameToken",
-                BindingFlags.NonPublic | BindingFlags.Instance);
-            if (p != null)
-                _fTableStateCompanyNameToken = tTableState!.GetField($"<{p.Name}>k__BackingField",
-                    BindingFlags.NonPublic | BindingFlags.Instance);
-        }
+        _fTableStateCompanyNameToken = tTableState == null ? null
+            : AlRunner.Infrastructure.BcShape.RequiredField(tTableState, "companyNameToken",
+                "FlowField calculation (company token)",
+                "a FlowField would be calculated over the session company's rows whatever company its record is on");
 
         // DataAccess.DataProvider getter
         var tDataAccess = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.DataAccess");
@@ -1100,8 +1095,10 @@ public static class FlowFieldPatches
             object? srcTtdp = null;
             try
             {
+                // The source table of the record's own company (#5349): a record on another company
+                // sums that company's rows, not the session company's.
                 var srcDataAccess = AlRunner.Patches.RecordPatches
-                    .NavDataAccessSource_GetDataAccessForTable(dataAccessSource!, srcTable, false);
+                    .GetDataAccessForTableInCompany(dataAccessSource!, srcTable, companyToken);
                 if (srcDataAccess != null && _pDataAccessDataProvider != null)
                     srcTtdp = _pDataAccessDataProvider.GetValue(srcDataAccess) ?? srcDataAccess;
             }
