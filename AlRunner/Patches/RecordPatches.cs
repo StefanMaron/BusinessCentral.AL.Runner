@@ -1333,16 +1333,12 @@ public static partial class RecordPatches
                 $"NavRecordHandle.CreateTarget: no NCLMetaTable for table {id} (AL source not parsed)");
         }
 
-        // Find Record{ID} : NavRecord in the loaded test assembly.
+        // Find Record{ID} : NavRecord in the loaded test assembly. A table whose compiled module
+        // has no Record{ID} class is a plain NavRecord: BC's own NCLMetaTable.CreateObjectInstance
+        // builds `new NavRecord(parent, TableId, this, ..)` when no ApplicationObjectConstructor is
+        // set (body identical on 28.5 and 29.0). BC 29's compiler emits that class only for tables
+        // with code, so most System Application tables have none there.
         var recordType = FindRecordType(id);
-        if (recordType == null)
-            throw new InvalidOperationException(
-                $"NavRecordHandle.CreateTarget: no loaded type Record{id} found");
-
-        var ctor = _concreteRecordCtors.GetOrAdd(recordType,
-            t => Array.Find(t.GetConstructors(), c => c.GetParameters().Length == 6));
-        if (ctor == null)
-            throw new InvalidOperationException($"Record{id} has no 6-arg constructor");
 
         // Construct Record{ID}(parent, metaTable, isTemporary, sharedTable, companyName, securityFiltering)
         //
@@ -1355,8 +1351,7 @@ public static partial class RecordPatches
         NavRecord rec;
         try
         {
-            rec = (NavRecord)ctor.Invoke(new object?[] { self, metaTable, isTemp, null, null,
-                SecurityFiltering.Validated });
+            rec = NewRecordInstance(recordType, self, metaTable, id, isTemp, SecurityFiltering.Validated, StubNavRecordType);
         }
         catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null)
         {
@@ -1550,8 +1545,31 @@ public static partial class RecordPatches
             "ReportExtension" => FindClrTypeByName($"ReportExtension{id}"),
             "Report"   => FindClrTypeByName($"Report{id}"),
             "CodeUnit" => FindClrTypeByName($"Codeunit{id}"),
-            _          => FindRecordType(id),
+            // A table with no emitted Record{id} class answers BC's own StubNavRecord: BC 29's compiler
+            // skips non-executable tables and NCLMetaTable.LoadClrType returns typeof(StubNavRecord)
+            // for them (body decompiled on 29.0.54011.55816; BC 28.5 has no such branch, every table
+            // had a class). Answering null here is not inert, for the reason on the Page arm: a
+            // subscriber to a table event resolved no publisher type, so a manually bound subscriber to
+            // User's OnBeforeDelete never ran (corpus 61208/61210 on the OnPrem app).
+            _          => FindRecordType(id) ?? StubNavRecordType,
         };
+    }
+
+    private static Type? _stubNavRecordType;
+    private static bool _stubNavRecordTypeResolved;
+
+    /// <summary>BC's <c>StubNavRecord</c> (BC 29 and later), or null on a build that has none.</summary>
+    internal static Type? StubNavRecordType
+    {
+        get
+        {
+            if (!_stubNavRecordTypeResolved)
+            {
+                _stubNavRecordType = typeof(NavRecord).Assembly.GetType("Microsoft.Dynamics.Nav.Runtime.StubNavRecord");
+                _stubNavRecordTypeResolved = true;
+            }
+            return _stubNavRecordType;
+        }
     }
 
     // Metadata-backed lookup — see FindRecordTypeIn in RecordPatches.NclMetaTableBuilder.cs.

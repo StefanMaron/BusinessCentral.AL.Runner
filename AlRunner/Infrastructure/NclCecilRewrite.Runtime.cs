@@ -328,6 +328,69 @@ public static partial class NclCecilRewrite
                     il.InsertBefore(ldnull, il.Create(OpCodes.Pop));
                 Console.Error.WriteLine($"[Cecil] Neutralised NavOpenTelemetryLogger construction in NavEnvironment..ctor → pop x{ctorArgs}; ldnull (no Types.dll edit)");
             }
+
+            // 5b) BC 29 only: on a non-Windows host NavEnvironment..ctor takes an `else` branch that
+            //     builds `new OtlpNavOpenTelemetryLogger(columns)` and `EventLogWriter.EventLogEntryWriter
+            //     = new OtelEventLogEntryWriter(columns)`. With no OTEL_EXPORTER_OTLP_ENDPOINT both ctors
+            //     call AddConsoleExporter, whose assembly (OpenTelemetry.Exporter.Console) BC 29's
+            //     platform artifact does not ship, so the ctor throws FileNotFoundException and the whole
+            //     environment falls back to a skeleton. The logger gets the same neutralisation as 5)
+            //     (null; every trace call is `?.`). The writer's assignment is skipped, so BC's default
+            //     NavEventLogEntryWriter stays — event-log writes never reach it, because
+            //     BcRuntime.SuppressEventLogWriter installs a no-op EventLogWriter.CustomWriter.
+            //     Both types are absent on BC 28 (the branch does not exist), so a build without them
+            //     does nothing; with them, exactly one construction site each or the shape moved.
+            //     Token-safe: removes memberRef uses, adds none.
+            {
+                var envCtor = FindNclMethod(nclMod,
+                    "Microsoft.Dynamics.Nav.Runtime.NavEnvironment", ".ctor", 1);
+                var il = envCtor.Body.GetILProcessor();
+
+                List<Instruction> FindNewobjs(string typeName) => envCtor.Body.Instructions
+                    .Where(i => i.OpCode == OpCodes.Newobj
+                        && i.Operand is MethodReference mr
+                        && mr.DeclaringType.FullName == typeName
+                        && mr.Name == ".ctor")
+                    .ToList();
+
+                const string otlpLogger = "Microsoft.Dynamics.Nav.Diagnostic.OtlpNavOpenTelemetryLogger";
+                const string otelWriter = "Microsoft.Dynamics.Nav.Diagnostic.OtelEventLogEntryWriter";
+                var otlpSites = FindNewobjs(otlpLogger);
+                var writerSites = FindNewobjs(otelWriter);
+                bool bc29Shape = nclMod.GetType(otlpLogger) != null || nclMod.GetType(otelWriter) != null;
+                if (bc29Shape && (otlpSites.Count != 1 || writerSites.Count != 1))
+                    throw new InvalidOperationException(
+                        $"[Cecil] expected exactly 1 OtlpNavOpenTelemetryLogger and 1 OtelEventLogEntryWriter newobj in NavEnvironment..ctor, found {otlpSites.Count} and {writerSites.Count} — Ncl shape changed; do not commit");
+                if (!bc29Shape && (otlpSites.Count != 0 || writerSites.Count != 0))
+                    throw new InvalidOperationException(
+                        "[Cecil] Otlp logger construction found in NavEnvironment..ctor without its type declared — Ncl shape changed; do not commit");
+
+                if (otlpSites.Count == 1)
+                {
+                    var site = otlpSites[0];
+                    int args = ((MethodReference)site.Operand).Parameters.Count;
+                    var ldnull = il.Create(OpCodes.Ldnull);
+                    il.Replace(site, ldnull);
+                    for (int i = 0; i < args; i++) il.InsertBefore(ldnull, il.Create(OpCodes.Pop));
+                    Console.Error.WriteLine($"[Cecil] Neutralised OtlpNavOpenTelemetryLogger construction in NavEnvironment..ctor → pop x{args}; ldnull (BC 29 console exporter is not shipped)");
+                }
+                if (writerSites.Count == 1)
+                {
+                    var site = writerSites[0];
+                    var setter = site.Next;
+                    if (setter == null || setter.OpCode != OpCodes.Call
+                        || setter.Operand is not MethodReference smr || smr.Name != "set_EventLogEntryWriter")
+                        throw new InvalidOperationException(
+                            "[Cecil] OtelEventLogEntryWriter newobj is not followed by EventLogWriter.set_EventLogEntryWriter — Ncl shape changed; do not commit");
+                    int args = ((MethodReference)site.Operand).Parameters.Count;
+                    // newobj (args in, writer out) + call set (writer in) → discard args, assign nothing.
+                    var ldnull = il.Create(OpCodes.Ldnull);
+                    il.Replace(site, ldnull);
+                    for (int i = 0; i < args; i++) il.InsertBefore(ldnull, il.Create(OpCodes.Pop));
+                    il.Replace(setter, il.Create(OpCodes.Pop));
+                    Console.Error.WriteLine($"[Cecil] Skipped OtelEventLogEntryWriter construction + assignment in NavEnvironment..ctor → pop x{args}; ldnull; pop (BC 29 console exporter is not shipped)");
+                }
+            }
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -2068,6 +2131,16 @@ public static partial class NclCecilRewrite
 
                 body.MaxStackSize = Math.Max(body.MaxStackSize, 2);
                 Console.Error.WriteLine("[Cecil] Prepended PNG-signature mimeType classification to NavMediaFactory.ProcessMediaObject");
+            }
+
+            // BC 29 (#5382): off Windows, ProcessMediaObject probes content with NavMediaImageSkia.TryProbe
+            // (SKCodec.Create), whose native library BC does not ship for this OS. The type exists only
+            // on BC >= 29; once it is there the probe must be found or the build refuses.
+            if (nclMod.GetType(Rt + "Media.NavMediaImageSkia") != null)
+            {
+                ReplaceBodyWithHelper(nclMod,
+                    FindNclMethod(nclMod, Rt + "Media.NavMediaImageSkia", "TryProbe", 4),
+                    H(typeof(AlRunner.Patches.MediaPatches), "NavMediaImageSkia_TryProbe"));
             }
 
             // ── NavRecordRef cluster (Batch 8) — get_Target + ALOpen ─────────────

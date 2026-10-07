@@ -151,6 +151,24 @@
   </PropertyGroup>
 
   <!--
+    The .NET target of everything that loads the BC service tier in-process (AlRunner,
+    AlRunner.Tests). BC 28 is a .NET 8 product; BC 29's Ncl.dll targets .NET 10
+    (TargetFrameworkAttribute .NETCoreApp,Version=v10.0, System.Runtime 10.0.0.0 — a net8
+    process cannot bind it), so a build against BC 29 or later targets net10.0 and every
+    earlier major stays on net8.0. Derived from _BCVersion so one `-p:_BCVersion=` selects
+    both; `-p:RunnerTfm=` overrides. A prefix such as 29.0 parses too.
+  -->
+  <PropertyGroup>
+    <_BCMajor>$([System.Version]::Parse('$(_BCVersion)').Major)</_BCMajor>
+    <RunnerTfm Condition="'$(RunnerTfm)' == '' AND $(_BCMajor) &gt;= 29">net10.0</RunnerTfm>
+    <RunnerTfm Condition="'$(RunnerTfm)' == ''">net8.0</RunnerTfm>
+    <!-- C# 12 is what net8.0 defaults to; net10.0 would default to 14, whose `field` keyword
+         and span-conversion rules change what the same source means. One language level for
+         both targets. -->
+    <LangVersion Condition="'$(LangVersion)' == ''">12.0</LangVersion>
+  </PropertyGroup>
+
+  <!--
     #2578: the BC artifacts root — the directory the per-version artifact subdirectories
     live under — resolved ONCE here for every project in the tree.
 

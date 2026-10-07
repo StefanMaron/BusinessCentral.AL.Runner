@@ -3255,12 +3255,32 @@ public sealed partial class BcCompiler
 
         public override void AddApplicationObject(
             NavCA.IApplicationObjectTypeSymbol symbol,
-            byte[] code, string metadata, string debugCode)
+            byte[] code, string metadata, string debugCode) =>
+            CaptureObject(symbol, code, metadata, debugCode);
+
+#if BC_OUTPUTTER_ADDOBJECT
+        // BC 29 added an abstract AddObject(IObjectTypeSymbol, ...) to CodeModuleOutputter and
+        // moved AL interfaces from "no output at all" onto it: Compilation.EmitCode(IObjectTypeSymbol)
+        // calls it for SymbolKind.Interface only, with the interface's metadata document and NO code
+        // (MethodCompiler.EmitObjectCode hands AddObjectCode a null syntax, so `code` arrives empty).
+        // It must be overridden to compile; it records the metadata like any other object and adds
+        // no source, so an interface still contributes nothing to the module's C# — what BC 28 does.
+        // The member does not exist on BC 28, so this is compiled only when the engine is built
+        // against BC >= 29 (AlRunner.csproj, DefineConstants).
+        public override void AddObject(
+            NavCA.IObjectTypeSymbol symbol,
+            byte[] code, string metadata, string debugCode) =>
+            CaptureObject(symbol, code, metadata, debugCode, emitsSource: code.Length > 0);
+#endif
+
+        private void CaptureObject(
+            NavCA.ISymbol symbol,
+            byte[] code, string metadata, string debugCode, bool emitsSource = true)
         {
             AddCalls++;
             LastAddedName = symbol.Name;
             var src = System.Text.Encoding.UTF8.GetString(code);
-            Captured.Add(new EmittedSource(symbol.Name, src));
+            if (emitsSource) Captured.Add(new EmittedSource(symbol.Name, src));
 
             // Capture (id, name, options[], indexes[], captions[]) for AL enum types so
             // the runtime NCLEnumMetadata.Create(int) hook can return real

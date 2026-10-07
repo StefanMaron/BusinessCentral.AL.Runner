@@ -420,4 +420,43 @@ public sealed class NclShadowRuntimeTests
             Directory.Delete(shadowDir, recursive: true);
         }
     }
+
+    /// <summary>A dependency file the variant ships beats the install's own copy of the same name: a
+    /// variant on a different runtime (BC 29 on .NET 10, entered from a .NET 8 install) binds newer
+    /// builds of some assemblies than the install ships (#5382). An implementation that mirrors every
+    /// non-entry file from the install passes the test above and fails this one; one that prefers the
+    /// variant for ALL names fails the symlink-from-install assertion on the file the variant lacks.</summary>
+    [Fact]
+    public void MirrorInstallDirectory_WithEntrySource_AVariantsOwnDependencyBeatsTheInstallsCopy()
+    {
+        var origDir = NewTempDir("mirror-swap-dep-orig");
+        var entryDir = NewTempDir("mirror-swap-dep-entry");
+        var shadowDir = NewTempDir("mirror-swap-dep-shadow");
+        try
+        {
+            File.WriteAllBytes(Path.Combine(origDir, "al-runner.dll"), new byte[] { 1 });
+            File.WriteAllBytes(Path.Combine(origDir, "Roslyn.Like.dll"), new byte[] { 4, 14 });
+            File.WriteAllBytes(Path.Combine(origDir, "Shared.Only.dll"), new byte[] { 7 });
+            File.WriteAllBytes(Path.Combine(entryDir, "al-runner.dll"), new byte[] { 2 });
+            File.WriteAllBytes(Path.Combine(entryDir, "Roslyn.Like.dll"), new byte[] { 5, 3 });
+            File.WriteAllBytes(Path.Combine(entryDir, "Variant.Only.dll"), new byte[] { 8 });
+
+            NclShadowRuntime.MirrorInstallDirectory(origDir, shadowDir, entryDir);
+
+            // The variant's copy, not the install's.
+            Assert.Equal(new byte[] { 5, 3 }, File.ReadAllBytes(Path.Combine(shadowDir, "Roslyn.Like.dll")));
+            // A file only the variant ships is mirrored too.
+            Assert.Equal(new byte[] { 8 }, File.ReadAllBytes(Path.Combine(shadowDir, "Variant.Only.dll")));
+            // A file the variant lacks still comes from the install, as a link.
+            var shared = Path.Combine(shadowDir, "Shared.Only.dll");
+            Assert.True(IsSymlink(shared));
+            Assert.Equal(new byte[] { 7 }, File.ReadAllBytes(shared));
+        }
+        finally
+        {
+            Directory.Delete(origDir, recursive: true);
+            Directory.Delete(entryDir, recursive: true);
+            Directory.Delete(shadowDir, recursive: true);
+        }
+    }
 }

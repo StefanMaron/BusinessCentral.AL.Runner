@@ -43,12 +43,19 @@ if [ "${#FIXTURES[@]}" -eq 0 ]; then
   exit 3
 fi
 
+# #5382: the tool's framework follows the BC major (net10.0 from BC 29), see gen-metadata-ground-truth.sh.
+BC_VERSION_PREFIX="$(basename "$ARTIFACTS" | sed -nE 's/^([0-9]+(\.[0-9]+)+).*/\1/p')"
+if [ -z "$BC_VERSION_PREFIX" ]; then
+  echo "::error::app-package-pipeline: cannot read a BC version from '$(basename "$ARTIFACTS")'" >&2
+  exit 3
+fi
+if [ "${BC_VERSION_PREFIX%%.*}" -ge 29 ]; then TFM=net10.0; else TFM=net8.0; fi
 if ! dotnet build "$REPO_ROOT/tools/metadata-ground-truth/MetadataGroundTruth.csproj" \
-    -c "$CONFIG" -p:ServiceTierPath="$ARTIFACTS" --nologo -v quiet; then
+    -c "$CONFIG" -p:_BCVersion="$BC_VERSION_PREFIX" -p:ServiceTierPath="$ARTIFACTS" --nologo -v quiet; then
   echo "::error::app-package-pipeline: tools/metadata-ground-truth did not build against $ARTIFACTS" >&2
   exit 3
 fi
-TOOL="$REPO_ROOT/tools/metadata-ground-truth/bin/$CONFIG/net8.0/metadata-ground-truth.dll"
+TOOL="$REPO_ROOT/tools/metadata-ground-truth/bin/$CONFIG/$TFM/metadata-ground-truth.dll"
 
 worst=0
 for fx in "${FIXTURES[@]}"; do

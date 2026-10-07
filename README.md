@@ -46,6 +46,8 @@ This is the **precompiled-DLL contract** described in `.claude/rules/precompiled
 
 .NET SDK 9 or 10 — download from [https://aka.ms/dotnet/download](https://aka.ms/dotnet/download).
 
+**BC 29 and later run on .NET 10**; BC 27 and 28 run on .NET 8. The engine for a BC version is entered under the runtime it targets, so a BC 29 run needs a .NET 10 runtime (the .NET 10 SDK includes it). With no `--bc-version` the runner picks the newest version your installed runtimes can run and prints which it skipped; asking for a version whose runtime is missing exits 2 and names the runtime. See [`docs/limitations.md`](docs/limitations.md#bc-29-and-later-run-on-net-10).
+
 Install the **SDK**, not only the runtime: BC's compiler binds `DotNet` aliases against the SDK's reference packs (`<dotnet root>/packs/`). Without them the runner prints a `[dotnet-ref-packs]` line and every object using a `DotNet` alias is dropped (`AL0185`); see [`docs/limitations.md`](docs/limitations.md#dotnet-reference-packs).
 
 **Linux:** none — the BC service-tier DLLs contain a handful of genuine Win32

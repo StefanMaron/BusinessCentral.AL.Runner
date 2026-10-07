@@ -15,6 +15,7 @@
 using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Reflection.Metadata;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Runtime.CompilerServices;
@@ -127,7 +128,9 @@ public static class ArtifactDownloader
         // type, and (2) the Default-ALC fallback resolver loads version-pinned assemblies (e.g.
         // Microsoft.Extensions.Logging.Abstractions v8) that live only under Service/Admin|Management/.
         // A partial set fails the cold first run. See handoff_2026_05_27_cold_ci_artifact_closure.
-        var byName = new Dictionary<string, (string Name, int Method, long CompSize, long Offset, int Depth)>();
+        // Per file name, every candidate at the shallowest depth seen. More than one is a tie
+        // (Admin/ and SideServices/ each carry a copy), resolved below by assembly version.
+        var byName = new Dictionary<string, List<(string Name, int Method, long CompSize, long Offset, int Depth)>>();
         int pos = cdStart;
         for (int i = 0; i < entryCount && pos + 46 <= cdData.Length; i++)
         {
@@ -139,15 +142,20 @@ public static class ArtifactDownloader
                 bn.EndsWith(".dll") && cs > 0)
             {
                 int depth = lower.Split("/service/").Last().Count(ch => ch == '/');
-                if (!byName.TryGetValue(bn, out var existing) || depth < existing.Depth)
-                    byName[bn] = (name, cm, cs, lo, depth);
+                var candidate = (name, cm, cs, lo, depth);
+                if (!byName.TryGetValue(bn, out var existing) || depth < existing[0].Depth)
+                    byName[bn] = new() { candidate };
+                else if (depth == existing[0].Depth)
+                    existing.Add(candidate);
             }
             pos += 46 + nl + el + cl;
         }
 
-        var matching = byName.Values.Select(v => (v.Name, v.Method, v.CompSize, v.Offset)).ToList();
-        if (matching.Count == 0) { logf("Error: no service-tier DLLs found"); return 1; }
-        logf($"Found {matching.Count} service-tier DLLs (full /service/ closure, deduped by name)");
+        var matching = byName.Values.Where(v => v.Count == 1)
+            .Select(v => (v[0].Name, v[0].Method, v[0].CompSize, v[0].Offset)).ToList();
+        var tied = byName.Values.Where(v => v.Count > 1).ToList();
+        if (matching.Count == 0 && tied.Count == 0) { logf("Error: no service-tier DLLs found"); return 1; }
+        logf($"Found {matching.Count + tied.Count} service-tier DLLs (full /service/ closure, deduped by name)");
 
         matching.Sort((a, b) => a.Offset.CompareTo(b.Offset));
         long totalBytes = 0;
@@ -163,8 +171,64 @@ public static class ArtifactDownloader
                 logf($"  …{extracted}/{matching.Count} extracted ({totalBytes / 1048576} MB)");
         }
 
+        // Equal-depth copies of one file (Admin/ and SideServices/, plus Management/ on BC 27) are
+        // different builds of the same assembly, and the closure must hold the NEWEST: a sibling
+        // served from the other folder binds against the newer one. BC 29's
+        // Microsoft.Extensions.Http (SideServices/ only) references
+        // Microsoft.Extensions.DependencyInjection.Abstractions 10.0.0.10, while the Admin/ copy
+        // is 10.0.0.0 — taking the first-listed one made that bind fail. A copy whose version
+        // cannot be read loses to one that can; a full tie keeps the first listed, as before.
+        foreach (var group in tied)
+        {
+            var images = group
+                .Select(c => ExtractEntry(http, artifactUrl, totalSize, c.Name, c.Method, c.CompSize, c.Offset, logf))
+                .ToList();
+            var pick = IndexOfNewestAssembly(images);
+            if (pick < 0) continue;
+            File.WriteAllBytes(Path.Combine(outputDir, Path.GetFileName(group[pick].Name)), images[pick]!);
+            totalBytes += images[pick]!.Length;
+            extracted++;
+        }
+
         logf($"Downloaded {extracted} DLLs ({totalBytes / 1048576} MB) to {outputDir}");
         return extracted > 0 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// Which of several images of one file name to keep: the highest AssemblyVersion, the first
+    /// listed among equals, and a copy whose version cannot be read losing to one that can. -1 when
+    /// no image was extracted at all.
+    /// </summary>
+    internal static int IndexOfNewestAssembly(IReadOnlyList<byte[]?> images)
+    {
+        int best = -1;
+        Version? bestVersion = null;
+        for (int i = 0; i < images.Count; i++)
+        {
+            if (images[i] is not { } image) continue;
+            var v = ReadAssemblyVersion(image);
+            if (best < 0 || (v != null && (bestVersion == null || v > bestVersion)))
+            {
+                best = i;
+                bestVersion = v;
+            }
+        }
+        return best;
+    }
+
+    /// <summary>The AssemblyVersion of a managed DLL image; null when it is not one.</summary>
+    internal static Version? ReadAssemblyVersion(byte[] image)
+    {
+        try
+        {
+            using var pe = new System.Reflection.PortableExecutable.PEReader(new MemoryStream(image));
+            if (!pe.HasMetadata) return null;
+            return pe.GetMetadataReader().GetAssemblyDefinition().Version;
+        }
+        catch (Exception ex) when (ex is BadImageFormatException or InvalidOperationException or IOException)
+        {
+            return null;
+        }
     }
 
     // -----------------------------------------------------------------------

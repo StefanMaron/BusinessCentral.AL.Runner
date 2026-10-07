@@ -141,8 +141,15 @@ internal static class AppCompilation
         {
             var packs = Path.Combine(dotnetRoot, "packs");
             int? runtimeMajor = Version.TryParse(Path.GetFileName(runtimeDir.TrimEnd('/')), out var v) ? v.Major : null;
+            var before = probing.Count;
             AddRefPack(probing, Path.Combine(packs, "Microsoft.NETCore.App.Ref"), runtimeMajor);
-            AddRefPack(probing, Path.Combine(packs, "NETStandard.Library.Ref"), null);
+            // #5382: on net10 the netstandard 2.1 pack's netstandard.dll (which DEFINES the types) joins
+            // the net10 pack's own forwarding one, the two System.Xml.XmlElement identities disagree and
+            // System Application's Cryptography Management fails AL0133; without it the compile succeeds.
+            // net8 keeps both: that is the measured-green shape and nothing here changes it.
+            var netCoreHasNetstandard = probing.Skip(before).Any(d => File.Exists(Path.Combine(d, "netstandard.dll")));
+            if (!(runtimeMajor >= 10 && netCoreHasNetstandard))
+                AddRefPack(probing, Path.Combine(packs, "NETStandard.Library.Ref"), null);
         }
 
         probing.Add(serviceTierDir);

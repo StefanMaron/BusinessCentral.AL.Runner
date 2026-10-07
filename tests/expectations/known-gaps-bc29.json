@@ -1,0 +1,35 @@
+[
+  {
+    "codeunitId": 60290,
+    "CodeunitName": "Test Metadata Perm. Set",
+    "Method": "MetadataPermissionSet_AppIdIsPartOfThePrimaryKey",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/5398",
+    "BcMajors": [
+      29
+    ],
+    "Note": "Under BC29PLUS the corpus asserts BC 29's behaviour: Get(<foreign app id>, 'SUPER') finds the null-App-ID row. The Windows nightly on an official MS container (BC 29.0.54011.55816, corpus run 37507797490) confirms BC 29 does not raise. The runner still raises 'does not exist'. Passes on BC 27/28 under the #else branch."
+  },
+  {
+    "codeunitId": 60818,
+    "CodeunitName": "CFSF Tests",
+    "Method": "Record_CalcFields_AggregatesSystemRowVersion",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/5399",
+    "BcMajors": [
+      29
+    ],
+    "Note": "Under BC29PLUS the corpus asserts BC 29's SQL data-type error for min/max over SystemRowVersion. The Windows nightly on an official MS container (BC 29.0.54011.55816, corpus run 37507797490) confirms it. The runner returns the values instead of raising."
+  },
+  {
+    "codeunitId": 60818,
+    "CodeunitName": "CFSF Tests",
+    "Method": "Record_CalcFields_SystemRowVersionNarrowedBySystemIdArm",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/5399",
+    "BcMajors": [
+      29
+    ],
+    "Note": "Under BC29PLUS the corpus asserts BC 29's SQL data-type error for a SystemRowVersion aggregate narrowed by a SystemId arm. The Windows nightly on an official MS container (BC 29.0.54011.55816, corpus run 37507797490) confirms it. The runner returns the value instead of raising."
+  }
+]

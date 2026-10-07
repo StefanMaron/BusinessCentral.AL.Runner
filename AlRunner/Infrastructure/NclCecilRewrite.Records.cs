@@ -748,19 +748,37 @@ public static partial class NclCecilRewrite
                 ?? throw new InvalidOperationException("NavCompany.registeredReports field not found");
 
             var instrs = unregReport.Body.Instructions;
-            // Expected shape (probe-verified): instr[0..4] = "if (report==null) throw ANE",
-            // instr[5] = first instr of real body (ldarg.1 → get_ExecutionGuid).
-            // Anchor on instr[5] so Insertion offsets fix up correctly without disturbing
-            // the existing exception handlers' try/handler ranges.
-            if (instrs.Count < 6
-                || instrs[0].OpCode != OpCodes.Ldarg_1
-                || instrs[4].OpCode != OpCodes.Throw
-                || instrs[5].OpCode != OpCodes.Ldarg_1)
+            // Two compiled shapes of `if (report == null) throw new ArgumentNullException(..)`:
+            //   BC 28:  ldarg.1; brtrue.s <body>; ldstr; newobj ANE; throw; <body = ldarg.1>
+            //           (instr[5] is the body; instr[1]'s branch must be retargeted below)
+            //   BC 29:  ldarg.1; ldstr; call ArgumentNullException.ThrowIfNull(object,string); <body = ldarg.1>
+            //           (no branch to retarget; compiled against .NET 10 BCL)
+            // Anchor on the first instruction of the real body so the guard stays outside the
+            // existing handlers' protected ranges.
+            Mono.Cecil.Cil.Instruction anchor;
+            Mono.Cecil.Cil.Instruction? nullCheckBranch = null;
+            if (instrs.Count >= 6
+                && instrs[0].OpCode == OpCodes.Ldarg_1
+                && instrs[4].OpCode == OpCodes.Throw
+                && instrs[5].OpCode == OpCodes.Ldarg_1)
+            {
+                anchor = instrs[5];
+                nullCheckBranch = instrs[1];
+            }
+            else if (instrs.Count >= 4
+                && instrs[0].OpCode == OpCodes.Ldarg_1
+                && instrs[1].OpCode == OpCodes.Ldstr
+                && instrs[2].OpCode == OpCodes.Call
+                && instrs[2].Operand is MethodReference { Name: "ThrowIfNull", DeclaringType.Name: "ArgumentNullException" }
+                && instrs[3].OpCode == OpCodes.Ldarg_1)
+            {
+                anchor = instrs[3];
+            }
+            else
             {
                 throw new InvalidOperationException(
-                    "NavCompany.UnregisterReport IL shape changed — expected report-null-check followed by ldarg.1");
+                    "NavCompany.UnregisterReport IL shape changed — expected report-null-check (throw form or ArgumentNullException.ThrowIfNull form) followed by ldarg.1");
             }
-            var anchor = instrs[5]; // first instr of "real body" — also the first try-protected instr in handler #2.
             var il = unregReport.Body.GetILProcessor();
             //   ldarg.0
             //   ldfld registeredReports
@@ -775,7 +793,7 @@ public static partial class NclCecilRewrite
             // (skip-throw-when-report-non-null). That branch jumps to `anchor`, which would
             // BYPASS our prefix when report != null. Retarget it to land on our prefix
             // instead, so the field-null guard runs on every call.
-            instrs[1].Operand = ldarg0;
+            if (nullCheckBranch != null) nullCheckBranch.Operand = ldarg0;
             // The two existing finally handlers protect try-ranges that begin AT `anchor`
             // (handler #2 TryStart = ldarg.0 at IL_0017, which is `anchor`). Cecil's
             // Insertion model keeps handler TryStart bound to the same Instruction object,

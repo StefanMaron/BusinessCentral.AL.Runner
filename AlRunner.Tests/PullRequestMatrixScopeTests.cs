@@ -82,6 +82,40 @@ public sealed class PullRequestMatrixScopeTests
     private static string NewestOf(IEnumerable<string> prefixes) =>
         prefixes.OrderBy(p => Version.Parse(p)).Last();
 
+    /// <summary>
+    /// The target framework Directory.Build.props gives a BC version: <c>RunnerTfm</c> is net10.0
+    /// from the major its own condition names and net8.0 before it. Read out of that file rather
+    /// than restated, so a change to the cut-over is one edit and this follows it.
+    /// </summary>
+    private static string RunnerTfmOf(string bcVersion)
+    {
+        var props = ReadRepo("Directory.Build.props");
+        var cut = Regex.Match(props,
+            @"<RunnerTfm Condition=""'\$\(RunnerTfm\)' == '' AND \$\(_BCMajor\) &gt;= (\d+)"">(net[\d.]+)</RunnerTfm>");
+        var dflt = Regex.Match(props,
+            @"<RunnerTfm Condition=""'\$\(RunnerTfm\)' == ''"">(net[\d.]+)</RunnerTfm>");
+        Assert.True(cut.Success && dflt.Success,
+            "Directory.Build.props must still derive RunnerTfm from the BC major (a cut-over line and a default line)");
+        return int.Parse(bcVersion.Split('.')[0]) >= int.Parse(cut.Groups[1].Value)
+            ? cut.Groups[2].Value
+            : dflt.Groups[1].Value;
+    }
+
+    /// <summary>
+    /// The prefix the packaged tool's top-level entry point is built from: the newest one on the
+    /// tool's OWN framework, which is the framework of the dev-machine default build. The newest
+    /// prefix overall can be a BC major that runs on a newer framework, and a top-level entry
+    /// built for that would not start on a machine that has only the older runtime.
+    /// </summary>
+    private static string PrimaryOf(IEnumerable<string> prefixes)
+    {
+        var props = ReadRepo("Directory.Build.props");
+        var dev = Regex.Match(props, @"<_BCVersion Condition=""'\$\(_BCVersion\)' == ''"">(\d+\.\d+)\.\d+\.\d+</_BCVersion>");
+        Assert.True(dev.Success, "Directory.Build.props must still declare the conditional _BCVersion default");
+        var toolTfm = RunnerTfmOf(dev.Groups[1].Value);
+        return prefixes.Where(p => RunnerTfmOf(p) == toolTfm).OrderBy(p => Version.Parse(p)).Last();
+    }
+
     private static string ResolveStep()
     {
         // The `Resolve BC versions` run block — the shell that decides which legs exist.
@@ -148,7 +182,40 @@ public sealed class PullRequestMatrixScopeTests
         // empty version.
         var all = Prefixes(FullVersionsFile);
 
-        Assert.Contains(NewestOf(all), Prefixes(PrVersionsFile));
+        Assert.Contains(PrimaryOf(all), Prefixes(PrVersionsFile));
+    }
+
+    [Fact]
+    public void PrimaryPrefix_IsOnTheToolsOwnFramework_NotJustTheNewest()
+    {
+        // BC 29 builds for net10.0. If it were the primary, the packaged tool's top-level
+        // al-runner.dll would target net10.0 and refuse to start on a machine with only .NET 8,
+        // BC 27 and 28 users included. It ships as an engine variant instead. This is the case the
+        // plain "newest prefix" rule gets wrong, so it has to be pinned where that rule would pass.
+        var all = Prefixes(FullVersionsFile);
+        var primary = PrimaryOf(all);
+
+        var newestTfm = RunnerTfmOf(NewestOf(all));
+        var toolTfm = RunnerTfmOf(primary);
+        if (newestTfm != toolTfm)
+            Assert.NotEqual(NewestOf(all), primary);
+        // Whatever the cut-over is, the primary is never newer than a prefix on its own framework.
+        Assert.All(all.Where(p => RunnerTfmOf(p) == toolTfm),
+            p => Assert.True(Version.Parse(p) <= Version.Parse(primary), $"{p} is newer than the primary {primary}"));
+    }
+
+    [Fact]
+    public void SharedMatrix_ReadsEachLegsFrameworkFromTheProject_AndEmitsIt()
+    {
+        // The leg builds, tests and runs on the framework the PROJECT says. A copy of the rule in
+        // shell would agree until someone moved the cut-over and nothing said which was right.
+        var step = CodeOnly(ResolveStep());
+
+        Assert.Contains("-getProperty:TargetFramework", step, StringComparison.Ordinal);
+        Assert.Matches(new Regex(@"'tfm':'\$TFM'"), step);
+        Assert.Contains("PRIMARY_PREFIX=\"$p\"", step, StringComparison.Ordinal);
+        Assert.DoesNotContain("PRIMARY_PREFIX=$(printf '%s\\n' $ALL_PREFIXES | sort -V | tail -1)", step,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -157,11 +224,13 @@ public sealed class PullRequestMatrixScopeTests
         // #4546: a bare `dotnet build` read a 28.1 default for months after 28.4 shipped,
         // because nothing tied it to the version list. Only major.minor is pinned: the exact
         // build is Microsoft's to withdraw (#2010), which must cost a local rebuild, not a red.
+        // The primary is the newest prefix on the tool's own framework (#5382), which is the one
+        // the default build itself targets.
         var props = ReadRepo("Directory.Build.props");
         var m = Regex.Match(props, @"<_BCVersion Condition=""'\$\(_BCVersion\)' == ''"">(\d+\.\d+)\.\d+\.\d+</_BCVersion>");
         Assert.True(m.Success, "Directory.Build.props must still declare the conditional _BCVersion default");
 
-        Assert.Equal(NewestOf(Prefixes(FullVersionsFile)), m.Groups[1].Value);
+        Assert.Equal(PrimaryOf(Prefixes(FullVersionsFile)), m.Groups[1].Value);
     }
 
     // ---- how the shared matrix applies it ---------------------------------------------

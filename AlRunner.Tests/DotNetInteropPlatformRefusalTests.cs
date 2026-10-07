@@ -193,6 +193,44 @@ public sealed class DotNetInteropPlatformRefusalTests
         Assert.NotNull(oos);
         Assert.Contains("Some.Lib", oos!.Reason, StringComparison.Ordinal);
     }
+
+    // ---- BC 29 (#5382): System.Drawing.Common 10 fails with DllNotFoundException, not PlatformNotSupported ----
+    // Measured on BC 29.0.54011.55816 on Linux, `new System.Drawing.Bitmap(1, 1)`:
+    //   System.TypeInitializationException  src=System.Private.Windows.GdiPlus  "…'Windows.Win32.PInvokeGdiPlus'…"
+    //   System.DllNotFoundException         src=System.Private.Windows.Core     "Unable to load shared library 'gdiplus.dll'…"
+
+    private static Exception MeasuredBc29GdipChain(string nativeLibrary = "gdiplus.dll")
+    {
+        var dll = WithSource(new DllNotFoundException(
+            $"Unable to load shared library '{nativeLibrary}' or one of its dependencies."),
+            "System.Private.Windows.Core");
+        var typeInit = WithSource(new TypeInitializationException("Windows.Win32.PInvokeGdiPlus", dll),
+            "System.Private.Windows.GdiPlus");
+        return WithSource(new InvalidOperationException(
+            "A call to System.Drawing.Image.FromStream failed with this message: "
+            + "The type initializer for 'Windows.Win32.PInvokeGdiPlus' threw an exception.", typeInit),
+            "Microsoft.Dynamics.Nav.Types");
+    }
+
+    [Fact]
+    public void Bc29GdiPlusChain_IsRefusedByName_NamingSystemDrawingCommon()
+    {
+        var oos = DotNetInteropShims.TryClassifyPlatformRefusal("System.Drawing.Bitmap", MeasuredBc29GdipChain());
+
+        Assert.NotNull(oos);
+        Assert.StartsWith("dotnet-platform-unsupported", oos!.Reason, StringComparison.Ordinal);
+        // The surface the AL code reached, not the plumbing assembly that raised the exception.
+        Assert.Contains("System.Drawing.Common", oos.Reason, StringComparison.Ordinal);
+        Assert.Contains("gdiplus.dll", oos.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnotherMissingNativeLibrary_IsNotMistakenForThePlatformRefusal()
+    {
+        // Only gdiplus.dll is the Windows-only boundary; any other missing library keeps BC's own error.
+        Assert.Null(DotNetInteropShims.TryClassifyPlatformRefusal(
+            "Some.Type", MeasuredBc29GdipChain("libsomething.so")));
+    }
 }
 
 // #3222 — the member-call half: BC's NavDotNet.CreateNavNCLDotNetInvokeException prologue and

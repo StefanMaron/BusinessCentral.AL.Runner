@@ -134,7 +134,7 @@ def canonical(versions) -> str:
 # corpus runs name these legs. Spelled out statically because pr-gate's tools-tests job
 # has no corpus checkout; check_corpus_version_claim holds it equal to the corpus ci.yml
 # wherever one exists.
-CORPUS_LEGS = "27.0 27.3 27.5 28.0 28.1 28.2 28.3 28.4 28.5"
+CORPUS_LEGS = "27.0 27.3 27.5 28.0 28.1 28.2 28.3 28.4 28.5 29.0"
 
 
 # Version runs that are NOT a claim about a matrix, keyed by (file, the run's

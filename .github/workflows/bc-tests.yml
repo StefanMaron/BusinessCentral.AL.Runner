@@ -117,9 +117,10 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           # Two SDKs, deliberately, and this is the authoritative note: the other
-          # setup-dotnet sites point here (#4211). The projects target net8.0, so
-          # 8.0.x stays; the SOLUTION is AlRunner.slnx, whose <Solution> element a 9+
-          # SDK is needed to parse at all. An 8.0-only runner fails with `error
+          # setup-dotnet sites point here (#4211). The projects target net8.0 for BC 27
+          # and 28 and net10.0 for BC 29 and later (RunnerTfm in Directory.Build.props),
+          # so 8.0.x stays and 10.0.x is declared for the net10 builds; the SOLUTION is
+          # AlRunner.slnx, whose <Solution> element a 9+ SDK is needed to parse at all. An 8.0-only runner fails with `error
           # MSB4068: The element <Solution> is unrecognized`, naming neither the SDK
           # nor the solution format (#4200).
           #
@@ -130,6 +131,7 @@ jobs:
           dotnet-version: |
             8.0.x
             9.0.x
+            10.0.x
       - name: Which .NET SDKs does this runner have? (#4200)
         # One line that turns MSB4068 into a diagnosis. Without it the build's real
         # SDK requirement is invisible: the declared version is not necessarily the
@@ -192,12 +194,34 @@ jobs:
           # BEFORE any narrowing below. That ordering is the whole reason a narrowed leg
           # does exactly the work that leg does on a full run, rather than a subtly
           # different job (#2674: AlRunner.Tests runs on 2 of the 8 legs, not all 8).
-          PRIMARY_PREFIX=$(printf '%s\n' $ALL_PREFIXES | sort -V | tail -1)
+          #
+          # "Newest" is newest ON THE PACKAGED TOOL'S OWN TARGET FRAMEWORK. The tool's top-level
+          # entry point is a single build of al-runner.dll and its target framework is the
+          # framework every install must have: a BC 29 build targets net10.0, so making it the
+          # top-level entry would make the whole tool refuse to start on a machine that has only
+          # .NET 8 — including for BC 27 and 28. BC 29 and later ship as engine variants only,
+          # entered by the re-exec under their own runtime. The target framework of a BC version
+          # is read from the project itself (RunnerTfm in Directory.Build.props), never restated
+          # here, and the tool's is the one of the dev-machine default build.
+          tfm_of() { dotnet msbuild AlRunner/AlRunner.csproj -getProperty:TargetFramework -nologo "$@" | tr -d '[:space:]'; }
+          TOOL_TFM=$(tfm_of)
+          if [ -z "$TOOL_TFM" ]; then
+            echo "::error::could not read the project's TargetFramework from AlRunner/AlRunner.csproj — the primary prefix and every leg's tfm would be guesses"
+            exit 1
+          fi
+          PRIMARY_PREFIX=""
+          for p in $(printf '%s\n' $ALL_PREFIXES | sort -V -r); do
+            if [ "$(tfm_of -p:_BCVersion="$p")" = "$TOOL_TFM" ]; then PRIMARY_PREFIX="$p"; break; fi
+          done
+          if [ -z "$PRIMARY_PREFIX" ]; then
+            echo "::error::no prefix in .github/bc-versions.txt targets the tool's own framework ($TOOL_TFM), so there is no build to be the top-level entry point"
+            exit 1
+          fi
           UNIT_PREFIXES=$(for major in $(printf '%s\n' $ALL_PREFIXES | cut -d. -f1 | sort -u); do
                             printf '%s\n' $ALL_PREFIXES | grep "^${major}\." | sort -V | tail -1
                           done | tr '\n' ' ')
           echo "Full list: $ALL_PREFIXES"
-          echo "Primary prefix: $PRIMARY_PREFIX | unit-test prefixes: $UNIT_PREFIXES"
+          echo "Primary prefix: $PRIMARY_PREFIX (tool framework $TOOL_TFM) | unit-test prefixes: $UNIT_PREFIXES"
 
           # GATING_PREFIXES = the legs this run actually EXECUTES. Starts as the full list;
           # the two narrowings below are the only things that shrink it, and neither can
@@ -328,8 +352,15 @@ jobs:
             # — behaviour just reverts to BC's own, with nothing announcing it.
             UNIT=False
             case " $UNIT_PREFIXES " in *" $prefix "*) UNIT=True ;; esac
-            echo "  $prefix -> $FULL (required=$REQ, unit-tests=$UNIT)"
-            ENTRIES=$(echo "$ENTRIES" | python3 -c "import json,sys; v=json.load(sys.stdin); v.append({'bc-version':'$FULL','required':$REQ,'unit-tests':$UNIT}); print(json.dumps(v))")
+            # The framework this leg builds and runs on. Read from the project for the FULL build
+            # (a prefix like 29.0 evaluates the same, but the build number is what is built).
+            TFM=$(tfm_of -p:_BCVersion="$FULL")
+            if [ -z "$TFM" ]; then
+              echo "::error::could not read the TargetFramework for BC $FULL"
+              exit 1
+            fi
+            echo "  $prefix -> $FULL (required=$REQ, unit-tests=$UNIT, tfm=$TFM)"
+            ENTRIES=$(echo "$ENTRIES" | python3 -c "import json,sys; v=json.load(sys.stdin); v.append({'bc-version':'$FULL','required':$REQ,'unit-tests':$UNIT,'tfm':'$TFM'}); print(json.dumps(v))")
           done
 
           # A resolve step that produced no legs must fail here rather than hand the `test`
@@ -360,6 +391,9 @@ jobs:
     continue-on-error: ${{ !matrix.target.required }}
     env:
       BC_VERSION: ${{ matrix.target.bc-version }}
+      # The target framework this leg builds against and runs on: net8.0 for BC 27 and 28, net10.0
+      # for BC 29 and later (read from the project in resolve-versions, never restated).
+      TFM: ${{ matrix.target.tfm }}
       # #2819: a corpus run died with SIGSEGV (exit 139) seconds in, before any test
       # reported — no stack, no managed exception, nothing to read. One occurrence, not
       # reproduced in four further runs of the same tree. Without this, every future
@@ -432,7 +466,7 @@ jobs:
           # `cp` at the end of this step already fails hard when the cache is still cold, just
           # with a confusing "cp: missing destination file operand" instead of the runner's own
           # error. Let the runner's exit code speak.
-          ./AlRunner/bin/Release/net8.0/al-runner --quiet AlRunner.Tests/Fixtures/RecordTriggerXRec
+          ./AlRunner/bin/Release/$TFM/al-runner --quiet AlRunner.Tests/Fixtures/RecordTriggerXRec
           ls -la ~/.cache/al-runner/ncl-cecil/
 
           # #2065, the invariant the comment block below depends on, now checked instead of
@@ -443,7 +477,7 @@ jobs:
           # required, so a stray copy here silently changes the runner's behaviour for every
           # later invocation in this job. It appeared for real on the BC 27.3 leg of PR #2063,
           # where it broke five StartupOutputReexecDedupTests, and nothing reported it.
-          stray_ncl=AlRunner/bin/Release/net8.0/Microsoft.Dynamics.Nav.Ncl.dll
+          stray_ncl=AlRunner/bin/Release/$TFM/Microsoft.Dynamics.Nav.Ncl.dll
           if [ -e "$stray_ncl" ]; then
             echo "ERROR: $stray_ncl exists after the warm run." >&2
             echo "Something rewrote Ncl.dll into AlRunner's build output instead of a shadow dir." >&2
@@ -476,7 +510,7 @@ jobs:
           # byte-identical to what an in-process rewrite would produce, regardless of either
           # file's timestamp or origin, so the bootstrap treats it as already-rewritten and
           # does not skip.
-          cp "$(ls -t ~/.cache/al-runner/ncl-cecil/*.dll | head -1)" AlRunner.Tests/bin/Release/net8.0/Microsoft.Dynamics.Nav.Ncl.dll
+          cp "$(ls -t ~/.cache/al-runner/ncl-cecil/*.dll | head -1)" AlRunner.Tests/bin/Release/$TFM/Microsoft.Dynamics.Nav.Ncl.dll
 
       - name: Generate .runsettings for in-process BC engine tests
         if: ${{ matrix.target.unit-tests }}
@@ -501,7 +535,7 @@ jobs:
           <RunSettings>
             <RunConfiguration>
               <EnvironmentVariables>
-                <DOTNET_STARTUP_HOOKS>$(pwd)/AlRunner.Tests/bin/Release/net8.0/al-runner.dll:$(pwd)/AlRunner.Tests/bin/Release/net8.0/AlRunner.Tests.dll</DOTNET_STARTUP_HOOKS>
+                <DOTNET_STARTUP_HOOKS>$(pwd)/AlRunner.Tests/bin/Release/$TFM/al-runner.dll:$(pwd)/AlRunner.Tests/bin/Release/$TFM/AlRunner.Tests.dll</DOTNET_STARTUP_HOOKS>
               </EnvironmentVariables>
             </RunConfiguration>
           </RunSettings>
@@ -576,7 +610,7 @@ jobs:
           # 1.83x — a figure that structurally understates occupancy, because much of each
           # test's time is host-side work outside the subprocess. Real thread occupancy was
           # 3.00x, and the whole shortfall was a single-threaded tail. See the report step.
-          dotnet test AlRunner.Tests/AlRunner.Tests.csproj -c Release --no-build --settings engine.runsettings \
+          dotnet test AlRunner.Tests/AlRunner.Tests.csproj -c Release --no-build -p:_BCVersion="$BC_VERSION" --settings engine.runsettings \
               --logger "trx;LogFileName=unit-tests.trx" --results-directory "$PWD/trx"
 
       - name: TRX occupancy report (unit tests)
@@ -702,6 +736,9 @@ jobs:
           # exactly ONE test app however many are listed — the child process drains
           # the here-string from stdin and the loop ends after one pass, leg still
           # green (measured on corpus run 33996414648).
+          # The symbols the corpus's own ci.yml gives this leg (BC27PLUS, BC28PLUS from 28, BC29PLUS from 29);
+          # without them every `#if BC29PLUS` test compiles its 27/28 branch here (#5382).
+          CORPUS_SYMBOLS=$(python3 scripts/corpus-version-symbols.py "$BC_VERSION")
           mapfile -t CORPUS_APPS < <(python3 scripts/corpus-app-dirs.py tests/al-language)
           if [ "${#CORPUS_APPS[@]}" -eq 0 ]; then
             echo "::error::scripts/corpus-app-dirs.py produced no corpus app directories — refusing to report a green leg for a run that would execute nothing"
@@ -710,8 +747,9 @@ jobs:
           printf '[corpus] app to run: %s\n' "${CORPUS_APPS[@]}"
           rc=0
           start=$SECONDS
-          dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
+          dotnet run --no-build --project AlRunner -c Release -p:_BCVersion="$BC_VERSION" --framework "$TFM" -- \
               "${CORPUS_APPS[@]}" \
+              --preprocessor-symbols "$CORPUS_SYMBOLS" \
               --package-cache "$HOME/.al-runner/platform-apps" \
               --package-cache "$HOME/.al-runner/test-apps" \
               --strict \
@@ -820,19 +858,30 @@ jobs:
         # disguised as flakiness.
         #
         # This one DOES still name a single app on purpose, and it is not the #2984
-        # defect wearing a second hat: `--test Codeunit6020` narrows the run to one
-        # named codeunit, so this step is not a coverage gate and adding a corpus app
-        # cannot make it miss anything. It also passes only the platform-apps cache,
+        # defect wearing a second hat: `--test` narrows each run to one named codeunit
+        # (60206 and 60207, the two xmlport test codeunits), so this step is not a
+        # coverage gate and adding a corpus app cannot make it miss anything. The ids
+        # are spelled out: the earlier prefix `Codeunit6020` also selected 60204, the
+        # cross-app interface test, which needs its fixture bundle and fails here on
+        # BC 29 (#5386). It also passes only the platform-apps cache,
         # so pointing it at every corpus app would make it depend on each app's
         # dependency closure resolving from that one cache. The gate that must
         # enumerate is the corpus step above, whose count the compare step guards.
         if: ${{ always() }}
         run: |
-          dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
-              tests/al-language/tests/al-language \
-              --package-cache "$HOME/.al-runner/platform-apps" \
-              --test "Codeunit6020" \
-              --strict
+          # The symbols the corpus's own ci.yml gives this leg (BC27PLUS, BC28PLUS from 28, BC29PLUS from 29);
+          # without them every `#if BC29PLUS` test compiles its 27/28 branch here (#5382).
+          CORPUS_SYMBOLS=$(python3 scripts/corpus-version-symbols.py "$BC_VERSION")
+          rc=0
+          for cu in 60206 60207; do
+            dotnet run --no-build --project AlRunner -c Release -p:_BCVersion="$BC_VERSION" --framework "$TFM" -- \
+                tests/al-language/tests/al-language \
+                --preprocessor-symbols "$CORPUS_SYMBOLS" \
+                --package-cache "$HOME/.al-runner/platform-apps" \
+                --test "Codeunit$cu" \
+                --strict || rc=$?
+          done
+          exit "$rc"
 
       - name: Run al-language isolation probes under their own isolation
         # #4826. A corpus app in scripts/corpus-app-dirs.py's ISOLATION_PROBES measures one
@@ -843,14 +892,18 @@ jobs:
         # No probe in the resolved corpus is legitimate (a ref that predates them) and passes.
         if: ${{ always() }}
         run: |
+          # The symbols the corpus's own ci.yml gives this leg (BC27PLUS, BC28PLUS from 28, BC29PLUS from 29);
+          # without them every `#if BC29PLUS` test compiles its 27/28 branch here (#5382).
+          CORPUS_SYMBOLS=$(python3 scripts/corpus-version-symbols.py "$BC_VERSION")
           mapfile -t PROBES < <(python3 scripts/corpus-app-dirs.py --isolation-probes tests/al-language)
           rc=0
           for line in "${PROBES[@]}"; do
             iso="${line%%$'\t'*}"; dir="${line#*$'\t'}"
             echo "[probe] $dir under --isolation $iso"
             prc=0
-            dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
+            dotnet run --no-build --project AlRunner -c Release -p:_BCVersion="$BC_VERSION" --framework "$TFM" -- \
                 "$dir" \
+                --preprocessor-symbols "$CORPUS_SYMBOLS" \
                 --package-cache "$HOME/.al-runner/platform-apps" \
                 --package-cache "$HOME/.al-runner/test-apps" \
                 --isolation "$iso" \
@@ -909,7 +962,7 @@ jobs:
           # every suite the baseline declares, so a declared suite with no bucket fails here
           # (MISSING) instead of being skipped without a word.
           rc=0
-          dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
+          dotnet run --no-build --project AlRunner -c Release -p:_BCVersion="$BC_VERSION" --framework "$TFM" -- \
               tests/runner-extras \
               --package-cache "$HOME/.al-runner/platform-apps" \
               --package-cache "$HOME/.al-runner/test-apps" \
@@ -948,7 +1001,7 @@ jobs:
         # magnet. --strict is what makes this a gate.
         if: ${{ always() && hashFiles('tests/runner-extras-isolation-disabled/**/*.al') != '' }}
         run: |
-          dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
+          dotnet run --no-build --project AlRunner -c Release -p:_BCVersion="$BC_VERSION" --framework "$TFM" -- \
               tests/runner-extras-isolation-disabled \
               --package-cache "$HOME/.al-runner/platform-apps" \
               --package-cache "$HOME/.al-runner/test-apps" \
@@ -971,7 +1024,7 @@ jobs:
         run: |
           root=tests/runner-extras-tableext-eviction
           rc=0
-          dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
+          dotnet run --no-build --project AlRunner -c Release -p:_BCVersion="$BC_VERSION" --framework "$TFM" -- \
               "$root/tableext-eviction-field-trigger-timing-dep" \
               "$root/tableext-eviction-field-trigger-timing" \
               "$root/tableext-eviction-subscriber-timing-dep" \
@@ -1027,7 +1080,7 @@ jobs:
         if: ${{ always() && hashFiles('tests/runner-extras/dep-tableext-platform-base-main/**/*.al') != '' }}
         run: |
           rc=0
-          dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
+          dotnet run --no-build --project AlRunner -c Release -p:_BCVersion="$BC_VERSION" --framework "$TFM" -- \
               tests/runner-extras/dep-tableext-platform-base-dep \
               tests/runner-extras/dep-tableext-platform-base-main \
               --package-cache "$HOME/.al-runner/platform-apps" \
@@ -1088,7 +1141,7 @@ jobs:
           AL_RUNNER_SEQUENTIAL_BUNDLES: "1"
         run: |
           rc=0
-          dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
+          dotnet run --no-build --project AlRunner -c Release -p:_BCVersion="$BC_VERSION" --framework "$TFM" -- \
               tests/runner-extras/metatable-cache-null-first \
               tests/runner-extras/metatable-cache-null-second \
               --package-cache "$HOME/.al-runner/platform-apps" \
@@ -1144,7 +1197,7 @@ jobs:
           AL_RUNNER_SEQUENTIAL_BUNDLES: "1"
         run: |
           rc=0
-          dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
+          dotnet run --no-build --project AlRunner -c Release -p:_BCVersion="$BC_VERSION" --framework "$TFM" -- \
               tests/runner-extras/rnce-first \
               tests/runner-extras/rnce-second \
               --package-cache "$HOME/.al-runner/platform-apps" \
@@ -1196,7 +1249,7 @@ jobs:
           AL_RUNNER_SEQUENTIAL_BUNDLES: "1"
         run: |
           rc=0
-          dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
+          dotnet run --no-build --project AlRunner -c Release -p:_BCVersion="$BC_VERSION" --framework "$TFM" -- \
               tests/runner-extras/precompiled-dep-cache-null-first \
               tests/runner-extras/xmlport-precompiled-dep-metadata \
               --package-cache "$HOME/.al-runner/platform-apps" \
@@ -1256,7 +1309,7 @@ jobs:
         if: ${{ always() && hashFiles('tests/runner-extras/app-group-visibility-c/**/*.al') != '' }}
         run: |
           rc=0
-          dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
+          dotnet run --no-build --project AlRunner -c Release -p:_BCVersion="$BC_VERSION" --framework "$TFM" -- \
               tests/runner-extras/app-group-visibility-c \
               tests/runner-extras/app-group-visibility-b \
               --package-cache "$HOME/.al-runner/platform-apps" \
@@ -1396,6 +1449,7 @@ jobs:
           dotnet-version: |
             8.0.x
             9.0.x
+            10.0.x
       - name: Which .NET SDKs does this runner have? (#4200)
         # One line that turns MSB4068 into a diagnosis. Without it the build's real
         # SDK requirement is invisible: the declared version is not necessarily the
@@ -1489,6 +1543,7 @@ jobs:
           dotnet-version: |
             8.0.x
             9.0.x
+            10.0.x
       - name: Which .NET SDKs does this runner have? (#4200)
         # One line that turns MSB4068 into a diagnosis. Without it the build's real
         # SDK requirement is invisible: the declared version is not necessarily the
@@ -1521,6 +1576,13 @@ jobs:
           VERSIONS_JSON: ${{ needs.resolve-versions.outputs.versions-json }}
         run: |
           mkdir -p ./variants-staging
+          # The packaged tool's own target framework, and each variant's, both read from the project
+          # (RunnerTfm in Directory.Build.props). A variant on ANOTHER framework (BC 29 on net10.0,
+          # entered by re-exec from the net8.0 tool) cannot share the tool's dependency closure: it
+          # binds newer builds of some assemblies than the tool ships (Roslyn 5.3, ConfigurationManager
+          # 10), so it ships its own — the shadow-dir mirror prefers a variant's copy of a name.
+          tfm_of() { dotnet msbuild AlRunner/AlRunner.csproj -getProperty:TargetFramework -nologo "$@" | tr -d '[:space:]'; }
+          TOOL_TFM=$(tfm_of)
           for full in $(echo "$VERSIONS_JSON" | python3 -c "import json,sys; [print(v) for v in json.load(sys.stdin)]"); do
             echo "Building engine variant for BC $full..."
             dotnet build AlRunner/ \
@@ -1542,8 +1604,22 @@ jobs:
             # from AppContext.BaseDirectory/Win32Stubs/ at runtime, so it must ship in
             # every variant dir too (see NclShadowRuntime.MustCopyDirectoryNames).
             cp -r "./variant-build-$full/Win32Stubs" "./variants-staging/$full/Win32Stubs"
+            if [ "$(tfm_of -p:_BCVersion="$full")" != "$TOOL_TFM" ]; then
+              echo "BC $full runs on a different framework than the tool ($TOOL_TFM): staging its dependency closure too"
+              # Only what differs from the tool's own closure: a file byte-identical to the copy a
+              # same-framework variant carries (Mono.Cecil, Spectre.Console) is reached through the
+              # shadow-dir mirror anyway, so shipping it again only grows the package (#5382).
+              for f in "./variant-build-$full"/*.dll; do
+                if [ -f "./variant-ref/$(basename "$f")" ] && cmp -s "$f" "./variant-ref/$(basename "$f")"; then continue; fi
+                cp -n "$f" "./variants-staging/$full/"
+              done
+            else
+              mkdir -p ./variant-ref
+              for f in "./variant-build-$full"/*.dll; do cp -n "$f" ./variant-ref/; done
+            fi
             rm -rf "./variant-build-$full"
           done
+          rm -rf ./variant-ref
           echo "Staged variants:"
           ls -la ./variants-staging
 

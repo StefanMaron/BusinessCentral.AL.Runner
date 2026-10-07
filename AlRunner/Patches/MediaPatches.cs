@@ -108,6 +108,32 @@ public static class MediaPatches
             + "media stores normally. See docs/scope.md");
     }
 
+    /// <summary>
+    /// Replacement for BC 29's private <c>NavMediaImageSkia.TryProbe(byte[], out SKEncodedImageFormat,
+    /// out int, out int)</c> (#5382). Off Windows, BC 29's <c>NavMediaFactory.ProcessMediaObject</c> no longer
+    /// goes through System.Drawing: it calls <c>NavMediaImageSkia.TryCreate</c>, which probes with
+    /// <c>SKCodec.Create</c>. BC ships only the Windows <c>libSkiaSharp</c> (#3322), so on this platform that call
+    /// dies in a type initializer for EVERY media write, image or not.
+    /// <para>Claim and citation: a header that matches no image signature answers <c>false</c>, which is what
+    /// <c>SKCodec.Create</c> answers (null) for content it cannot decode, so BC's own octet-stream fallback in
+    /// <c>ProcessMediaObject</c> runs unchanged and the bytes stored are the bytes supplied (corpus
+    /// <c>Test Media Png Import.Media_ImportStream_NonPngContent_StillFallsBackToOctetStream</c>,
+    /// tests/runner-extras/standalone-suites/media-non-image-content). Content that IS an image cannot be decoded here, so
+    /// it is refused by name, as on BC 28. The format/width/height outs are only ever written for content we refuse.</para>
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    public static bool NavMediaImageSkia_TryProbe(byte[]? bytes, out int format, out int width, out int height)
+    {
+        format = 0; width = 0; height = 0;
+        ArgumentNullException.ThrowIfNull(bytes);
+        if (!LooksLikeImage(bytes.AsSpan(0, Math.Min(bytes.Length, 12)))) return false;
+        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            "NavMediaImageSkia.TryProbe",
+            "media-image-decode — the content IS an image, but decoding one needs SkiaSharp's native "
+            + "library, which BC ships only for Windows. Non-image media stores normally. "
+            + "See docs/scope.md and #3322");
+    }
+
     /// <summary>Image signatures BC's own supported set covers (JPEG, PNG, GIF, BMP, TIFF, ICO).</summary>
     private static bool LooksLikeImage(ReadOnlySpan<byte> h)
     {

@@ -177,6 +177,43 @@ public static partial class RecordPatches
         }
     }
 
+    /// <summary>
+    /// A record for a table, concrete when the module has a Record{id} class and plain otherwise.
+    /// BC's own NCLMetaTable.CreateObjectInstance does the same: `new NavRecord(parent, TableId,
+    /// this, ..)` when no ApplicationObjectConstructor is set (body identical on 28.5 and 29.0).
+    /// BC 29's compiler emits Record{id} only for tables with code, so most System Application
+    /// tables have no such class there.
+    /// </summary>
+    internal static NavRecord NewRecordInstance(
+        Type? recordType, object? parent, object metaTable, int tableId, bool isTemporary,
+        object securityFiltering, Type? stubNavRecordType)
+    {
+        ThrowIfNoRecordTypeAndNoStub(recordType, stubNavRecordType, tableId);
+        if (recordType == null)
+            return BuildBaseNavRecord(metaTable, (ITreeObject?)parent, tableId, isTemporary, null, string.Empty, securityFiltering)
+                ?? throw new InvalidOperationException(
+                    $"no loaded type Record{tableId}, and NavRecord has no 7-arg constructor to build a plain record");
+        var ctor = _concreteRecordCtors.GetOrAdd(recordType,
+            t => Array.Find(t.GetConstructors(), c => c.GetParameters().Length == 6))
+            ?? throw new InvalidOperationException($"Record{tableId} has no 6-arg constructor");
+        return (NavRecord)ctor.Invoke(new object?[] { parent, metaTable, isTemporary, null, null, securityFiltering });
+    }
+
+    /// <summary>
+    /// The plain-NavRecord fallback is BC 29's shape (<c>StubNavRecord</c> exists, tables without code get no
+    /// Record{id} class). On BC 27/28 every table has a class, so a missing one means something was dropped
+    /// (an emit-excluded table, a failed load) and must stay the loud error it was before #5382.
+    /// </summary>
+    internal static void ThrowIfNoRecordTypeAndNoStub(Type? recordType, Type? stubNavRecordType, int tableId)
+    {
+        if (!RecordTypeOrStubAvailable(recordType, stubNavRecordType))
+            throw new InvalidOperationException($"no loaded type Record{tableId} found");
+    }
+
+    /// <summary>The one predicate of the gate: a record class, or a BC that answers StubNavRecord without one.</summary>
+    internal static bool RecordTypeOrStubAvailable(Type? recordType, Type? stubNavRecordType)
+        => recordType != null || stubNavRecordType != null;
+
     private static NavRecord? BuildBaseNavRecord(
         object metaTableSelf, ITreeObject? parent, int tableId, bool isTemporary,
         NavRecord? sharedTable, string companyName, object securityFiltering)

@@ -195,15 +195,23 @@ public static class DotNetInteropShims
             .GetValue(serverHandle) as Type;
     }
 
-    private static PlatformNotSupportedException? FindPlatformRefusal(Exception? thrown)
+    private static Exception? FindPlatformRefusal(Exception? thrown)
     {
         // Walk the whole chain rather than peeking at a fixed depth: BC wraps the platform's
         // exception twice today (NavNCLDotNetInvokeException → TypeInitializationException →
         // PlatformNotSupportedException), and that nesting is Types.dll's business, not a
         // contract. A chain is acyclic by construction — InnerException is fixed at
         // construction time — so this terminates.
+        //
+        // BC 29 ships System.Drawing.Common 10, whose GDI+ binding no longer raises
+        // PlatformNotSupportedException: the type initializer of Windows.Win32.PInvokeGdiPlus fails with
+        // DllNotFoundException naming 'gdiplus.dll', the Windows-only native library (#5382). That is
+        // the same refusal, so it is recognised too — and only that library, so an unrelated missing
+        // native library still reaches AL as BC's own error.
         for (var e = thrown; e != null; e = e.InnerException)
-            if (e is PlatformNotSupportedException p) return p;
+            if (e is PlatformNotSupportedException
+                || (e is DllNotFoundException && e.Message.Contains("gdiplus.dll", StringComparison.OrdinalIgnoreCase)))
+                return e;
         return null;
     }
 
@@ -217,6 +225,11 @@ public static class DotNetInteropShims
         // library that refused — "System.Drawing.Common" for the #3212 case. Reported when
         // present because it, not the AL-visible type name, is what a reader has to look up.
         var lib = string.IsNullOrEmpty(refused.Source) ? null : refused.Source;
+        // The 29 shape: the exception that names the native library is raised from
+        // System.Private.Windows.Core, a plumbing assembly nobody asked about; the surface the AL code
+        // reached is System.Drawing.Common.
+        if (refused is DllNotFoundException)
+            lib = "System.Drawing.Common (native gdiplus.dll, via " + (lib ?? "its P/Invoke layer") + ")";
 
         return new AlRunner.Infrastructure.RunnerOutOfScopeException(
             api,

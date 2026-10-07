@@ -18,7 +18,8 @@ pkg="${1:?usage: check-nupkg-contents.sh <path-to-nupkg> [size-ceiling-bytes]}"
 # Bytes. The fixed package is ~15 MB compressed; the ceiling leaves headroom for
 # legitimate growth (new PackageReferences, more Win32-stub RIDs, …) while still
 # catching a many-MB regression like Aspose/Graph/BusinessCentral being re-added.
-size_ceiling_bytes="${2:-31457280}" # 30 MiB
+# 36 MiB since #5382: the BC 29 engine variant ships its own net10 closure (numbers: PR #5383).
+size_ceiling_bytes="${2:-37748736}" # 36 MiB
 
 actual_size=$(stat -c%s "$pkg")
 echo "nupkg size: $actual_size bytes ($((actual_size / 1024 / 1024)) MiB), ceiling: $size_ceiling_bytes bytes"

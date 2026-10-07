@@ -6,12 +6,14 @@
          targets net8.0 so it runs BC on its real runtime. net9/net10 were dropped:
          net10's BCL drift (BitArray m_array→_array, etc.) breaks BC's UnsafeAccessor/
          precode assumptions, and net9 can't satisfy BC's System.Text.Json 10 bind. -->
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>$(RunnerTfm)</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <NoWarn>MSB3277;CA1416</NoWarn>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- BC 29's CodeModuleOutputter gained an abstract AddObject; see BcCompiler.CaptureOutputter. -->
+    <DefineConstants Condition="$(_BCMajor) &gt;= 29">$(DefineConstants);BC_OUTPUTTER_ADDOBJECT</DefineConstants>
 
     <!-- Output assembly name matches the tool command (al-runner) so the binary
          on disk, the dotnet tool command, and the on-screen banner all read the same.
@@ -411,7 +413,12 @@
 
   <!-- Common packages on every TFM -->
   <ItemGroup>
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
+    <!-- Roslyn: BC 28 binds 4.14 at most; BC 29's Ncl.dll and its own Microsoft.CodeAnalysis.CSharp
+         copy bind 5.3.0.0. The runner deploys Roslyn app-local, and an app-local copy below what
+         the selected build binds is refused by the default load context (#5030,
+         AppLocalAssemblyFloorTests), so a build against BC 29 takes the higher one. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" Condition="'$(RunnerTfm)' != 'net10.0'" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.3.0" Condition="'$(RunnerTfm)' == 'net10.0'" />
     <PackageReference Include="Mono.Cecil" Version="0.11.6" />
     <!-- Cross-platform terminal UI for the watch-mode live dashboard. MIT-licensed,
          renders correctly on Windows/macOS/Linux and degrades to plain text on
@@ -429,7 +436,12 @@
          for the name, so the resolver cannot serve BC's 10.0 copy (#5030). A higher copy
          satisfies the 8.0.0.0 references of earlier builds. AppLocalAssemblyFloorTests. -->
     <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.0" />
-    <PackageReference Include="System.Configuration.ConfigurationManager" Version="8.0.1" />
+    <!-- 10.0.0, not 8.0.x, for the reason EventLog above is: the BC 29 engine variant is entered
+         from this install and its shadow directory mirrors THESE files, so a net8 build that ships
+         ConfigurationManager 8.0 hands the net10 engine a copy below the 10.0.0.0 BC 29 binds
+         (FileLoadException 0x80131040 in ServerUserSettings, measured entering a variant from an
+         assembled install). A higher copy satisfies the lower references of BC 27 and 28. -->
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.0" />
     <!-- BC28 is a .NET 8 product (Server.runtimeconfig.json tfm=net8.0) but ships a
          net8-targeted build of System.Text.Json 10 in its Service dir, and its
          Types.dll binds System.Text.Json, Version=10.0.0.0. The net8 shared
@@ -445,6 +457,17 @@
          Deploy the net8-targeted DiagnosticSource 10 app-local so the bind
          resolves on the net8 runtime. -->
     <PackageReference Include="System.Diagnostics.DiagnosticSource" Version="10.0.0" />
+  </ItemGroup>
+
+  <!-- BC 29 is a .NET 10 product: System.Text.Json and DiagnosticSource 10 come with the net10
+       shared framework, so only the two packages the framework does not carry are app-local.
+       EventLog is needed for the same reason as on net8 (#5030) and one more: BC 29 ships a
+       .NET Framework (net462) build of System.Diagnostics.EventLog.dll (references mscorlib/
+       System/System.Core, forwards its types back to System), which cannot serve a bind on
+       .NET 10 — loading EventLogEntryType through it raised TypeLoadException. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.0" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.0" />
   </ItemGroup>
 
   <ItemGroup>

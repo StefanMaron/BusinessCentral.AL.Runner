@@ -53,7 +53,12 @@
 set -euo pipefail
 
 CONFIG=Release
-TFM=net8.0
+# net8.0 for BC 27 and 28, net10.0 for BC 29 and later (RunnerTfm in Directory.Build.props). The
+# framework depends on which BC version the tree was built against, so a build against BC 29 sets
+# TFM=net10.0 and BC_VERSION=<the build> here too; `dotnet test --no-build` re-evaluates the project,
+# and without the same _BCVersion it looks for the net8.0 output.
+TFM="${TFM:-net8.0}"
+BC_VERSION="${BC_VERSION:-}"
 MAX_PASSES=3
 VERIFY_ONLY=0
 
@@ -113,7 +118,7 @@ echo "engine-test-bootstrap: wrote $RUNSETTINGS ($CONFIG)"
 run_probe() {
   local log="$1"
   set +e
-  dotnet test AlRunner.Tests/AlRunner.Tests.csproj -c "$CONFIG" --no-build \
+  dotnet test AlRunner.Tests/AlRunner.Tests.csproj -c "$CONFIG" --no-build ${BC_VERSION:+-p:_BCVersion=$BC_VERSION} \
       --settings "$RUNSETTINGS" --filter "$PROBE_FILTER" \
       --logger "console;verbosity=normal" >"$log" 2>&1
   set -e
