@@ -513,6 +513,16 @@ by a name list or by "has a forwarder": the tier's real implementations that for
 `DotNetForwarderCycleTests` pins both on the real tier on every CI leg. An alias that needs one of the
 hidden assemblies reports AL0185 with AL0451 (assembly not found) rather than AL0452 (type not found).
 
+The set is a property of the tier and the runtime, not a constant. On a BC 29 tier (29.0.54011.55935)
+against runtime 10.0.11 the five above are not loops; the one file on a loop is
+`System.Diagnostics.EventLog`. There a `DotNet` alias of `System.Diagnostics.Eventing.Reader.EventRecord`
+fails AL0185 with or without the packs (AL0452, the type is not in that tier's EventLog), so on BC 29
+the hiding only turns AL0452 into AL0451 for it; a runtime-only .NET 10 root does not overflow on
+main either (measured). `DotNetForwarderCycleTests` gates the properties on every tier (the selection
+equals an independent walk's loop members, nothing loops after hiding, `System.Text.Json` and
+`System.Diagnostics.DiagnosticSource` stay visible) and pins the exact set per runtime major, so a tier
+that grows a loop fails naming the new member.
+
 **A pack for another major is a different fault.** With only another major's
 `Microsoft.NETCore.App.Ref` present the enumeration still falls back to the highest one (the
 comment on the enumeration explains why that breaks `System.Uri` conversions, AL0133), and the

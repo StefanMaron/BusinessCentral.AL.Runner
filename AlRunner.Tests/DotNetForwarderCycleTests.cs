@@ -153,8 +153,14 @@ public sealed class DotNetForwarderCycleTests : IDisposable
     // The real service tier and the real runtime: does BC's own locator send Cecil round a loop?
     // ---------------------------------------------------------------------------------------
 
-    /// <summary>The loops visible through <paramref name="locator"/>, as "file : type" (the walk of FindForwarderLoopMembers, reported per start).</summary>
-    private static List<string> ForwarderLoops(IAssemblyLocator locator, IEnumerable<string> dirs)
+    /// <summary>
+    /// The files on forwarder loops visible through <paramref name="locator"/>: an independent
+    /// re-statement of FindForwarderLoopMembers' walk (ask the locator for the scope's full name,
+    /// read that file, look for the type there, follow the next ExportedType; a repeat of
+    /// (file, type) closes a loop and the stretch since its first visit is the loop). Independent on
+    /// purpose, so asserting the product's selection equals it is a check and not a tautology.
+    /// </summary>
+    private static SortedSet<string> LoopMembers(IAssemblyLocator locator, IEnumerable<string> dirs)
     {
         var modules = new Dictionary<string, ModuleDefinition?>(StringComparer.Ordinal);
         ModuleDefinition? Read(string path)
@@ -165,7 +171,7 @@ public sealed class DotNetForwarderCycleTests : IDisposable
             return modules[path] = m;
         }
 
-        var loops = new SortedSet<string>(StringComparer.Ordinal);
+        var members = new SortedSet<string>(StringComparer.Ordinal);
         foreach (var file in dirs.Where(Directory.Exists).SelectMany(d => Directory.EnumerateFiles(d, "*.dll")))
         {
             var start = Read(file);
@@ -173,16 +179,21 @@ public sealed class DotNetForwarderCycleTests : IDisposable
             foreach (var exported in start.ExportedTypes)
             {
                 var current = exported;
-                var seen = new HashSet<string>(StringComparer.Ordinal);
+                var visited = new List<string>();
+                var firstVisit = new Dictionary<string, int>(StringComparer.Ordinal);
                 while (current.Scope is AssemblyNameReference scope)
                 {
                     var path = locator.GetPathToAssembly(scope.FullName);
                     if (path == null) break;
-                    if (!seen.Add(path + "|" + current.FullName))
+                    path = Path.GetFullPath(path);
+                    var key = path + "|" + current.FullName;
+                    if (firstVisit.TryGetValue(key, out var at))
                     {
-                        loops.Add(Path.GetFileName(file) + " : " + current.FullName);
+                        foreach (var m in visited.Skip(at)) members.Add(m);
                         break;
                     }
+                    firstVisit[key] = visited.Count;
+                    visited.Add(path);
                     var module = Read(path);
                     if (module == null || module.GetType(current.FullName) != null) break;
                     var next = module.ExportedTypes.FirstOrDefault(e => e.FullName == current.FullName);
@@ -191,16 +202,22 @@ public sealed class DotNetForwarderCycleTests : IDisposable
                 }
             }
         }
-        return loops.ToList();
+        return members;
     }
 
-    // Measured on tier 28.5.54151.55132 against runtime 8.0.30. A tier that needs another entry has
-    // grown a new looping shim: confirm it IS a loop (the control below) before adding it.
-    private static readonly string[] KnownLoopFiles =
+    // Measured expectations, by the major of the runtime the walk ran on (the tier family follows it:
+    // net8.0 for BC 27/28, net10.0 for BC 29). A family not listed has no exact-set assertion and
+    // that test skips by name; the property test above still gates it.
+    private static readonly Dictionary<int, string[]> ExpectedLoopFilesByRuntimeMajor = new()
     {
-        "Microsoft.Win32.Registry.dll", "System.ComponentModel.Annotations.dll",
-        "System.Numerics.Vectors.dll", "System.Security.AccessControl.dll",
-        "System.Security.Principal.Windows.dll",
+        [8] = new[]
+        {
+            "Microsoft.Win32.Registry.dll", "System.ComponentModel.Annotations.dll",
+            "System.Numerics.Vectors.dll", "System.Security.AccessControl.dll",
+            "System.Security.Principal.Windows.dll",
+        },
+        // BC 29.0.54011.55935 tier against runtime 10.0.11: the five above are not loops there.
+        [10] = new[] { "System.Diagnostics.EventLog.dll" },
     };
 
     // Real implementations that carry a single forwarder to System.Runtime: hiding them turned a
@@ -208,35 +225,76 @@ public sealed class DotNetForwarderCycleTests : IDisposable
     private static readonly string[] RealImplementationsThatMustStayVisible =
         { "System.Text.Json.dll", "System.Diagnostics.DiagnosticSource.dll" };
 
-    [SkippableFact]
-    public void WithNoReferencePacks_TheRealServiceTierAndRuntimeNoLongerFormAForwarderLoop()
+    private static (string[] Dirs, string Tier, string Runtime) RealProbingSet()
     {
-        TestArtifacts.SkipIfMissing();
         var tier = BcCompiler.DefaultServiceTierDir;
         var runtime = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
         // The probing set of a runtime-only install: the tier, then the shared framework, no packs.
-        var dirs = new[] { tier, runtime };
+        return (new[] { tier, runtime }, tier, runtime);
+    }
+
+    /// <summary>
+    /// PROPERTIES that hold on any tier and runtime: the selection is exactly the tier-side members of
+    /// the loops the raw locator sends the walk round, nothing remains looping once they are hidden,
+    /// the real implementations stay visible, and nothing outside the tier directory is hidden.
+    /// </summary>
+    [SkippableFact]
+    public void WithNoReferencePacks_TheSelectionIsExactlyTheTierFilesOnLoops_AndNoLoopRemains()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (dirs, tier, runtime) = RealProbingSet();
 
         // CONTROL: BC's own locator over exactly these directories. If this finds nothing there is
-        // no loop on this tier + runtime and the assertion below could not have failed.
+        // no loop on this tier + runtime and the assertions below could not have failed.
         var raw = new AssemblyLocator(dirs);
-        var rawLoops = ForwarderLoops(raw, dirs);
-        Skip.If(rawLoops.Count == 0,
+        var rawMembers = LoopMembers(raw, dirs);
+        Skip.If(rawMembers.Count == 0,
             "this service tier and runtime form no forwarder loop without the reference packs, so " +
             "hiding nothing is correct here and this test cannot discriminate");
 
         var hidden = BcCompiler.FindForwarderLoopMembers(raw, dirs, runtime);
-        var hiding = new BcCompiler.ForwarderShimHidingAssemblyLocator(new AssemblyLocator(dirs), hidden);
-        var hiddenNames = hidden.Select(Path.GetFileName).OrderBy(n => n, StringComparer.Ordinal).ToArray();
+        var runtimeFull = Path.GetFullPath(runtime).TrimEnd(Path.DirectorySeparatorChar);
+        var expected = rawMembers
+            .Where(f => !Path.GetDirectoryName(f)!.TrimEnd(Path.DirectorySeparatorChar)
+                .Equals(runtimeFull, StringComparison.Ordinal))
+            .ToArray();
 
-        Assert.Empty(ForwarderLoops(hiding, dirs));
-        // The hiding removed files; it did not make the walk blind.
+        // (i) every hidden file is a loop member, and every tier-side loop member is hidden
+        Assert.Equal(expected, hidden.OrderBy(f => f, StringComparer.Ordinal).ToArray());
         Assert.NotEmpty(hidden);
-        // Only loop members, and no real implementation among them.
+        // (ii) after hiding, the same walk finds no loop
+        var hiding = new BcCompiler.ForwarderShimHidingAssemblyLocator(new AssemblyLocator(dirs), hidden);
+        Assert.Empty(LoopMembers(hiding, dirs));
+        // (iii) the real implementations stay visible
+        var hiddenNames = hidden.Select(Path.GetFileName).ToArray();
         foreach (var name in RealImplementationsThatMustStayVisible)
             Assert.DoesNotContain(name, hiddenNames);
-        Assert.Empty(hiddenNames.Except(KnownLoopFiles, StringComparer.Ordinal));
-        // Everything hidden is a file that sits in the tier, never one from the runtime directory.
+        // (iv) only tier files
         Assert.All(hidden, f => Assert.StartsWith(Path.GetFullPath(tier), f, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The EXACT set, for the tier families it was measured on. A tier that grows a loop fails here
+    /// naming the new member, which forces a conscious update (and a look at what aliases lose);
+    /// a family with no measurement skips by name rather than passing.
+    /// </summary>
+    [SkippableFact]
+    public void WithNoReferencePacks_TheHiddenSetIsTheMeasuredOneForThisRuntimeFamily()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (dirs, _, runtime) = RealProbingSet();
+        var major = Environment.Version.Major;
+        Skip.IfNot(ExpectedLoopFilesByRuntimeMajor.TryGetValue(major, out var known),
+            $"no measured hidden set for a .NET {major} runtime; the property test gates this family");
+
+        var hidden = BcCompiler.FindForwarderLoopMembers(new AssemblyLocator(dirs), dirs, runtime)
+            .Select(Path.GetFileName).OrderBy(n => n, StringComparer.Ordinal).ToArray();
+
+        var added = hidden.Except(known!, StringComparer.Ordinal).ToArray();
+        var gone = known!.Except(hidden, StringComparer.Ordinal).ToArray();
+        Assert.True(added.Length == 0 && gone.Length == 0,
+            $"hidden set changed on this tier (runtime .NET {major}): new loop members [{string.Join(", ", added)}], " +
+            $"no longer looping [{string.Join(", ", gone)}]. Confirm each new member is a real loop " +
+            "(the property test proves it) and update ExpectedLoopFilesByRuntimeMajor.");
     }
 }
