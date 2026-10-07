@@ -9,7 +9,7 @@
 // to and HOW (addfirst/addlast/addbefore/addafter), and each column's source expression.
 //
 // Shape measured against BC's emitter (a probe compiled with it; AlRunner.Tests/
-// ReportExtensionDeltaEquivalenceTests): DataItemAdd{AnchorName, AnchorId, Operation, DataItem}, a
+// PrecompiledReportExtensionDeltaTests): DataItemAdd{AnchorName, AnchorId, Operation, DataItem}, a
 // nested item anchored AddLast on its parent. Anything that cannot be stated that way returns null
 // with a reason, never a guess: the extension then stays unbound and running its report refuses.
 using System.Text;

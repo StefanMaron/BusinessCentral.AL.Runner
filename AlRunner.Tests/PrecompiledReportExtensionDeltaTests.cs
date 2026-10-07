@@ -472,7 +472,7 @@ public class PrecompiledReportExtensionDeltaTests
             Assert.Equal(expected.Count, actual.Count);
             for (var i = 0; i < expected.Count; i++) Assert.Equal(expected[i], actual[i]);
 
-            var merged = NavReportSync.ApplyReportExtensionDeltas(f.ReportId, BaseMetaReport(f));
+            var merged = NavReportSync.ApplyReportExtensionDeltas(f.ReportId, BaseMetaReport(f), () => BaseMetaReport(f));
             Assert.Equal(new[] { "Src", "Child1", "YA", "YB", "XA", "XB", "XC", "Child2" }, Order(merged));
         });
     }
@@ -508,7 +508,7 @@ public class PrecompiledReportExtensionDeltaTests
         var source = ExtensionSource(f, $$"""        {{statement}} { dataitem(ExtOne; "{{f.TableName}}") { } }""");
         WithApp(f, SymbolReference(f, f.ReportId + 100, dataItems), source, _ =>
         {
-            var merged = NavReportSync.ApplyReportExtensionDeltas(f.ReportId, BaseMetaReport(f));
+            var merged = NavReportSync.ApplyReportExtensionDeltas(f.ReportId, BaseMetaReport(f), () => BaseMetaReport(f));
             Assert.Equal(expectedOrder, Order(merged));
             Assert.Equal(new[] { f.ExtensionId }, NavReportSync.MergedReportExtensionsOf(merged));
         });
@@ -523,7 +523,7 @@ public class PrecompiledReportExtensionDeltaTests
         var source = ExtensionSource(f, $$"""        addafter(Child1) { dataitem(ExtOne; "{{f.TableName}}") { dataitem(ExtChild; "{{f.TableName}}") { } } }""");
         WithApp(f, SymbolReference(f, f.ReportId + 100, dataItems), source, _ =>
         {
-            var merged = (Microsoft.Dynamics.Nav.Types.Metadata.MetaReport)NavReportSync.ApplyReportExtensionDeltas(f.ReportId, BaseMetaReport(f));
+            var merged = (Microsoft.Dynamics.Nav.Types.Metadata.MetaReport)NavReportSync.ApplyReportExtensionDeltas(f.ReportId, BaseMetaReport(f), () => BaseMetaReport(f));
             Assert.Equal(new[] { "Src", "Child1", "ExtOne", "ExtChild", "Child2" }, Order(merged));
             Assert.Equal(new[] { 0, 1, 1, 2, 1 }, merged.DataItems.Select(d => (int)d.DataItemIndent).ToArray());
         });
@@ -539,6 +539,8 @@ public class PrecompiledReportExtensionDeltaTests
         yield return new object?[] { "ColumnsAtExtensionLevel", "adds columns to an existing data item", true };
         yield return new object?[] { "TableDoesNotResolve", "does not resolve", true };
         yield return new object?[] { "NoDataItems", "no added data item", true };
+        yield return new object?[] { "SourceItemNotInSymbols", "declares a data item its symbol file does not", true };
+        yield return new object?[] { "SymbolItemNotAnchoredBySource", "which the extension does not declare", true };
     }
 
     [Theory]
@@ -557,6 +559,12 @@ public class PrecompiledReportExtensionDeltaTests
             case "ColumnsAtExtensionLevel": extColumns = "[ " + ColumnJson("Added", 5, "Text[50]") + " ]"; break;
             case "TableDoesNotResolve": items = "[ " + DataItemJson("ExtOne", "Src", 1, 111, "No Such Table") + " ]"; break;
             case "NoDataItems": items = "[]"; break;
+            case "SourceItemNotInSymbols":
+                statement += $$"""{{Environment.NewLine}}        addafter(Child2) { dataitem(ExtGhost; "{{f.TableName}}") { } }""";
+                break;
+            case "SymbolItemNotAnchoredBySource":
+                items = "[ " + one + ", " + DataItemJson("ExtUnanchored", "Src", 1, 333, f.TableName) + " ]";
+                break;
         }
         var source = withSource ? ExtensionSource(f, statement) : null;
         WithApp(f, SymbolReference(f, f.ReportId + 100, items, extColumns), source, _ =>
@@ -585,6 +593,34 @@ public class PrecompiledReportExtensionDeltaTests
     // A precompiled document BC's parser takes badly must not take the report's metadata with it:
     // that is what opening the request page needs. The extension stays unmerged, and a
     // source-compiled one beside it is still applied.
+    // BC's applicator changes the MetaReport in place, so a document whose first add is valid and
+    // second is not would leave the first merged if it were applied to the real one directly.
+    [Fact]
+    public void ADocumentRejectedAfterItsFirstAdd_LeavesNoneOfItInTheReportsMetadata()
+    {
+        var f = NewFixture();
+        var items = "[ " + DataItemJson("ExtOne", "Src", 1, 111, f.TableName) + " ]";
+        WithApp(f, SymbolReference(f, f.ReportId + 100, items), source: null, _ =>
+        {
+            var twoAdds = (f.ExtensionId, Xml: """
+                <ReportExtension xmlns="urn:schemas-microsoft-com:dynamics:NAV:MetaObjects" ALNamespace="">
+                  <MetadataVersion>130000</MetadataVersion><ID>3</ID><Name>Half</Name>
+                  <DataItemAdd><AnchorName>Src</AnchorName><AnchorId>1369927887</AnchorId><Operation>AddLast</Operation>
+                    <DataItem><DataItemTable>0</DataItemTable><DataItemIndent>1</DataItemIndent><ID>7</ID><DataItemVarName>FirstHalf</DataItemVarName></DataItem>
+                  </DataItemAdd>
+                  <DataItemAdd><AnchorName>Nowhere</AnchorName><AnchorId>5</AnchorId><Operation>AddLast</Operation>
+                    <DataItem><DataItemTable>0</DataItemTable><DataItemIndent>1</DataItemIndent><ID>8</ID><DataItemVarName>SecondHalf</DataItemVarName></DataItem>
+                  </DataItemAdd><Labels /><Layouts />
+                </ReportExtension>
+                """);
+            var real = BaseMetaReport(f);
+            var merged = NavReportSync.ApplyReportExtensionDeltas(f.ReportId, real,
+                precompiled: new[] { twoAdds }, source: Array.Empty<(int, string)>(), freshCopy: () => BaseMetaReport(f));
+            Assert.Equal(new[] { "Src", "Child1", "Child2" }, Order(merged));
+            Assert.Empty(NavReportSync.MergedReportExtensionsOf(merged));
+        });
+    }
+
     [Fact]
     public void APrecompiledDocumentBcRejects_LeavesThatExtensionUnmerged_AndTheReportItsMetadata()
     {
@@ -609,7 +645,7 @@ public class PrecompiledReportExtensionDeltaTests
                 </ReportExtension>
                 """);
             var merged = NavReportSync.ApplyReportExtensionDeltas(f.ReportId, BaseMetaReport(f),
-                precompiled: new[] { bad }, source: new[] { good });
+                precompiled: new[] { bad }, source: new[] { good }, freshCopy: () => BaseMetaReport(f));
             Assert.Equal(new[] { f.ExtensionId }, NavReportSync.MergedReportExtensionsOf(merged));
             Assert.Contains("FromSource", Order(merged));
         });

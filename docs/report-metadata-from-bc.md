@@ -530,7 +530,8 @@ that declares several data items, the first takes the block's keyword and anchor
 is `AddAfter` the one before. Both rules, the `FieldNo` of `-1` that BC writes for a computed column,
 and the element order are measured on BC's emitter and pinned in
 `PrecompiledReportExtensionDeltaTests`, which compares the derived document to a captured emitted
-one field by field.
+one on each add's anchor, anchor id, operation, depth, id, name and table, and each column's id,
+name, type, `FieldNo` and source expression (not the view, link, link reference or `AutoCalcField`).
 
 **Left out of the derived document, because nothing here reads it:** the request page's filter
 controls for the added data items (`ControlAdd`, from the symbol file's `FilterControlId`), the
@@ -542,8 +543,9 @@ metadata; the applicator has no adapter for triggers.
 and running its report refuses by name (`ThrowIfExtensionReportBehaviourIsUnbound`): a package with
 no AL source, a column added to an existing data item, a data item whose table does not resolve, an
 anchor the report's symbol does not name, and a document BC's parser or applicator rejects. The last
-one leaves the report's metadata intact rather than failing the whole report, because opening its
-request page needs it. Tracked in #5417.
+one is applied to a throwaway copy of the report's metadata first, because BC's applicator changes
+it in place; only a document that applies whole reaches the real one, so a rejected document leaves
+the report's metadata as it was and the report is not failed (opening its request page needs it). Tracked in #5417.
 
 **Not measured:** the order in which several extensions of one report are applied. Documents are
 applied precompiled first, each in id order, then source-compiled ones (#5143).
