@@ -2,8 +2,8 @@ codeunit 50901 "Resume Excl No Tests Dropped"
 {
     procedure Broken()
     var
-        Missing: Codeunit "This Codeunit Does Not Exist At All";
+        Missing: Record "This Table Does Not Exist At All";
     begin
-        Missing.DoSomething();
+        Missing.Init();
     end;
 }

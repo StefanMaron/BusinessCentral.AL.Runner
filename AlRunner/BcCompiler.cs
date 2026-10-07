@@ -2066,44 +2066,65 @@ public sealed partial class BcCompiler
         // here either succeeds outright, or leaves whatever's still broken for the SAME
         // exclude-and-retry loop that runs unconditionally afterwards.
         var tddGeneratedMembers = new List<TddGeneratedMember>();
-        if (_tddMode && caught == null && emitResult != null && !emitResult.Success)
+        (NavCA.Compilation Compilation, CaptureOutputter Outputter, Exception? Caught, NavEmit.EmitResult? Result) TddRecompile()
         {
-            var newlyGenerated = TddGeneration.Generate(compilation, trees, parseOpts, emitResult, moduleName, TddCrossBundle.IsSourceImpl(appId), manifestAppJsonPath);
+            var genCompilation = NavCA.Compilation.Create(
+                moduleName: moduleName, publisher: _currentPublisher ?? "AlRunner",
+                version: _currentVersion ?? new Version(1, 0, 0, 0), appId: appId,
+                syntaxTrees: trees, options: compOpts);
+            if (compileFileSystem != null)
+                genCompilation = genCompilation.WithFileSystem(compileFileSystem);
+            if (refLoader != null)
+            {
+                genCompilation = genCompilation.WithReferenceLoader(refLoader);
+                if (specs.Length > 0) genCompilation = genCompilation.AddReferences(specs);
+            }
+            genCompilation = genCompilation.WithDotNetResolverFactory(GetOrCreateDotNetFactory());
+            var genOutputter = new CaptureOutputter();
+            Exception? genCaught = null;
+            NavEmit.EmitResult? genEmitResult = null;
+            try { genEmitResult = genCompilation.Emit(RunnerEmitOptions, genOutputter); }
+            catch (Exception exGen) { genCaught = exGen; }
+            return (genCompilation, genOutputter, genCaught, genEmitResult);
+        }
+
+        // #5431: a codeunit no app declares (AL0185, which makes the emit throw rather than report) is
+        // added as an empty object to the test's own file first; the pass below then finds the members
+        // its call sites need as AL0132 against it, exactly as for an object the app declares.
+        IReadOnlyList<TddMissingObject> tddMissingObjects = Array.Empty<TddMissingObject>();
+        if (_tddMode && (caught != null || (emitResult != null && !emitResult.Success)))
+        {
+            tddMissingObjects = TddGeneration.GenerateMissingObjects(
+                compilation, trees, parseOpts, emitResult?.Diagnostics, manifestAppJsonPath);
+            if (tddMissingObjects.Count > 0)
+            {
+                (compilation, outputter, caught, emitResult) = TddRecompile();
+                Console.Error.WriteLine(
+                    $"[BcCompiler] {moduleName}: --tdd generated {tddMissingObjects.Count} missing object(s) and " +
+                    $"recompiled ({(emitResult?.Success == true ? "compile now succeeds" : "still incomplete")}): " +
+                    string.Join(", ", tddMissingObjects.Select(g => TddReport.Describe(g.Member))));
+            }
+        }
+        if (_tddMode && ((caught == null && emitResult != null && !emitResult.Success) || tddMissingObjects.Count > 0))
+        {
+            var newlyGenerated = TddGeneration.Generate(compilation, trees, parseOpts, emitResult, moduleName, TddCrossBundle.IsSourceImpl(appId), manifestAppJsonPath, tddMissingObjects);
             // A member generated into another bundle (#5037) is invisible to this compile until
             // that bundle is recompiled — Program.cs re-runs the cycle for it, so only a member
             // generated into this module's own trees is worth a recompile here.
             tddGeneratedMembers.AddRange(newlyGenerated.Where(g => g.GeneratedIntoFile != null));
             newlyGenerated = newlyGenerated.Where(g => g.GeneratedIntoFile == null).ToList();
-            if (newlyGenerated.Count > 0)
+            var newMembers = newlyGenerated.Where(g => g.MemberKind != TddMissingObject.MemberKind).ToList();
+            if (newlyGenerated.Count > 0 && newMembers.Count == 0)
+                tddGeneratedMembers.AddRange(newlyGenerated); // only the objects: already compiled above
+            else if (newlyGenerated.Count > 0)
             {
                 tddGeneratedMembers.AddRange(newlyGenerated);
-                var genCompilation = NavCA.Compilation.Create(
-                    moduleName: moduleName, publisher: _currentPublisher ?? "AlRunner",
-                    version: _currentVersion ?? new Version(1, 0, 0, 0), appId: appId,
-                    syntaxTrees: trees, options: compOpts);
-                if (compileFileSystem != null)
-                    genCompilation = genCompilation.WithFileSystem(compileFileSystem);
-                if (refLoader != null)
-                {
-                    genCompilation = genCompilation.WithReferenceLoader(refLoader);
-                    if (specs.Length > 0) genCompilation = genCompilation.AddReferences(specs);
-                }
-                genCompilation = genCompilation.WithDotNetResolverFactory(GetOrCreateDotNetFactory());
-                var genOutputter = new CaptureOutputter();
-                Exception? genCaught = null;
-                NavEmit.EmitResult? genEmitResult = null;
-                try { genEmitResult = genCompilation.Emit(RunnerEmitOptions, genOutputter); }
-                catch (Exception exGen) { genCaught = exGen; }
+                (compilation, outputter, caught, emitResult) = TddRecompile();
 
                 Console.Error.WriteLine(
-                    $"[BcCompiler] {moduleName}: --tdd generated {newlyGenerated.Count} missing member(s) and " +
-                    $"recompiled ({(genEmitResult?.Success == true ? "compile now succeeds" : "still incomplete, falling through to exclusion")}): " +
-                    string.Join(", ", newlyGenerated.Select(g => $"{g.ObjectDisplayName}.{g.Signature}")));
-
-                outputter = genOutputter;
-                caught = genCaught;
-                emitResult = genEmitResult;
-                compilation = genCompilation;
+                    $"[BcCompiler] {moduleName}: --tdd generated {newMembers.Count} missing member(s) and " +
+                    $"recompiled ({(emitResult?.Success == true ? "compile now succeeds" : "still incomplete, falling through to exclusion")}): " +
+                    string.Join(", ", newMembers.Select(g => $"{g.ObjectDisplayName}.{g.Signature}")));
             }
         }
 

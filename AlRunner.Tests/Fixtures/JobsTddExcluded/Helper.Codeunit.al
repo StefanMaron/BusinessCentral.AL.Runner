@@ -4,8 +4,8 @@ codeunit 51001 "Jobs Tdd Helper"
 {
     trigger OnRun()
     var
-        Missing: Codeunit "This Helper Dependency Does Not Exist";
+        Missing: Record "This Helper Table Does Not Exist";
     begin
-        Missing.DoSomething();
+        Missing.Init();
     end;
 }

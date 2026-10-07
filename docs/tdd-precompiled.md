@@ -80,8 +80,9 @@ distinctly label a stub of a Microsoft-published object is #5437.
 
 ## Not covered (reported FAILED as before)
 
-A field of a package's table, an enum value of a package's enum, an overload of a package's procedure, an
-object no app declares, and a call through anything but a plain variable. The first three have the same
-shape (a new object beside it: a table extension, an enum extension); they are tracked from #5037.
+A field of a package's table, an enum value of a package's enum, an overload of a package's procedure, and a
+call through anything but a plain variable. The first two have the same shape (a new object beside it: a table
+extension, an enum extension); they are tracked from #5037. An object no app declares at all is
+[`tdd-missing-object.md`](tdd-missing-object.md).
 
 Tests: `TddPrecompiledTests` (a DLL package and a source package, end to end), `TddPrecompiledStubTests`.

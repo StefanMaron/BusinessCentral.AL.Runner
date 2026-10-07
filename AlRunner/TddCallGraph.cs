@@ -226,10 +226,15 @@ internal sealed partial class TddCallGraph
     /// subscriber on the way adds its publisher's key and the key of everything known to raise it
     /// (#5264), which are not procedures of this compile.</summary>
     public IReadOnlyList<string> ProcedureKeysReaching(NavDiag.Diagnostic diag)
+        => diag.Location.SourceTree is { } tree
+            ? ProcedureKeysReaching(tree, diag.Location.SourceSpan.Start)
+            : Array.Empty<string>();
+
+    /// <summary><see cref="ProcedureKeysReaching(NavDiag.Diagnostic)"/> for a position that no diagnostic
+    /// sits at (a use of a generated object, #5431).</summary>
+    public IReadOnlyList<string> ProcedureKeysReaching(NavSyntax.SyntaxTree tree, int position)
     {
-        var tree = diag.Location.SourceTree;
-        if (tree == null) return Array.Empty<string>();
-        var start = EnclosingMethod(tree.GetRoot().FindToken(diag.Location.SourceSpan.Start).Parent);
+        var start = EnclosingMethod(tree.GetRoot().FindToken(position).Parent);
         if (start == null) return Array.Empty<string>();
         var keys = new List<string>();
         var reached = ReachClosure(new[] { start }, out var raisers);
@@ -344,10 +349,14 @@ internal sealed partial class TddCallGraph
     /// (<see cref="ReachClosure"/>: a database event or trigger of a table operation in this compile, #5286).
     /// A test of another bundle that raises it is named by that bundle's compile.</summary>
     public IReadOnlyList<string> TestsReaching(NavDiag.Diagnostic diag)
+        => diag.Location.SourceTree is { } tree
+            ? TestsReaching(tree, diag.Location.SourceSpan.Start)
+            : Array.Empty<string>();
+
+    /// <summary><see cref="TestsReaching(NavDiag.Diagnostic)"/> for a position that no diagnostic sits at.</summary>
+    public IReadOnlyList<string> TestsReaching(NavSyntax.SyntaxTree tree, int position)
     {
-        var tree = diag.Location.SourceTree;
-        if (tree == null) return Array.Empty<string>();
-        var start = EnclosingMethod(tree.GetRoot().FindToken(diag.Location.SourceSpan.Start).Parent);
+        var start = EnclosingMethod(tree.GetRoot().FindToken(position).Parent);
         if (start == null) return Array.Empty<string>();
 
         var labels = new List<string>();

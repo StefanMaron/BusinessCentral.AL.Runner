@@ -1,0 +1,12 @@
+{
+  "id": "6d2e4f10-7b35-4a81-9c47-1e8f3a5d7b92",
+  "name": "Runner Tests Fixture - Tdd Missing Object",
+  "publisher": "AL Runner Fixtures",
+  "version": "1.0.0.0",
+  "brief": "The app of the #5431 missing-object --tdd reproducer.",
+  "description": "Tests that call codeunits no app declares.",
+  "dependencies": [],
+  "idRanges": [ { "from": 65320, "to": 65339 } ],
+  "runtime": "14.0",
+  "features": []
+}

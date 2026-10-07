@@ -362,7 +362,16 @@ internal static partial class ProgramSupport
         w.WriteLine("  object, and each call to it through a variable is pointed there; every other call");
         w.WriteLine("  keeps running the real object. The tests that reach it are named like any other");
         w.WriteLine("  generated member. Not covered yet, so reported as a FAILED test: a field, an enum value,");
-        w.WriteLine("  an overload or a whole object of a package; see docs/tdd-precompiled.md.");
+        w.WriteLine("  or an overload of a package's object; see docs/tdd-precompiled.md.");
+        w.WriteLine();
+        w.WriteLine("  A codeunit that NO app declares (`Missing: Codeunit \"No Such Codeunit\"`, AL0185) is");
+        w.WriteLine("  generated as an empty codeunit of that name, appended in memory to the first file that");
+        w.WriteLine("  names it, with the first free id of the test app's idRanges; the procedures its calls");
+        w.WriteLine("  need are then generated as for any other object. It is refused (the test stays FAILED,");
+        w.WriteLine("  the run says why) when an object of that name exists but is out of reach (another");
+        w.WriteLine("  namespace, a bundle the app forgot to depend on) or no id is free. Only a codeunit");
+        w.WriteLine("  named by a plain variable type; a table, page or enum is not generated; see");
+        w.WriteLine("  docs/tdd-missing-object.md.");
         w.WriteLine();
         w.WriteLine("  Every test that reaches a generated member, passed or failed, gets a line naming");
         w.WriteLine("  those members — reached in its own body or through procedures it calls in the");
