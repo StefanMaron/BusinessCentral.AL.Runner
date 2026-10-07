@@ -24,6 +24,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **dotnet:** a runtime-only dotnet install no longer overflows the stack in the DotNet binder
 - **query:** const(Database::X) in a precompiled query DataItemTableFilter
 - **company:** Record.ChangeCompany to a company the test inserted; RecordRef.Open keeps its company
 - **test-data:** BC 29 base-table extension columns are not uninstalled-app columns
