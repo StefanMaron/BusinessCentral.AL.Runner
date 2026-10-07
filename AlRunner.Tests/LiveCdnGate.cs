@@ -20,20 +20,56 @@ namespace AlRunner.Tests;
 
 internal static class LiveCdnGate
 {
-    /// <summary>The cap on the reachability probe itself, kept far below a spawn's 180 s.</summary>
-    internal const int ProbeTimeoutSeconds = 15;
+    /// <summary>The cap on ONE reachability attempt, kept far below a spawn's 180 s.</summary>
+    internal const int ProbeTimeoutSeconds = 10;
 
-    private static readonly Lazy<string?> ProbeFailure = new(ProbeOnce);
+    /// <summary>The pause before the single retry. Worst case for an unreachable CDN is
+    /// 2 x <see cref="ProbeTimeoutSeconds"/> + this = 22 s, once per process.</summary>
+    internal const int RetryGapSeconds = 2;
+
+    private static readonly Lazy<string?> ProbeFailure = new(
+        () => ProbeWithRetry(ProbeOnce, () => Thread.Sleep(TimeSpan.FromSeconds(RetryGapSeconds))));
+
+    // Test seam. AsyncLocal, not a static: a fact that drives the real Require() with a fake probe and
+    // a CI-shaped environment must not leak either into the live-CDN facts running in parallel.
+    private static readonly AsyncLocal<(Func<string?> Probe, Func<string, string?> Env)?> Override = new();
+
+    /// <summary>Within the returned scope, <see cref="Require()"/> reads this probe and environment.</summary>
+    internal static IDisposable OverrideForTests(Func<string?> probe, Func<string, string?> env)
+    {
+        Override.Value = (probe, env);
+        return new Scope();
+    }
+
+    private sealed class Scope : IDisposable
+    {
+        public void Dispose() => Override.Value = null;
+    }
 
     /// <summary>Throws a skip or a failure when the live CDN is not reachable; returns when it is.</summary>
-    internal static void Require() => Require(ProbeFailure.Value, TestArtifacts.RunningOnCi);
+    internal static void Require()
+    {
+        // One path for the real run and the seam, so a test through the seam covers the CI branch.
+        var (probe, env) = Override.Value ?? (() => ProbeFailure.Value, Environment.GetEnvironmentVariable);
+        Require(probe(), TestArtifacts.IsCiEnvironment(env));
+    }
+
+    /// <summary>One retry after a fixed gap: a CDN slow to answer one HEAD but healthy must not
+    /// redden every live-CDN fact together. A second failure's observation is the one reported.</summary>
+    internal static string? ProbeWithRetry(Func<string?> attempt, Action gap)
+    {
+        var first = attempt();
+        if (first == null) return null;
+        gap();
+        return attempt();
+    }
 
     internal static void Require(string? probeFailure, bool runningOnCi)
     {
         if (probeFailure == null) return;
 
         var what = $"the live BC artifact CDN ({ArtifactDownloader.CdnBase}) did not answer a HEAD for its " +
-            $"index within {ProbeTimeoutSeconds}s: {probeFailure}";
+            $"index within {ProbeTimeoutSeconds}s, twice: {probeFailure}";
         if (runningOnCi)
             Assert.Fail("this test needs the live CDN, which a CI leg provisions from by construction, so an " +
                 "unreachable CDN is a failure and not a skip: " + what);

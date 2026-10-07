@@ -67,7 +67,7 @@ public sealed class ProvisionExplicitModesTests
         => Run(isolatedHome, SpawnTimeoutMs, null, args);
 
     private static (int ExitCode, string StdErr) Run(
-        string isolatedHome, int timeoutMs, IReadOnlyDictionary<string, string>? environment, params string[] args)
+        string isolatedHome, int spawnTimeoutMs, IReadOnlyDictionary<string, string>? environment, params string[] args)
     {
         var argLine = TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner")) + " " + string.Join(' ', args);
         var psi = new ProcessStartInfo
@@ -93,11 +93,11 @@ public sealed class ProvisionExplicitModesTests
         proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (errSb) errSb.AppendLine(e.Data); };
         proc.BeginOutputReadLine();
         proc.BeginErrorReadLine();
-        if (!proc.WaitForExit(timeoutMs))
+        if (!proc.WaitForExit(spawnTimeoutMs))
         {
             try { proc.Kill(entireProcessTree: true); } catch { }
             throw new TimeoutException(
-                $"al-runner did not exit within {timeoutMs / 1000}s for: {argLine}. If the test machine " +
+                $"al-runner did not exit within {spawnTimeoutMs / 1000}s for: {argLine}. If the test machine " +
                 "has no network reachability to the BC artifact CDN this will hang instead " +
                 "of failing fast.");
         }
