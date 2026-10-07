@@ -12,6 +12,7 @@
         "bundle-page-over-dep-table": { "tests": 2 },
         "code-coverage-extension-metadata": { "tests": 4 },
         "code-coverage-line-rows": { "tests": 7 },
+        "company-store-isolation": { "tests": 2 },
         "crm-proxy-version": { "tests": 5 },
         "date-virtual-table-window": { "tests": 11 },
         "db-trigger-inject-timing": { "tests": 2 },

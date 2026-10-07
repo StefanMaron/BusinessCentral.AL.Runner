@@ -186,17 +186,17 @@ public static partial class RecordPatches
     /// </summary>
     internal static NavRecord NewRecordInstance(
         Type? recordType, object? parent, object metaTable, int tableId, bool isTemporary,
-        object securityFiltering, Type? stubNavRecordType)
+        object securityFiltering, Type? stubNavRecordType, string? companyName = null)
     {
         ThrowIfNoRecordTypeAndNoStub(recordType, stubNavRecordType, tableId);
         if (recordType == null)
-            return BuildBaseNavRecord(metaTable, (ITreeObject?)parent, tableId, isTemporary, null, string.Empty, securityFiltering)
+            return BuildBaseNavRecord(metaTable, (ITreeObject?)parent, tableId, isTemporary, null, companyName ?? string.Empty, securityFiltering)
                 ?? throw new InvalidOperationException(
                     $"no loaded type Record{tableId}, and NavRecord has no 7-arg constructor to build a plain record");
         var ctor = _concreteRecordCtors.GetOrAdd(recordType,
             t => Array.Find(t.GetConstructors(), c => c.GetParameters().Length == 6))
             ?? throw new InvalidOperationException($"Record{tableId} has no 6-arg constructor");
-        return (NavRecord)ctor.Invoke(new object?[] { parent, metaTable, isTemporary, null, null, securityFiltering });
+        return (NavRecord)ctor.Invoke(new object?[] { parent, metaTable, isTemporary, null, companyName, securityFiltering });
     }
 
     /// <summary>

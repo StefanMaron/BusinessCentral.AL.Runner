@@ -91,8 +91,9 @@ namespace AlRunner.Patches;
 public static partial class RecordPatches
 {
     // Per-table row images captured since the last commit point, keyed by the
-    // (DataAccessSource, tableId) pair _dataAccessByTable itself is keyed by.
-    private static readonly Dictionary<(object Source, int TableId), BaselineTable> _txCommitPoint = new();
+    // (DataAccessSource, tableId) pair _dataAccessByTable itself is keyed by, plus the company token
+    // of the store (0 = the session company's; another company's store is RecordPatches.CompanyStores).
+    private static readonly Dictionary<(object Source, int TableId, int Token), BaselineTable> _txCommitPoint = new();
 
     /// <summary>
     /// Establish a commit point in the TOP-LEVEL tracker: everything written up to now
@@ -209,10 +210,14 @@ public static partial class RecordPatches
     internal static void NoteTransactionWrite(object? record)
     {
         if (record is not NavRecord rec) return;
-        int tableId;
-        try { tableId = rec.MetaTable.TableId; }
+        int tableId, token;
+        try
+        {
+            tableId = rec.MetaTable.TableId;
+            token = _anyCompanyDataAccess ? RecordCompanyToken(RecordImplementationOf(rec)) : 0;
+        }
         catch { return; }
-        NoteTransactionWriteForTable(tableId);
+        NoteTransactionWriteForTable(tableId, token);
     }
 
     /// <summary>
@@ -223,14 +228,17 @@ public static partial class RecordPatches
     /// Without this, an <c>asserterror</c> after <c>Rec.AddLink(...)</c> would leave the link
     /// row behind while an AL <c>Insert</c> into the same table rolls back.
     /// </summary>
-    internal static void NoteTransactionWriteForTable(int tableId)
+    internal static void NoteTransactionWriteForTable(int tableId, int companyToken = 0)
     {
         NoteObjectInventoryWrite(tableId);
         NotePermissionSetupTableWrite(tableId);
-        foreach (var (source, perTable) in _dataAccessByTable)
+        foreach (var (source, _) in _dataAccessByTable)
         {
-            if (!perTable.TryGetValue(tableId, out var dataAccess)) continue;
-            var key = (source, tableId);
+            // Created if need be: the first write through a record on another company can reach
+            // this note before anything has read that company's store.
+            var dataAccess = SnapshotStore(source, tableId, companyToken, create: true);
+            if (dataAccess == null) continue;
+            var key = (source, tableId, companyToken);
 
             // Two independent "first write since X" trackers can both need this same
             // pre-write image: the top-level commit-point tracker (X = last real commit),
@@ -284,7 +292,7 @@ public static partial class RecordPatches
     // durable as an explicit Commit()" (see NoteTransactionEnd below), not measured against
     // a real BC service tier. This shape is not exercised by any known corpus or
     // runner-extras test today.
-    private static readonly Stack<Dictionary<(object Source, int TableId), BaselineTable>> _txScopeStack = new();
+    private static readonly Stack<Dictionary<(object Source, int TableId, int Token), BaselineTable>> _txScopeStack = new();
 
     /// <summary>
     /// Open a new transaction-world scope — the runner's replacement for BC's
@@ -321,10 +329,10 @@ public static partial class RecordPatches
 
         if (restore)
         {
-            foreach (var ((source, tableId), saved) in scope)
+            foreach (var ((source, tableId, token), saved) in scope)
             {
-                if (!_dataAccessByTable.TryGetValue(source, out var perTable)) continue;
-                if (!perTable.TryGetValue(tableId, out var dataAccess)) continue;
+                var dataAccess = SnapshotStore(source, tableId, token, create: false);
+                if (dataAccess == null) continue;
                 var provider = GetDataProvider(dataAccess);
                 if (provider == null || provider.GetType().Name != "TempTableDataProvider") continue;
 
@@ -354,10 +362,10 @@ public static partial class RecordPatches
     {
         EndPermissionSetupTransaction();
         if (_txCommitPoint.Count == 0) return;
-        foreach (var ((source, tableId), saved) in _txCommitPoint.ToList())
+        foreach (var ((source, tableId, token), saved) in _txCommitPoint.ToList())
         {
-            if (!_dataAccessByTable.TryGetValue(source, out var perTable)) continue;
-            if (!perTable.TryGetValue(tableId, out var dataAccess)) continue;
+            var dataAccess = SnapshotStore(source, tableId, token, create: false);
+            if (dataAccess == null) continue;
             var provider = GetDataProvider(dataAccess);
             if (provider == null || provider.GetType().Name != "TempTableDataProvider") continue;
 

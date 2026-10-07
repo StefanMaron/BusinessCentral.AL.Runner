@@ -4,12 +4,14 @@
 // TableRelation = Company.Name field in a per-company table, and leaves a row naming another
 // company alone) is measured upstream by corpus codeunit 67959 on a real service tier.
 //
-// What is pinned HERE is the runner's wiring and its access rule:
-//   - the three Ncl edits that let BC's per-company rename update open a second company
-//     (the tenant-database guard, the SQL spelling lookup, and the one construction call);
-//   - that outside that construction only the session's own company is accessible, because the
-//     record store is not partitioned per company and any other answer would read and write the
-//     session company's rows.
+// What is pinned HERE is the runner's wiring:
+//   - the two Ncl edits that let BC's company token table hand out a token for a second company
+//     (the tenant-database guard and the SQL spelling lookup);
+//   - that the per-company rename update builds its record the way BC does. Until #5349 it went
+//     through a scope that granted every Company-row company for the length of the construction,
+//     because the record store was not partitioned per company; every record on another company
+//     now reads that company's own store (RecordPatches.CompanyStores.cs), so the scope is gone
+//     and the validator grants the Company-row companies everywhere.
 using AlRunner.Patches;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
@@ -65,22 +67,23 @@ public sealed class CompanyRenameCascadeBindingTests
     }
 
     [SkippableFact]
-    public void PerCompanyRenameUpdate_BuildsItsRecordThroughTheCascadeScope()
+    public void PerCompanyRenameUpdate_BuildsItsRecordWithBcsOwnConstruction()
     {
         using var module = OpenNcl();
         var machine = module.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord")!.NestedTypes.Single(t =>
             t.Name.StartsWith("<UpdateReferencingTableOnRenameAsync>d__") && t.Fields.Any(f => f.Name == "companyName"));
         var called = Called(machine.Methods.Single(m => m.Name == "MoveNext"));
 
-        Assert.Single(called, n => n.Contains("CompanyAccessPatches::CreateRenameCascadeRecord"));
-        Assert.DoesNotContain(called, n => n.Contains("NCLMetaTable::CreateObjectInstance"));
+        Assert.Single(called, n => n.Contains("NCLMetaTable::CreateObjectInstance"));
+        Assert.DoesNotContain(called, n => n.Contains("CompanyAccessPatches"));
     }
 
-    // The deliberate half: nothing outside the cascade's construction may reach another
-    // company. The fake session has no Company table behind it, so a path that went looking
-    // for one would throw instead of answering.
+    // The session company and the blank name are answered without looking for a Company table: the
+    // fake session has none behind it, so a path that went looking for one would throw. The grant of
+    // a company with a Company row needs BC's own GetAllCompaniesAsync over a real session, and is
+    // measured end to end by corpus codeunits 69970 to 69975 and tests/runner-extras/company-store-isolation.
     [Fact]
-    public void Validate_OutsideTheRenameCascade_GrantsOnlyTheSessionCompany()
+    public void Validate_TheSessionCompanyAndTheBlankName_AreAnsweredWithoutACompanyTable()
     {
         var session = new FakeSession("My Company");
 
@@ -92,9 +95,6 @@ public sealed class CompanyRenameCascadeBindingTests
 
         Assert.True(CompanyAccessPatches.CompanyHelper_ValidateUserHasAccessToCompany(session, "", out var empty));
         Assert.Equal(string.Empty, empty);
-
-        Assert.False(CompanyAccessPatches.CompanyHelper_ValidateUserHasAccessToCompany(session, "ALT RENCASC CO2", out var other));
-        Assert.Equal(string.Empty, other);
     }
 
     [Fact]

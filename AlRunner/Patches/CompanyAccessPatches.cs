@@ -28,22 +28,18 @@ public static class CompanyAccessPatches
     /// Replacement for the extension method
     /// <c>CompanyHelper.ValidateUserHasAccessToCompany(NavSession, string, out string)</c>.
     ///
-    /// The runner has exactly one company's DATA: its tables are not partitioned by company
-    /// token, so a record opened on a second company would silently read and write the session
-    /// company's rows. Outside a rename cascade only the session's own company is therefore
-    /// accessible, and everything else is refused as before (Record.ChangeCompany keeps answering
-    /// false for it). Inside <see cref="CreateRenameCascadeRecord"/> a company with a Company row
-    /// is accessible too, which is what BC answers for the runner's super user
-    /// (<c>GetAllowedCompaniesFromDatabaseAsync</c>: <c>if (IsSuperForAllCompanies) return
-    /// allCompanies</c>; Ncl 28.4.53241.54346 (6f2cf682), same arm in 27.5.46862.53931). A name
-    /// with no row is refused in both scopes.
-    /// Matching is case-insensitive (BC's company-name comparer).
+    /// Every company with a row in the Company table is accessible, which is what BC answers for the
+    /// runner's super user (<c>GetAllowedCompaniesFromDatabaseAsync</c>: <c>if (IsSuperForAllCompanies)
+    /// return allCompanies</c>; Ncl 28.4.53241.54346 (6f2cf682), same arm in 27.5.46862.53931). A name
+    /// with no row is refused. A record opened on a company other than the session's reads that
+    /// company's own rows (RecordPatches.CompanyStores.cs, #5349). Matching is case-insensitive (BC's
+    /// company-name comparer).
     ///
     /// <paramref name="realCompanyName"/> is the canonical name the caller then feeds to
     /// <c>CompanyTokens.Get(name)</c>, so it must be the name that company has IN THE TOKEN
     /// TABLE. For the session's own company that is <see cref="string.Empty"/>: <c>CompanyTokens.companyNames</c>
-    /// starts as <c>{ string.Empty }</c>, i.e. token 0 is the runner's single company, and
-    /// that is the token the record store partitions by
+    /// starts as <c>{ string.Empty }</c>, i.e. token 0 is the runner's session company, and
+    /// that is the token the session-company store is partitioned by
     /// (<c>RecordImplementation.GetActiveCompany()</c> returns <c>""</c> to match).
     /// "My Company" is the session's DISPLAY name, which is what AL's <c>CompanyName()</c>
     /// returns; the two are different names for the same company. Returning the token-table
@@ -60,47 +56,12 @@ public static class CompanyAccessPatches
         if (string.Equals(companyName, SessionCompanyName(session),
                 System.StringComparison.OrdinalIgnoreCase))
             return true;
-        if (_renameCascadeDepth <= 0) return false;
 
         var all = AllCompanyNames(session);
         if (all == null || !all.TryGetValue(companyName, out var rowName)) return false;
         realCompanyName = rowName;
+        RecordPatches.NoteNonSessionCompanyGranted();
         return true;
-    }
-
-    [ThreadStatic] private static int _renameCascadeDepth;
-
-    /// <summary>
-    /// Stands in for <c>NCLMetaTable.CreateObjectInstance(parent, isTemporary, sharedTable,
-    /// companyName, securityFiltering)</c> at its one call in the per-company rename update
-    /// (<c>NavRecord.UpdateReferencingTableOnRenameAsync</c>, #5071), and runs it with company-row
-    /// access switched on for the length of that call. The constructor is where BC validates the
-    /// company (<c>RecordImplementation.Initialize</c> → <c>GetCompanyNameToken</c>), and nothing
-    /// after it asks again, so the scope is exactly the construction.
-    ///
-    /// Observably equivalent: BC runs the update once per company in the Company table, for a user
-    /// that may open all of them; here every company reads the one shared partition, so the first
-    /// pass re-keys the rows and the later passes find none to change. Trap: the day the record store
-    /// is partitioned per company, this scope must go and the validator answer for every company.
-    /// </summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static Microsoft.Dynamics.Nav.Runtime.NavRecord CreateRenameCascadeRecord(
-        Microsoft.Dynamics.Nav.Runtime.NCLMetaTable table,
-        Microsoft.Dynamics.Nav.Runtime.ITreeObject parent,
-        bool isTemporary,
-        Microsoft.Dynamics.Nav.Runtime.NavRecord sharedTable,
-        string companyName,
-        Microsoft.Dynamics.Nav.Runtime.SecurityFiltering securityFiltering)
-    {
-        _renameCascadeDepth++;
-        try
-        {
-            return table.CreateObjectInstance(parent, isTemporary, sharedTable, companyName, securityFiltering);
-        }
-        finally
-        {
-            _renameCascadeDepth--;
-        }
     }
 
     private static MethodInfo? _mGetAllCompanies;

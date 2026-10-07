@@ -2061,6 +2061,66 @@ public static partial class NclCecilRewrite
         }
     }
 
+    // === RecordImplementation.ValidateRelation, over the record's own company — #5349 ===
+    // TableRelation validation asks DataAccessSource.GetDataAccessForTable for the related table
+    // itself, not through the record's dataAccess field, so the per-company routing of that read
+    // (RecordPatches.CompanyStores.cs) never sees it: a record on another company validated its
+    // relation against the SESSION company's rows. The one call becomes
+    // `ldarg.0; ldfld companyToken; call RecordPatches.GetDataAccessForTableInCompany; castclass`,
+    // the token being the one BC itself puts in the Exists/Find request two statements later.
+    // The original instruction object becomes the `ldarg.0`, so a branch to it stays valid.
+    // Adds one MemberRef to Ncl; it renames, removes or re-signs nothing precompiled callers bind to.
+    private static void RewriteNcl_ValidateRelationCompanyStore(AssemblyDefinition asm)
+    {
+        var recImpl = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.RecordImplementation")
+            ?? throw new InvalidOperationException(
+                "[Cecil] RecordImplementation type not found — Ncl shape changed; do not commit");
+        var machines = recImpl.NestedTypes.Where(t => t.Name.StartsWith("<ValidateRelation>d__")).ToList();
+        if (machines.Count != 1)
+            throw new InvalidOperationException(
+                $"[Cecil] found {machines.Count} RecordImplementation.ValidateRelation state machines, expected "
+                + "exactly 1 — Ncl shape changed; a record on another company would validate a TableRelation "
+                + "against the session company's rows. Do not commit");
+        var machine = machines[0];
+        var tokenField = machine.Fields.FirstOrDefault(f => f.Name == "companyToken"
+                && f.FieldType.FullName == "System.Int32")
+            ?? throw new InvalidOperationException(
+                "[Cecil] RecordImplementation.ValidateRelation has no Int32 companyToken field — Ncl shape changed; do not commit");
+        var moveNext = machine.Methods.FirstOrDefault(m => m.Name == "MoveNext" && m.HasBody)
+            ?? throw new InvalidOperationException(
+                "[Cecil] RecordImplementation.ValidateRelation state machine has no MoveNext — Ncl shape changed; do not commit");
+        var calls = moveNext.Body.Instructions
+            .Where(i => i.Operand is MethodReference r && r.Name == "GetDataAccessForTable"
+                        && r.Parameters.Count == 2
+                        && r.DeclaringType.FullName == "Microsoft.Dynamics.Nav.Runtime.DataAccessSource")
+            .ToList();
+        if (calls.Count != 1)
+            throw new InvalidOperationException(
+                $"[Cecil] ValidateRelation reads DataAccessSource.GetDataAccessForTable {calls.Count} time(s), "
+                + "expected exactly 1 — Ncl shape changed; do not commit");
+
+        var helper = typeof(AlRunner.Patches.RecordPatches).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .SingleOrDefault(m => m.Name == nameof(AlRunner.Patches.RecordPatches.GetDataAccessForTableInCompany)
+                                  && m.GetParameters().Length == 4)
+            ?? throw new InvalidOperationException("RecordPatches.GetDataAccessForTableInCompany(4 args) not found");
+        var helperRef = asm.MainModule.ImportReference(helper);
+
+        var call = calls[0];
+        var original = (MethodReference)call.Operand;
+        var il = moveNext.Body.GetILProcessor();
+        call.OpCode = OpCodes.Ldarg_0;
+        call.Operand = null;
+        var load = il.Create(OpCodes.Ldfld, tokenField);
+        var helperCall = il.Create(OpCodes.Call, helperRef);
+        var cast = il.Create(OpCodes.Castclass, original.ReturnType);
+        il.InsertAfter(call, load);
+        il.InsertAfter(load, helperCall);
+        il.InsertAfter(helperCall, cast);
+        moveNext.Body.MaxStackSize += 1;
+        Console.Error.WriteLine(
+            "[Cecil] Routed RecordImplementation.ValidateRelation's related-table read through RecordPatches.GetDataAccessForTableInCompany");
+    }
+
     // === Every read of RecordImplementation.dataAccess — #4781 ===
     // A record that outlives a test-codeunit boundary (a SingleInstance codeunit's Record
     // global, held directly or through an interface, a variant or a collection) still holds the
