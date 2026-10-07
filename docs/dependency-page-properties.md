@@ -284,8 +284,10 @@ disagreeing refuse. Corpus codeunits 67546 (source) and 67547 (report 5803's pre
 each reportextension through BC's own `NavReport.RegisterReportExtension` at construction, whose
 last step registers the request-page extension; its `OnExtensionRegistered` registers the source
 expressions (#4909, `NavReportSync.BindReportExtensions`). The earlier steps bind the extension's
-report triggers and data items (#4918); a precompiled reportextension that adds data items or
-columns gets only the request-page step, and running its report refuses (#4837).
+report triggers and data items (#4918). A precompiled reportextension's data items are merged
+from its symbol file and source ([report-metadata-from-bc.md](report-metadata-from-bc.md#precompiled-reportextension-deltas),
+#4837); one whose items cannot be derived gets only the request-page step, and running its report
+refuses.
 
 A precompiled report's request-page **actions** (#4895) are not read: no report in the platform
 apps declares one, and the symbol file's `RequestPage` node states no `Actions` for any of them,

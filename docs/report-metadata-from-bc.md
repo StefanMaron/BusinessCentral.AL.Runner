@@ -508,3 +508,42 @@ Both are dereferenced by BC without a null check, and `MetaPageDefinition` deser
   run's values; the runner does not yet store or restore those values at all (#4808).
 - `<Expressions/>` — `MetadataProvider.LoadExpressionRelationTables` iterates
   `masterPage.Expressions`.
+
+<a id="precompiled-reportextension-deltas"></a>
+
+## Data items a precompiled reportextension adds (#4837)
+
+A report's metadata is its own document plus, for each reportextension, a **delta document** that
+BC's `MetadataRuntimeDeltaApplicator` merges into the `MetaReport` (`NavReportSync.ApplyReportExtensionDeltas`).
+A source-compiled extension's delta is what BC's emitter writes. A precompiled one has none: an R2R
+`.app` ships no compiled metadata, so the runner **derives** the document from what the package does
+carry, and BC's applicator then applies it exactly as it applies an emitted one.
+
+| what the document states | where it comes from |
+|---|---|
+| each added data item: name, table, nesting depth (`DataItemIndent`), id, view, link, columns with id and type | the extension's entry in `SymbolReference.json` (`ReportExtensions[].DataItems`) |
+| which data item it is anchored to, and with which keyword | the extension's own AL source, parsed with BC's syntax tree (`ReportExtensionDataSetAddDataItemSyntax`): the symbol file states the **parent**, never the anchor or the keyword |
+| each column's source expression | the same source, as for a report's own columns |
+
+An added data item nested under another added one is anchored `AddLast` on its parent. In a block
+that declares several data items, the first takes the block's keyword and anchor and each further one
+is `AddAfter` the one before. Both rules, the `FieldNo` of `-1` that BC writes for a computed column,
+and the element order are measured on BC's emitter and pinned in
+`PrecompiledReportExtensionDeltaTests`, which compares the derived document to a captured emitted
+one field by field.
+
+**Left out of the derived document, because nothing here reads it:** the request page's filter
+controls for the added data items (`ControlAdd`, from the symbol file's `FilterControlId`), the
+labels, and the report triggers. The base report's own derived document leaves the first two out for
+the same reason. A report trigger the extension declares is bound by `RegisterReportExtension`, not by
+metadata; the applicator has no adapter for triggers.
+
+**What stays unmerged, and what that costs.** The extension is then bound for its request page only,
+and running its report refuses by name (`ThrowIfExtensionReportBehaviourIsUnbound`): a package with
+no AL source, a column added to an existing data item, a data item whose table does not resolve, an
+anchor the report's symbol does not name, and a document BC's parser or applicator rejects. The last
+one leaves the report's metadata intact rather than failing the whole report, because opening its
+request page needs it. Tracked in #5417.
+
+**Not measured:** the order in which several extensions of one report are applied. Documents are
+applied precompiled first, each in id order, then source-compiled ones (#5143).

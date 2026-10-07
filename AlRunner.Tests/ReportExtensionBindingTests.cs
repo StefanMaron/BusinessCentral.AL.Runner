@@ -133,6 +133,24 @@ public class ReportExtensionBindingTests
     public void OnlyAnAddedColumnOrDataItem_AddsToTheDataset(Type extensionType, bool expected)
         => Assert.Equal(expected, NavReportSync.AddsToDataset(extensionType));
 
+    // The refusal itself (#5151): what BindReportExtensions records for an extension it could not
+    // bind whole is what the guard prepended to ReportResultSetProcessorFactory.CreateInstance
+    // refuses on. This pins the guard's own behaviour; that the rewrite calls it from CreateInstance
+    // is not covered here.
+    [Fact]
+    public void AReportWithAnUnboundExtension_RefusesTheRun_AndAnotherReportDoesNot()
+    {
+        var unbound = new object();
+        var other = new object();
+        NavReportSync.RecordUnboundReportBehaviour(unbound, reportId: 88490931, extensionId: 88490932);
+
+        var ex = Assert.Throws<RunnerOutOfScopeException>(() => NavReportSync.GuardUnboundReportExtensionsBeforeRun(unbound));
+        Assert.Contains("Report 88490931 run with reportextension(s) 88490932", ex.Message, StringComparison.Ordinal);
+
+        NavReportSync.GuardUnboundReportExtensionsBeforeRun(other);
+        NavReportSync.GuardUnboundReportExtensionsBeforeRun(null);
+    }
+
     // The shape BC's compiler emits: a report document, and a reportextension's own document
     // (captured from corpus report 68001 / reportextension 68001, request page left out).
     private const string ReportXml = """

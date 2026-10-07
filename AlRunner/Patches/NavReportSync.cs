@@ -2055,6 +2055,15 @@ public static partial class NavReportSync
             .Where(m => m.GetBaseDefinition().DeclaringType == typeof(Microsoft.Dynamics.Nav.Runtime.Extensions.NavReportExtension))
             .Select(m => m.Name);
 
+    /// <summary>Notes that <paramref name="extensionId"/> could not be bound whole to <paramref name="navReport"/>,
+    /// so running that report refuses (<see cref="ThrowIfExtensionReportBehaviourIsUnbound"/>).</summary>
+    internal static void RecordUnboundReportBehaviour(object navReport, int reportId, int extensionId)
+    {
+        var unbound = _extensionsWithUnboundReportBehaviour.GetOrCreateValue(navReport);
+        unbound.ReportId = reportId;
+        unbound.ExtensionIds.Add(extensionId);
+    }
+
     /// <summary>Prepended to BC's <c>ReportResultSetProcessorFactory.CreateInstance</c> by
     /// NclCecilRewrite, so the SaveAs/Execute/Print chain refuses where Report.Run does.</summary>
     public static void GuardUnboundReportExtensionsBeforeRun(object? navReport)
@@ -2074,8 +2083,8 @@ public static partial class NavReportSync
         throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             $"Report {unbound.ReportId} run with reportextension(s) {string.Join(", ", unbound.ExtensionIds)}",
             "not-yet-implemented — these reportextensions could not be bound to the report whole: a precompiled one's added "
-            + "data items or columns could not be merged into the report's metadata (what is derived, and what is not: "
-            + "docs/report-metadata-from-bc.md#precompiled-reportextension-deltas), so running it would skip them");
+            + "data items or columns could not be merged into the report's metadata, so running it would skip them "
+            + "(what is derived and what is not: docs/report-metadata-from-bc.md#precompiled-reportextension-deltas, #5417)");
     }
 
     // MetaReport -> the reportextensions whose runtime deltas were merged into it (#4918).
@@ -2299,12 +2308,7 @@ public static partial class NavReportSync
             }
             else
             {
-                if (DeclaresReportBehaviour(type))
-                {
-                    var unbound = _extensionsWithUnboundReportBehaviour.GetOrCreateValue(navReport);
-                    unbound.ReportId = reportId;
-                    unbound.ExtensionIds.Add(extensionId);
-                }
+                if (DeclaresReportBehaviour(type)) RecordUnboundReportBehaviour(navReport, reportId, extensionId);
                 if (requestPageExtension == null) continue; // the extension declares no requestpage block
                 Invoke(register, requestPage, new[] { requestPageExtension });
             }
