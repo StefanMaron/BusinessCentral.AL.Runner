@@ -154,7 +154,7 @@ public static partial class BcRuntime
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void NavRecordRef_ALOpen_IntBoolCompany(object self, int tableNo, bool isTemporary, string companyName)
-        => OpenRecordRefById(self, tableNo, isTemporary);
+        => OpenRecordRefById(self, tableNo, isTemporary, companyName);
 
     // ── #2783: the compilation-target gate on RecordRef.Open ────────────────────
     //
@@ -204,7 +204,7 @@ public static partial class BcRuntime
     public static void NavRecordRef_ALOpen_TargetIntBoolCompany(object self, CompilationTarget compilationTarget, int tableNo, bool isTemporary, string companyName)
     {
         CheckIsOpenAllowed(self, compilationTarget, tableNo);
-        OpenRecordRefById(self, tableNo, isTemporary);
+        OpenRecordRefById(self, tableNo, isTemporary, companyName);
     }
 
     private static MethodInfo? _mCheckIsOpenAllowed;
@@ -270,7 +270,9 @@ public static partial class BcRuntime
                 + "object it could not compile (see Action needed and the EMIT-EXCLUDED / TDD-EXCLUDED lines), so the "
                 + "runner cannot tell a table that does not exist from one declared by something it could not load.");
 
-    private static void OpenRecordRefById(object self, int tableNo, bool isTemporary)
+    // companyName is BC's own third argument of RecordRef.Open (#5349): it used to be dropped here, so
+    // every RecordRef.Open(table, temp, '<company>') opened on the session company's rows.
+    private static void OpenRecordRefById(object self, int tableNo, bool isTemporary, string? companyName = null)
     {
         var metaTable = RecordPatches.EnsureTableInMetadataCache(tableNo)
             ?? throw MissingTable(tableNo);
@@ -278,7 +280,7 @@ public static partial class BcRuntime
         var target = NavRecordRef_get_Target(self);
         var record = RecordPatches.NewRecordInstance(
             recordType, target, metaTable, tableNo, isTemporary, SecurityFiltering.Ignored,
-            RecordPatches.StubNavRecordType);
+            RecordPatches.StubNavRecordType, companyName);
         // Register tableextensions so the record's extension triggers (incl. the field
         // OnBefore/OnAfterValidate handlers fired through FieldRef.Validate) dispatch to a
         // real extension instance instead of falling back to a cast of the base record.
