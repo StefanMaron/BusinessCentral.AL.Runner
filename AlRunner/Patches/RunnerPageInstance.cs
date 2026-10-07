@@ -2001,8 +2001,9 @@ internal sealed partial class RunnerPageInstance
         if (!string.IsNullOrEmpty(captions)) return captions.Split(',');
 
         // Option's OptionCaptionML is empty for an Enum-typed control by construction (see
-        // the doc comment above) — fall back to the enum's own metadata.
-        return TestPageOptionValue.EnumCaptions(boundOption);
+        // the doc comment above) — fall back to the enum's own metadata, then to the source
+        // FIELD's OptionCaption, which BC gives a control that declares none (corpus 69932).
+        return TestPageOptionValue.BoundOptionCaptions(boundOption);
     }
 
     /// <summary>
@@ -2140,6 +2141,20 @@ internal sealed partial class RunnerPageInstance
         if (expression == null) return null;
         var text = GetValue(expression)?.ClientObject?.ToString();
         return string.IsNullOrEmpty(text) ? null : text;
+    }
+
+    /// <summary>
+    /// The control's BlankZero / BlankNumbers, from its control definition, or null when the page
+    /// has none to read (a precompiled page's synthesized metadata carries no control tree, so
+    /// such a control keeps reading unblanked — docs/limitations.md#testpage-field-text).
+    /// </summary>
+    internal TestPageBlanking.Spec? TryGetControlBlanking(int controlId)
+    {
+        if (_form is not NavForm form) return null;
+        if (!form.MetadataHelper.TryGetControlDefinitionById(controlId, out var definition) || definition == null)
+            return null;
+        var spec = new TestPageBlanking.Spec(definition.BlankNumbers, definition.BlankZero);
+        return spec.IsNone ? null : spec;
     }
 
     internal static NavValue? GetValue(object expression)

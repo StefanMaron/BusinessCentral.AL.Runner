@@ -79,7 +79,10 @@ internal sealed class LiveNavTestField : ITestField
         // ordinal made every comparison against a member name fail while looking like a data
         // problem ("expected <Mid>, got <0>") rather than a missing option table.
         get => ShowsNoRow ? string.Empty
-               : (CurrentOption() is { } option
+               // #5411: BlankZero / BlankNumbers blank the control, whatever its type.
+               : TestPageBlanking.Format(_record.GetFieldValue(_fieldNo) as NavValue,
+                                         _page?.TryGetControlBlanking(_controlId))
+               ?? (CurrentOption() is { } option
                    ? TestPageOptionValue.Display(option, OptionCaptions())
                    : null)
                // #3406: the control's OWN decimal format, computed by BC's GetDecimalString
@@ -91,6 +94,9 @@ internal sealed class LiveNavTestField : ITestField
                ?? TestPageBooleanValue.Format(_record.GetFieldValue(_fieldNo) as NavValue)
                // #2361: a blank Date/Time/DateTime is '', not the rendered CLR minimum.
                ?? TestPageBlankTemporalValue.Format(_record.GetFieldValue(_fieldNo) as NavValue)
+               // #5369: the control's own spelling of a Date/Time/DateTime, Guid and Duration.
+               ?? TestPageTemporalText.Format(_record.GetFieldValue(_fieldNo) as NavValue)
+               ?? TestPageGuidDurationText.Format(_record.GetFieldValue(_fieldNo) as NavValue)
                ?? Convert.ToString(ObjectValue, CultureInfo.InvariantCulture)
                ?? string.Empty;
         // appendRefreshSuffix: true — a Rec-bound control stages a row edit, and real BC's
@@ -168,7 +174,9 @@ internal sealed class LiveNavTestField : ITestField
                     ? formula!
                     : TestPageTemporalValue.TryResolve(FieldType, value, out var temporal)
                         ? temporal!
-                        : ALCompiler.ToNavValue(value);
+                        : TestPageNumericValue.TryResolveBlank(FieldType, value, out var blank)
+                            ? blank!
+                            : ALCompiler.ToNavValue(value);
 
         // MinValue/MaxValue (#2495): measured against real BC (28.1/28.4), a bounded field's
         // MinValue/MaxValue is enforced on a TestPage control WRITE, but NOT on Rec.Validate
@@ -381,13 +389,20 @@ internal sealed class LiveNavTestField : ITestField
     // Convert.ToString made AssertEquals compare the ordinal '2' against the control's
     // 'Pending Approval' and report a mismatch for the value the record actually held.
     public string ValueToString(object? value)
-        => TestPageOptionValue.DisplayOrdinal(CurrentOption(), value, OptionCaptions())
+        => TestPageBlanking.FormatObject(value, _page?.TryGetControlBlanking(_controlId))
+           ?? TestPageOptionValue.DisplayOrdinal(CurrentOption(), value, OptionCaptions())
            // #2795: BC's ALAssertEquals converts the EXPECTED value through here and compares it
            // ordinally against the control's Value, so this has to answer with the same word the
            // getter above does or AssertEquals(<Boolean>) can never match.
            ?? TestPageBooleanValue.FormatObject(value)
            // #2361: same reason, for a blank temporal — AssertEquals('') is its own corpus test.
            ?? TestPageBlankTemporalValue.FormatObject(value)
+           // #5411: BC's own TestFieldProxy.ValueToString formats a non-string value through the
+           // control's formatter, i.e. the same text the Value getter answers with.
+           ?? TestPageNumericValue.FormatObject(value, _page?.TryGetControlFormat(_controlId))
+           // #5369: the same temporal, Guid and Duration spelling the getter answers with.
+           ?? TestPageTemporalText.FormatObject(value, FieldType)
+           ?? TestPageGuidDurationText.FormatObject(value)
            ?? Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
 
     // AL that walks an option set (building a picker, asserting the members a field offers) got
@@ -463,7 +478,8 @@ internal sealed class PageVariableTestField : ITestField
         // this for a Rec-bound control; this class never got it, so `Format(Field.Value())` on
         // a page-variable enum control returned "1" instead of "OR" while the write direction
         // (SetValue, below) already resolved captions correctly.
-        get => (CurrentOption() is { } option
+        get => TestPageBlanking.Format(RunnerPageInstance.GetValue(_expression), _page.TryGetControlBlanking(_controlId))
+               ?? (CurrentOption() is { } option
                    ? TestPageOptionValue.Display(option, _page.TryGetOptionCaptions(_controlId, option))
                    : null)
                // #3406: the page-global half of the decimal-format rule — see the Rec-bound
@@ -476,6 +492,8 @@ internal sealed class PageVariableTestField : ITestField
                // #2361: the page-global half of the blank-temporal rule — see the Rec-bound
                // sibling. Base Application page 9807 binds WebServiceExpiryDate this way.
                ?? TestPageBlankTemporalValue.Format(RunnerPageInstance.GetValue(_expression))
+               ?? TestPageTemporalText.Format(RunnerPageInstance.GetValue(_expression))
+               ?? TestPageGuidDurationText.Format(RunnerPageInstance.GetValue(_expression))
                ?? Convert.ToString(ObjectValue, CultureInfo.InvariantCulture)
                ?? string.Empty;
         // appendRefreshSuffix: false — a page-global control stages no row edit, so there is
@@ -684,12 +702,17 @@ internal sealed class PageVariableTestField : ITestField
     // Value getters already render captions, so either one left alone would keep disagreeing
     // with its own read side.
     public string ValueToString(object? value)
-        => TestPageOptionValue.DisplayOrdinal(CurrentOption(), value,
+        => TestPageBlanking.FormatObject(value, _page.TryGetControlBlanking(_controlId))
+           ?? TestPageOptionValue.DisplayOrdinal(CurrentOption(), value,
                CurrentOption() is { } option ? _page.TryGetOptionCaptions(_controlId, option) : null)
            // #2795: the page-global half of the same rule — see the Rec-bound sibling above.
            ?? TestPageBooleanValue.FormatObject(value)
            // #2361: the page-global half of the blank-temporal rule.
            ?? TestPageBlankTemporalValue.FormatObject(value)
+           // #5411: the page-global half of the decimal rule — see the Rec-bound sibling above.
+           ?? TestPageNumericValue.FormatObject(value, _page.TryGetControlFormat(_controlId))
+           ?? TestPageTemporalText.FormatObject(value, FieldType)
+           ?? TestPageGuidDurationText.FormatObject(value)
            ?? Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
     public string GetOption(int index)
         => CurrentOption() is { } option
