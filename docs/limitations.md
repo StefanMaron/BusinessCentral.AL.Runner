@@ -920,7 +920,7 @@ revision of corpus PR 558, every cloud leg 27.0 to 28.5):
 | Date, Time, DateTime | the en-US short forms (`d`, `T`, `g`): `3/2/2024`, `12:34:56 PM`, `3/2/2024 12:34 PM` with no seconds; blank is `''` | `TestPageTemporalText` |
 | Guid | braced; the null Guid is not blank | `NavFormatEvaluateHelper.Format`, BC's own |
 | Duration | `Format()`'s words (`1 hour 2 minutes 3 seconds`); zero is `''` | `NavFormatEvaluateHelper.Format`, BC's own |
-| Media, MediaSet | the media id, lowercase; `''` with no media | `TestPageMediaText` |
+| Media, MediaSet | a Media shows its id, a MediaSet the id of its first media (not the set's id), lowercase; `''` with no media | `TestPageMediaText` |
 
 `SetValue(<typed value>)` is spelled the same way and read back by the client's own parser, which is
 why a typed DateTime loses its seconds and a blank text written to a numeric control is zero; the
@@ -935,7 +935,7 @@ What is not covered:
   U+0020 before), on the service tier and in the runner alike. The corpus test normalizes it.
 - **`MockITestField`**, the degraded handle for a page with no live instance, stores text and
   declares `FieldType = Text`, so `ALAssertEquals` never hands it a typed value.
-- **DateFormula, RecordId and BLOB controls** were not probed.
+- **A MediaSet of several media** was not probed (one medium was); DateFormula, RecordId and BLOB controls were not either.
 
 ## Behavioural differences — same API, different semantics
 

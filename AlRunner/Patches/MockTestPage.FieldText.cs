@@ -128,15 +128,22 @@ internal static class TestPageGuidDurationText
 }
 
 /// <summary>
-/// A Media or MediaSet control shows the media's id as lowercase hyphenated text, and nothing
-/// when no media is set (corpus codeunits 69932 and 69934). Without this arm the getter answered
-/// the CLR type name of the value's payload.
+/// A Media control shows the media's id, and a MediaSet control shows the id of the FIRST media in
+/// the set (not the set's own id), both lowercase and hyphenated; either shows nothing when no
+/// media is set (corpus codeunits 69932 and 69934, every cloud leg and the Windows nightly). A set
+/// of several media was not probed. Without this arm the getter answered the CLR type name of the
+/// value's payload.
 /// </summary>
 internal static class TestPageMediaText
 {
     internal static string? Format(NavValue? navValue)
-        => navValue is NavMediaValueBase media
-            ? media.ALMediaId == Guid.Empty ? string.Empty : media.ALMediaId.ToString("D", CultureInfo.InvariantCulture)
-            : null;
-}
+        => navValue switch
+        {
+            NavMediaSet set => set.ALCount == 0 ? string.Empty : Id(set.ALItem(1)),
+            NavMediaValueBase media => Id(media.ALMediaId),
+            _ => null,
+        };
 
+    private static string Id(Guid id)
+        => id == Guid.Empty ? string.Empty : id.ToString("D", CultureInfo.InvariantCulture);
+}
