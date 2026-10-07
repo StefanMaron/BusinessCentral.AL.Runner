@@ -121,6 +121,45 @@ public sealed class RunnerFingerprintFileIdentityMemoTests : IDisposable
         Assert.Equal(1, computed);
     }
 
+    // ── #5409: a rewrite the stat half cannot see ────────────────────────────
+
+    [Fact]
+    public void InPlaceRewriteWithTheSameSizeAndTheMtimeRestored_IsHashedAgain()
+    {
+        if (!OperatingSystem.IsLinux()) return; // the stat-only fallback keeps its documented limit
+        var mtime = new DateTime(2026, 1, 1, 0, 0, 9, DateTimeKind.Utc);
+        var p = Write("rewritten.app", new byte[] { 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4 });
+        File.SetLastWriteTimeUtc(p, mtime);
+        var first = RunnerFingerprint.ComputeFileContentHashMemoized(p);
+
+        Thread.Sleep(30); // beyond one kernel timestamp tick
+        File.WriteAllBytes(p, new byte[] { 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5 }); // same inode, same length
+        File.SetLastWriteTimeUtc(p, mtime);
+        var second = RunnerFingerprint.ComputeFileContentHashMemoized(p);
+
+        Assert.NotEqual(first, second);
+        // And the unchanged file after that is a memo hit again.
+        var before = RunnerFingerprint.ContentHashComputationCountForTests;
+        Assert.Equal(second, RunnerFingerprint.ComputeFileContentHashMemoized(p));
+        Assert.Equal(before, RunnerFingerprint.ContentHashComputationCountForTests);
+    }
+
+    [Fact]
+    public void AFilesystemThatDeclinesCtime_IsNeverMemoized_AndAPlatformThatDoesNotAnswerStillIs()
+    {
+        var p = Write("declined.app", new byte[] { 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3 });
+        var before = RunnerFingerprint.ContentHashComputationCountForTests;
+        var a = RunnerFingerprint.ComputeFileContentHashMemoized(p, _ => (null, true));
+        var b = RunnerFingerprint.ComputeFileContentHashMemoized(p, _ => (null, true));
+        Assert.Equal(a, b);
+        Assert.Equal(2, RunnerFingerprint.ContentHashComputationCountForTests - before);
+
+        before = RunnerFingerprint.ContentHashComputationCountForTests;
+        RunnerFingerprint.ComputeFileContentHashMemoized(p, _ => (null, false));
+        RunnerFingerprint.ComputeFileContentHashMemoized(p, _ => (null, false));
+        Assert.Equal(1, RunnerFingerprint.ContentHashComputationCountForTests - before);
+    }
+
     // ── dedup no further: distinct files must stay distinct ─────────────────
 
     [Fact]

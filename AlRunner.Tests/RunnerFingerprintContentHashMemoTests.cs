@@ -67,10 +67,15 @@ public sealed class RunnerFingerprintContentHashMemoTests
         finally { RunnerFingerprint.ClearFileContentHashMemoForTests(); }
     }
 
+    // No statx answer, no decline: what Windows and macOS always get.
+    private static readonly Func<string, (string?, bool)> StatOnly = _ => (null, false);
+
     /// <summary>
-    /// The limit, stated rather than left to be discovered: a rewrite that lands on the SAME
-    /// length and the SAME mtime is invisible to the memo, which keeps answering the bytes it
-    /// first saw. That is what makes this a memo and not a content check — and it is precisely
+    /// The limit of the STAT-ONLY fallback (a platform without statx: Windows, macOS), stated rather
+    /// than left to be discovered: a rewrite that lands on the SAME length and the SAME mtime is
+    /// invisible to it, and the memo keeps answering the bytes it first saw. Where statx answers,
+    /// ctime closes this (#5409, RunnerFingerprintFileIdentityMemoTests), so the fallback is forced
+    /// here through the probe seam. That is what makes this a memo and not a content check — and it is precisely
     /// why the PERSISTED keys built from this value, which outlive the process, are the ones
     /// that have to be right (#2987, #2955).
     ///
@@ -79,7 +84,7 @@ public sealed class RunnerFingerprintContentHashMemoTests
     /// real and not accidentally removed.</para>
     /// </summary>
     [Fact]
-    public void RewrittenInPlaceOntoTheSameLengthAndMtime_KeepsTheMemoizedAnswer()
+    public void OnTheStatOnlyFallback_RewrittenInPlaceOntoTheSameLengthAndMtime_KeepsTheMemoizedAnswer()
     {
         RunnerFingerprint.ClearFileContentHashMemoForTests();
         try
@@ -87,7 +92,7 @@ public sealed class RunnerFingerprintContentHashMemoTests
             var stamp = new DateTime(2022, 5, 6, 7, 8, 9, DateTimeKind.Utc);
             var path = NewFile("pkg.bin", "aaaaaaaaaaaa"u8.ToArray(), stamp);
 
-            var memoized = RunnerFingerprint.ComputeFileContentHashMemoized(path);
+            var memoized = RunnerFingerprint.ComputeFileContentHashMemoized(path, StatOnly);
 
             var replacement = "bbbbbbbbbbbb"u8.ToArray();
             Assert.Equal(new FileInfo(path).Length, replacement.Length); // the collision, asserted
@@ -96,7 +101,7 @@ public sealed class RunnerFingerprintContentHashMemoTests
             Assert.Equal(stamp, File.GetLastWriteTimeUtc(path));
 
             // The memo answers the old bytes...
-            Assert.Equal(memoized, RunnerFingerprint.ComputeFileContentHashMemoized(path));
+            Assert.Equal(memoized, RunnerFingerprint.ComputeFileContentHashMemoized(path, StatOnly));
             // ...and the unmemoized computation shows they really did change, so this is the
             // memo's blind spot rather than two identical files.
             Assert.NotEqual(memoized, RunnerFingerprint.ComputeContentHash(path));
@@ -104,7 +109,7 @@ public sealed class RunnerFingerprintContentHashMemoTests
             // Clearing it — what a fresh process does implicitly — recovers the new answer.
             RunnerFingerprint.ClearFileContentHashMemoForTests();
             Assert.Equal(RunnerFingerprint.ComputeContentHash(path),
-                         RunnerFingerprint.ComputeFileContentHashMemoized(path));
+                         RunnerFingerprint.ComputeFileContentHashMemoized(path, StatOnly));
         }
         finally { RunnerFingerprint.ClearFileContentHashMemoForTests(); }
     }

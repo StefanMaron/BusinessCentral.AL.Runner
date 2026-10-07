@@ -70,7 +70,8 @@ public sealed class FileIdentityTests : IDisposable
         Assert.NotNull(expected); // coreutils stat is the oracle; without it this proves nothing
         var f = expected!.Split(' ');
         Assert.Equal(4, f.Length);
-        Assert.Equal($"ino|{f[0]}:{f[1]}:{f[2]}|{f[3]}", key![..key.LastIndexOf('|')]);
+        // The first three components: device, inode, size (mtime and ctime follow).
+        Assert.Equal($"ino|{f[0]}:{f[1]}:{f[2]}|{f[3]}", string.Join('|', key!.Split('|')[..3]));
     }
 
     [Fact]
@@ -143,6 +144,60 @@ public sealed class FileIdentityTests : IDisposable
         File.WriteAllBytes(p, new byte[] { 1, 2, 3, 4, 5 }); // same inode, new size
         var after = FileIdentity.TryGetStableKey(p);
         Assert.NotEqual(before, after);
+    }
+
+    // #5409: mtime is writable from user space; ctime is not. Each fact keeps its own bytes and
+    // length so no fact can meet another's file through a reused inode.
+    [Fact]
+    public void Key_ChangesOnAnInPlaceRewrite_EvenWithTheSameSizeAndTheMtimeRestored()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var mtime = new DateTime(2026, 1, 1, 0, 0, 7, DateTimeKind.Utc);
+        var p = Write("inplace.bin", new byte[] { 1, 2, 3, 4, 5, 6, 7 });
+        File.SetLastWriteTimeUtc(p, mtime);
+        var before = FileIdentity.TryGetStableKey(p);
+        Assert.NotNull(before);
+
+        Thread.Sleep(30); // beyond one kernel timestamp tick
+        File.WriteAllBytes(p, new byte[] { 7, 6, 5, 4, 3, 2, 1 }); // same inode, same length
+        File.SetLastWriteTimeUtc(p, mtime);
+        var after = FileIdentity.TryGetStableKey(p);
+        Assert.NotNull(after);
+
+        // The key as it was before ctime joined it: device, inode, size and mtime all agree ...
+        Assert.Equal(string.Join('|', before!.Split('|')[..4]), string.Join('|', after!.Split('|')[..4]));
+        // ... and ctime is what tells the two files apart.
+        Assert.NotEqual(before, after);
+    }
+
+    [Fact]
+    public void Key_IsUnchangedByAReadAndMovedByAMetadataChange()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var p = Write("readonly.bin", new byte[] { 9, 9, 9, 9, 9, 9, 9, 9, 9 });
+        var before = FileIdentity.TryGetStableKey(p);
+        Thread.Sleep(30);
+        _ = File.ReadAllBytes(p); // what hashing does
+        Assert.Equal(before, FileIdentity.TryGetStableKey(p));
+
+        // A chmod changes no byte and does move ctime, so it costs one re-hash and never a wrong answer.
+        Thread.Sleep(30);
+        File.SetUnixFileMode(p, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
+        Assert.NotEqual(before, FileIdentity.TryGetStableKey(p));
+    }
+
+    [Fact]
+    public void KeyFromStatx_AnAnswerWithoutCtime_IsDeclinedNotKeyedWeaker()
+    {
+        const uint ino = 0x100, size = 0x200, mtime = 0x40, ctime = 0x80;
+        var full = FileIdentity.KeyFromStatx(ino | size | mtime | ctime, 1, 2, 3, 4, 5, 6, 7, 8);
+        Assert.False(full.Declined);
+        Assert.Equal("ino|1:2:3|4|5.6|7.8", full.Key);
+
+        // statx answered, but not ctime: no key, and the caller must not fall back to a weaker one.
+        Assert.Equal((null, true), FileIdentity.KeyFromStatx(ino | size | mtime, 1, 2, 3, 4, 5, 6, 7, 8));
+        // Not answering the identity at all keeps the documented path fallback.
+        Assert.Equal((null, false), FileIdentity.KeyFromStatx(size | mtime | ctime, 1, 2, 3, 4, 5, 6, 7, 8));
     }
 
     [Fact]

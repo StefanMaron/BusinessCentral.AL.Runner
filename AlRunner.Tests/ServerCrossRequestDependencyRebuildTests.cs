@@ -56,6 +56,22 @@ public sealed class ServerCrossRequestDependencyRebuildTests : IClassFixture<Sha
         File.SetLastWriteTimeUtc(path, before.AddSeconds(5));
     }
 
+    /// <summary>The rebuild a user-space tool can make invisible to a stat: the same file (inode), the
+    /// same length, the mtime put back (`cp -p`, `rsync -t --inplace`, an archive-normalised extract).
+    /// Only ctime, which no tool can set, tells it from the build it replaced (#5409).</summary>
+    private static int RewriteLibraryInPlaceKeepingSizeAndMtime(string packages, int fact)
+    {
+        var path = Path.Combine(packages, $"repro_rebuild-lib-{fact}_1.0.0.0.app");
+        var mtime = File.GetLastWriteTimeUtc(path);
+        var length = new FileInfo(path).Length;
+        // Deflate makes the length depend on the digits, so look for an ordinal that keeps it.
+        var ordinal = Enumerable.Range(8, 90).First(o => BuildLibrary(fact, o).Length == length);
+        File.WriteAllBytes(path, BuildLibrary(fact, ordinal));
+        File.SetLastWriteTimeUtc(path, mtime);
+        Assert.Equal(length, new FileInfo(path).Length);
+        return ordinal;
+    }
+
     private static void WriteCheckout(string dir, int fact)
     {
         Directory.CreateDirectory(dir);
@@ -126,6 +142,38 @@ public sealed class ServerCrossRequestDependencyRebuildTests : IClassFixture<Sha
             var second = await Request(server, packages, y);
             // 7 is X's module reused for Y: its compile saw the library as it was before the rebuild.
             Assert.True(second.Ordinal == "9", $"Y answered ordinal {second.Ordinal}, not the rebuilt library's 9\n{second.StdErr}");
+            Assert.DoesNotContain(ReuseNote, second.StdErr, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    /// <summary>#5409: the rebuild a stat cannot see. Without ctime in the content-hash memo's key the
+    /// old hash is served for the new bytes, the fingerprint matches, and Y reuses X's module.</summary>
+    [SkippableFact]
+    public async Task LibraryRewrittenInPlaceWithTheSameSizeAndMtime_OtherCheckoutCompilesAgainstIt()
+    {
+        TestArtifacts.SkipIfMissing();
+        const int fact = 4;
+        var root = TestScratch.Dir("al-runner-server-rebuild-5409-inplace");
+        var packages = Path.Combine(root, "packages");
+        var x = Path.Combine(root, "x");
+        var y = Path.Combine(root, "y");
+        WriteCheckout(x, fact);
+        WriteCheckout(y, fact);
+        try
+        {
+            var server = await _fixture.GetAsync(new[] { "--no-cache" });
+            PublishLibrary(packages, fact, secondOrdinal: 7);
+            var first = await Request(server, packages, x);
+            Assert.True(first.Ordinal == "7", first.StdErr);
+
+            var rewritten = RewriteLibraryInPlaceKeepingSizeAndMtime(packages, fact);
+            var second = await Request(server, packages, y);
+            Assert.True(second.Ordinal == rewritten.ToString(),
+                $"Y answered ordinal {second.Ordinal}, not the rewritten library's {rewritten}\n{second.StdErr}");
             Assert.DoesNotContain(ReuseNote, second.StdErr, StringComparison.Ordinal);
         }
         finally

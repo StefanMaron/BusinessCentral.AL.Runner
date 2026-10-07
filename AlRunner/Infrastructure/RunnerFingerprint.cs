@@ -151,7 +151,7 @@ internal static class RunnerFingerprint
     // ComputeContentHash reads the WHOLE file; the call sites ask per virtual-table lookup,
     // per dependency and per cache key, so an unmemoized hash is a re-read each time.
     //
-    // The memo key identifies the FILE, not the path: (device, inode, size, last-write) where
+    // The memo key identifies the FILE, not the path: (device, inode, size, last-write, ctime) where
     // the platform can answer, falling back to (full path, length, last-write UTC).
     //
     // The stat half is #2987. "One entry per path, never invalidated" rested on "nothing in
@@ -162,10 +162,11 @@ internal static class RunnerFingerprint
     // package's entry — the wrong-answer shape content addressing exists to remove,
     // reintroduced one layer down. The stat is not trusted to identify CONTENT here (that is
     // the whole point of this method); it is only used to notice that the file has been
-    // written since, which is exactly what a stat can tell you. A rewrite that lands on the
-    // same length and mtime is one the memo will not notice — that is a memo, not a cache key,
-    // and it lives and dies with the process, which is why the persisted keys built FROM this
-    // value are the ones that have to be right.
+    // written since, which is exactly what a stat can tell you. Where statx answers, ctime (#5409)
+    // is in the key too, so a rewrite that restores mtime and keeps the length is noticed; on the
+    // stat-only fallback (no statx) such a rewrite is one the memo will not notice. That is a memo, not a
+    // cache key, and it lives and dies with the process, which is why the persisted keys built FROM
+    // this value are the ones that have to be right.
     //
     // The device/inode half is #3036. `provision-bc` hard-links `~/.al-runner/platform-apps`
     // into the default artifacts directory and Program.cs scans both, so the same inodes
@@ -186,13 +187,25 @@ internal static class RunnerFingerprint
     /// whatever their paths, lengths or timestamps say.
     /// </summary>
     internal static string ComputeFileContentHashMemoized(string path)
+        => ComputeFileContentHashMemoized(path, FileIdentity.Probe);
+
+    /// <summary>The probe is a seam for the one answer a test cannot make a filesystem give.</summary>
+    internal static string ComputeFileContentHashMemoized(string path, Func<string, (string? Key, bool Declined)> probe)
     {
         var fullPath = Path.GetFullPath(path);
         // The two key spaces are kept disjoint by the "ino|" / "path|" prefixes rather than by
         // an argument about what an absolute path can start with — a memo whose two keying
         // schemes could ever produce the same string is the wrong-answer shape this exists to
         // avoid, not a place to be clever.
-        var memoKey = FileIdentity.TryGetStableKey(fullPath) ?? StatKey(fullPath);
+        var (stableKey, declined) = probe(fullPath);
+        // #5409: the filesystem answered but could not give a key as strong as the one a memo hit
+        // trusts, so no memo: a re-read is slower, never stale.
+        if (declined)
+        {
+            System.Threading.Interlocked.Increment(ref _contentHashComputations);
+            return ComputeContentHash(fullPath);
+        }
+        var memoKey = stableKey ?? StatKey(fullPath);
         return _fileContentHashes.GetOrAdd(memoKey, _ =>
         {
             System.Threading.Interlocked.Increment(ref _contentHashComputations);

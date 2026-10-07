@@ -8,6 +8,9 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+// The content-hash memo is process-wide and RunnerFingerprintFileIdentityMemoTests asserts an exact
+// computation count, so a class hashing files joins the collection those tests are in.
+[Collection(CacheRootsSerialCollection.Name)]
 public sealed class DependencyContentIdentityKeysTests : IDisposable
 {
     private static readonly Guid LibId = Guid.Parse("5081c0de-0000-4a11-9111-00000000ff01");
@@ -45,33 +48,33 @@ public sealed class DependencyContentIdentityKeysTests : IDisposable
     [Fact]
     public void DependencyFingerprintTerm_SamePathAndVersion_FollowsTheBytes()
     {
-        var path = Package("lib.app", new byte[] { 1, 2, 3 }, 1);
+        var path = Package("lib.app", new byte[] { 1, 2, 3, 0 }, 1);
         var first = ProgramSupport.DependencyFingerprintTerm(Manifest(), path);
 
-        path = Package("lib.app", new byte[] { 1, 2, 4 }, 2);
+        path = Package("lib.app", new byte[] { 1, 2, 4, 0 }, 2);
         var rebuilt = ProgramSupport.DependencyFingerprintTerm(Manifest(), path);
         Assert.NotNull(first);
         Assert.NotEqual(first, rebuilt);
 
         // Back to the first build: the term is the bytes' own, so it is the first term again.
-        path = Package("lib.app", new byte[] { 1, 2, 3 }, 3);
+        path = Package("lib.app", new byte[] { 1, 2, 3, 0 }, 3);
         Assert.Equal(first, ProgramSupport.DependencyFingerprintTerm(Manifest(), path));
     }
 
     [Fact]
     public void DependencyFingerprintTerm_SameBytesRewritten_IsNotAChange()
     {
-        var path = Package("lib.app", new byte[] { 7, 7, 7 }, 1);
+        var path = Package("lib.app", new byte[] { 7, 7, 7, 7, 7 }, 1);
         var first = ProgramSupport.DependencyFingerprintTerm(Manifest(), path);
-        path = Package("lib.app", new byte[] { 7, 7, 7 }, 9);
+        path = Package("lib.app", new byte[] { 7, 7, 7, 7, 7 }, 9);
         Assert.Equal(first, ProgramSupport.DependencyFingerprintTerm(Manifest(), path));
     }
 
     [Fact]
     public void DependencyFingerprintTerm_SameBytesAtAnotherPath_StaysADifferentTerm()
     {
-        var a = Package("a.app", new byte[] { 5, 5 }, 1);
-        var b = Package("b.app", new byte[] { 5, 5 }, 1);
+        var a = Package("a.app", new byte[] { 5, 5, 5, 5, 5, 5 }, 1);
+        var b = Package("b.app", new byte[] { 5, 5, 5, 5, 5, 5 }, 1);
         Assert.NotEqual(
             ProgramSupport.DependencyFingerprintTerm(Manifest(), a),
             ProgramSupport.DependencyFingerprintTerm(Manifest(), b));
@@ -84,7 +87,7 @@ public sealed class DependencyContentIdentityKeysTests : IDisposable
     [Fact]
     public void DependencyFingerprintTerm_AnUnidentifiablePackage_IsNullWhateverTheHashFunctionSays()
     {
-        var path = Package("lib.app", new byte[] { 1 }, 1);
+        var path = Package("lib.app", new byte[] { 1, 1, 1, 1, 1, 1, 1 }, 1);
         Assert.Null(ProgramSupport.DependencyFingerprintTerm(Manifest(), path, _ => RunnerFingerprint.UnknownContentHash));
         Assert.Null(ProgramSupport.DependencyFingerprintTerm(Manifest(), path, _ => ""));
     }
@@ -104,7 +107,7 @@ public sealed class DependencyContentIdentityKeysTests : IDisposable
     [Fact]
     public void PackageServedDepKeys_SamePathAndVersion_FollowTheBytes()
     {
-        var path = Package("lib.app", new byte[] { 1, 2, 3 }, 1);
+        var path = Package("lib.app", new byte[] { 1, 2, 3, 0, 0, 0, 0, 0 }, 1);
         var deps = new[] { (Manifest(), path) };
         var inventory = new List<BcCompiler.PackageScanEntry>
             { new(Path.GetFullPath(path), LibId, "repro", "Lib", new Version(1, 0, 0, 0)) };
@@ -112,12 +115,12 @@ public sealed class DependencyContentIdentityKeysTests : IDisposable
 
         Assert.Equal(first, BcCompiler.PackageServedDepKeys(deps, inventory));
 
-        Package("lib.app", new byte[] { 1, 2, 4 }, 2);
+        Package("lib.app", new byte[] { 1, 2, 4, 0, 0, 0, 0, 0 }, 2);
         var rebuilt = BcCompiler.PackageServedDepKeys(deps, inventory);
         // The loader is reused when the current keys are a subset of the ones it was built for.
         Assert.False(rebuilt.IsSubsetOf(first));
 
-        Package("lib.app", new byte[] { 1, 2, 3 }, 3);
+        Package("lib.app", new byte[] { 1, 2, 3, 0, 0, 0, 0, 0 }, 3);
         Assert.Equal(first, BcCompiler.PackageServedDepKeys(deps, inventory));
     }
 
