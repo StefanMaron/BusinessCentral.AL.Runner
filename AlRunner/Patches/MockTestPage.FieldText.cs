@@ -57,8 +57,8 @@ internal static class TestPageBlanking
 }
 
 /// <summary>
-/// Date, Time and DateTime in the spelling the control shows: the en-US culture's short date,
-/// long time and short date-time patterns (the runner's pinned session language is 1033), not the
+/// Date, Time and DateTime in the spelling the control shows: the session culture's short date,
+/// long time and short date-time patterns (the runner's session culture, en-US), not the
 /// AL <c>Format()</c> default. The patterns come from the runtime's culture data, as BC's own
 /// formatter takes them, so the space before AM/PM is whatever that data holds (U+202F from CLDR
 /// 42 on). A blank temporal is <see cref="TestPageBlankTemporalValue"/>'s.
@@ -67,7 +67,7 @@ internal static class TestPageBlanking
 internal static class TestPageTemporalText
 {
     private static NavSession Session => (NavSession)BcRuntime.SkeletonSession!;
-    private static readonly CultureInfo Culture = CultureInfo.GetCultureInfo("en-US");
+    private static CultureInfo Culture => BcRuntime.RunnerSessionCulture;
 
     internal static string? Format(NavValue? navValue)
     {
