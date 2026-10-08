@@ -197,6 +197,61 @@ public class AffectedEventSelectionTests
                     AffectedEventSelection.LongLivedObjectKey(held)).ForceFullReason);
     }
 
+    // #5088 — ChangedReportExtensionKeys, the report twin of the pageextension rules above. The
+    // server-level proof is ServerAffectedSelectionReportExtensionTests.
+    private static AffectedEventSelection.Result ReportExtensions(
+        (string, int?)[] changed, Dictionary<int, List<int>>? bases, params string[] bundleWide)
+        => AffectedEventSelection.ChangedReportExtensionKeys(changed, bases,
+            bundleWide.Length == 1 && bundleWide[0] == "<none>" ? null : bundleWide.ToHashSet(StringComparer.Ordinal));
+
+    [Fact]
+    public void ChangedReportExtension_KeysItsBaseReport_FromTheRegistryOrTheRecording_AndNoPage()
+    {
+        var bases = new Dictionary<int, List<int>> { [50205] = new() { 50203 } };
+        var added = ReportExtensions(new (string, int?)[] { ("ReportExtension", 50205), ("Codeunit", 50100), ("Report", 50204), ("PageExtension", 50105) }, bases);
+        Assert.Null(added.ForceFullReason);
+        Assert.Equal(new[] { "Report|id:50203", "dep|Report|id:50203" }, added.Keys.OrderBy(k => k, StringComparer.Ordinal));
+
+        // Removed: gone from the registry; the recording run named its base. A pageextension's record is not a report's.
+        var removed = ReportExtensions(new (string, int?)[] { ("ReportExtension", 50206) }, bases,
+            AffectedEventSelection.ReportExtensionBaseKey(50206, 50207), AffectedEventSelection.PageExtensionBaseKey(50206, 50299), "rext|502060|1");
+        Assert.Null(removed.ForceFullReason);
+        Assert.Equal(new[] { "Report|id:50207", "dep|Report|id:50207" }, removed.Keys.OrderBy(k => k, StringComparer.Ordinal));
+        Assert.Equal("rext|50206|50207", AffectedEventSelection.ReportExtensionBaseKey(50206, 50207));
+
+        // Rebased: both the report it extended and the one it extends now.
+        var rebased = ReportExtensions(new (string, int?)[] { ("ReportExtension", 50205) }, bases,
+            AffectedEventSelection.ReportExtensionBaseKey(50205, 50208));
+        Assert.Equal(new[] { "Report|id:50203", "Report|id:50208", "dep|Report|id:50203", "dep|Report|id:50208" },
+            rebased.Keys.OrderBy(k => k, StringComparer.Ordinal));
+
+        // A pageextension is the page twin's, and keys nothing here.
+        Assert.Empty(ReportExtensions(new (string, int?)[] { ("PageExtension", 50105) }, bases).Keys);
+    }
+
+    [Fact]
+    public void ChangedReportExtension_ForcesFull_WhenItsBaseCannotBeNamed_OrIsHeldOutsideATest()
+    {
+        var bases = new Dictionary<int, List<int>> { [50205] = new() { 50203 }, [50209] = new() };
+        Assert.Contains("base report of reportextension 50209 could not be resolved",
+            ReportExtensions(new (string, int?)[] { ("ReportExtension", 50209) }, bases).ForceFullReason);
+        Assert.Contains("could not be read",
+            ReportExtensions(new (string, int?)[] { ("ReportExtension", 50205) }, null).ForceFullReason);
+        Assert.Contains("no record of which report each reportextension extends",
+            ReportExtensions(new (string, int?)[] { ("ReportExtension", 50205) }, bases, "<none>").ForceFullReason);
+        Assert.Contains("has no object id",
+            ReportExtensions(new (string, int?)[] { ("ReportExtension", null) }, bases).ForceFullReason);
+        Assert.Null(ReportExtensions(new (string, int?)[] { ("Report", 50203) }, null, "<none>").ForceFullReason);
+
+        foreach (var held in new[] { "Report|id:50203", "dep|Report|id:50203" })
+            Assert.Contains("reportextension 50205 extends Report 50203, an instance of which was built outside any one test",
+                ReportExtensions(new (string, int?)[] { ("ReportExtension", 50205) }, bases,
+                    AffectedEventSelection.LongLivedObjectKey(held)).ForceFullReason);
+        // A held PAGE of the same number is not the report.
+        Assert.Null(ReportExtensions(new (string, int?)[] { ("ReportExtension", 50205) }, bases,
+            AffectedEventSelection.LongLivedObjectKey("Page|id:50203")).ForceFullReason);
+    }
+
     // #5083 — UnkeyedKindChange. The server-level proof is ServerAffectedSelectionObjectKindTests.
     [Fact]
     public void UnkeyedKind_ForcesFull_NamingTheObjectAndItsKind_KeyedKindsDoNot()
@@ -209,14 +264,14 @@ public class AffectedEventSelectionTests
             O("Codeunit", 1, "C"), O("Page", 2, "P"), O("Report", 3, "R"), O("Query", 4, "Q"),
             O("XmlPort", 5, "X"), O("Table", 6, "T"), O("TableExtension", 7, "TE"), O("PageExtension", 8, "PE"),
             // #5076: keyed through the permission tables (AffectedMetadataTables).
-            O("PermissionSet", 9, "PS"), O("PermissionSetExtension", 12, "PSE")));
+            O("PermissionSet", 9, "PS"), O("PermissionSetExtension", 12, "PSE"),
+            // #5088: keyed through its base report (ChangedReportExtensionKeys).
+            O("ReportExtension", 10, "RE")));
 
         Assert.Equal("Enum 60741 changed, and which tests read an enum's values, captions or implementations is not recorded",
             Reason(O("Codeunit", 1, "C"), O("Enum", 60741, "E")));
         Assert.StartsWith("EnumExtension 9 changed, and which tests read an enum's",
             Reason(O("EnumExtension", 9, "EE")));
-        Assert.Equal("ReportExtension 10 changed, and no test recording holds the use of this kind of object (ReportExtension)",
-            Reason(O("ReportExtension", 10, "RE")));
         // A kind nothing here knows, and one declared by name only: never "changed but selects nothing".
         Assert.Equal("SomeFutureKind 11 changed, and no test recording holds the use of this kind of object (SomeFutureKind)",
             Reason(O("SomeFutureKind", 11, "F")));

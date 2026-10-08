@@ -1,5 +1,5 @@
 // ServerAffectedSelectionObjectKindTests — #5083: under affectedOnly, a changed object of a kind no
-// recorded key reaches (an enum, an enumextension, a reportextension, an interface, ...) forces a
+// recorded key reaches (an enum, an enumextension, an interface, ...) forces a
 // full run with a reason, instead of selecting nothing while a full run fails.
 // Rules: docs/server-mode.md#affectedonly-and-object-kinds-no-test-records.
 // Runs under --isolation test, like ServerAffectedSelectionPageExtensionTests: the no-change step
@@ -253,8 +253,9 @@ public class ServerAffectedSelectionObjectKindTests
         Write(bundle, "KindExt.EnumExt.al", EnumExtension());
         await Send(server, bundle);
 
-        // An edited reportextension: the incremental compile falls back to a full one today, which
-        // forces a full run before this guard is consulted; NextServer_* proves the guard's own reason.
+        // An edited reportextension is keyed since #5088 (ServerAffectedSelectionReportExtensionTests), but
+        // this column on a System-table data item makes the incremental emit throw (BadExpression), so the
+        // compile falls back to a full one and forces the full run before any selection is read.
         Write(bundle, "KindExt.ReportExt.al", ReportExtension("            column(Num3; Number) { }\n"));
         var reportExtension = await Send(server, bundle);
         Assert.True(reportExtension.ForcedFull, reportExtension.Raw);
@@ -281,7 +282,7 @@ public class ServerAffectedSelectionObjectKindTests
     // #5007's path: changed while no server runs, so the persisted baseline's diff names the object,
     // and each request compiles cold.
     [SkippableFact]
-    public async Task NextServer_ChangedEnumCaptionOrReportExtension_ForcesFull()
+    public async Task NextServer_ChangedEnumCaptionForcesFull_AndAReportExtensionNoTestRunsSelectsNothing()
     {
         TestArtifacts.SkipIfMissing();
         var bundle = Bundle("al-runner-server-affected-kind-persist", "000000000002");
@@ -296,10 +297,12 @@ public class ServerAffectedSelectionObjectKindTests
         Write(bundle, "Kind.Enum.al", Enum());
         await SendFresh(cache, bundle);
 
-        // No test here runs the report, so this pins the selection, not an outcome.
+        // A reportextension is keyed to its base report since #5088, and no test here runs the report,
+        // so the change selects nothing instead of running everything.
         Write(bundle, "KindExt.ReportExt.al", ReportExtension("            column(Num3; Number) { }\n"));
-        AssertForcedFull(await SendFresh(cache, bundle),
-            "ReportExtension 60766 changed, and no test recording holds the use of this kind of object (ReportExtension)");
+        var reportExtension = await SendFresh(cache, bundle);
+        Assert.False(reportExtension.ForcedFull, reportExtension.Raw);
+        Assert.Empty(reportExtension.Ran);
 
         Write(bundle, "Greeter.Interface.al", InterfaceExtendsOther);
         AssertForcedFull(await SendFresh(cache, bundle),

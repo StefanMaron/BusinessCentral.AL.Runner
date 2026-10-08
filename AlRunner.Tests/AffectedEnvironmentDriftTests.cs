@@ -126,6 +126,32 @@ public class AffectedEnvironmentDriftTests
         Assert.Contains("base page of pageextension 9003 could not be resolved", Assert.Single(unknown.Unattributed));
     }
 
+    // #5088: a dependency's reportextension selects through its base report, now or as recorded.
+    [Fact]
+    public void SelectionKeys_ReportExtension_KeysItsBaseReport_CurrentOrRecorded()
+    {
+        var current = new Dictionary<int, List<int>> { [9101] = new() { 31 } };
+        var recorded = new HashSet<string>(StringComparer.Ordinal) { AffectedEventSelection.ReportExtensionBaseKey(9102, 32) };
+        var keys = AffectedEnvironmentDrift.SelectionKeys(new[]
+            {
+                new AffectedObjectId("ReportExtension", 9101, "Edited"),
+                new AffectedObjectId("ReportExtension", 9102, "Removed"),
+            },
+            new Dictionary<int, List<int>>(), recorded, new Dictionary<int, List<int>>(), current);
+        Assert.Empty(keys.Unattributed);
+        Assert.Equal(new[] { "Report|id:31", "Report|id:32", "dep|Report|id:31", "dep|Report|id:32" },
+            keys.CoverageKeys.OrderBy(k => k, StringComparer.Ordinal));
+
+        var unknown = AffectedEnvironmentDrift.SelectionKeys(new[] { new AffectedObjectId("ReportExtension", 9103, "New") },
+            new Dictionary<int, List<int>>(), recorded, new Dictionary<int, List<int>>(), current);
+        Assert.Contains("base report of reportextension 9103 could not be resolved", Assert.Single(unknown.Unattributed));
+
+        // The registry read failed (null), which is no answer rather than "no extensions".
+        var unreadable = AffectedEnvironmentDrift.SelectionKeys(new[] { new AffectedObjectId("ReportExtension", 9101, "Edited") },
+            new Dictionary<int, List<int>>(), recorded, new Dictionary<int, List<int>>(), null);
+        Assert.Contains("could not be read", Assert.Single(unreadable.Unattributed));
+    }
+
     [Fact]
     public void DependencyKeyOf_MatchesTheKeyADiffSelectsOn()
     {

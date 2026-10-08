@@ -28,8 +28,8 @@ public class ServerAffectedSelectionReportExtensionTests
            + "    dataset\n    {\n        dataitem(Item; \"RExt Blob SX\")\n        {\n"
            + "            column(PK; PK) { }\n        }\n    }\n}\n";
 
-    private static string Extension(int id, string name, string baseReport, string body = "")
-        => $"reportextension {id} \"{name}\" extends \"{baseReport}\"\n{{\n"
+    private static string Extension(int id, string name, string baseReport, string body = "", string dataset = "")
+        => $"reportextension {id} \"{name}\" extends \"{baseReport}\"\n{{\n" + dataset
            + "    trigger OnPreReport()\n    begin\n" + body + "    end;\n}\n";
 
     // A request page the reportextension adds a field to; the handler reads that field's caption.
@@ -48,6 +48,8 @@ public class ServerAffectedSelectionReportExtensionTests
         => "reportextension 60731 \"RExt Page Ext SX\" extends \"RExt Page SX\"\n{\n"
            + "    requestpage { layout { addlast(Content) { field(ExtOpt; ExtOpt) { Caption = '" + caption
            + "'; ApplicationArea = All; } } } }\n    var\n        ExtOpt: Boolean;\n}\n";
+
+    private const string AddedColumn = "    dataset\n    {\n        add(Item)\n        {\n            column(PK2; PK) { }\n        }\n    }\n";
 
     private const string ProbeExt = "        Error('PROBE-EXT');\n";
     private const string ProbeNew = "        Error('PROBE-NEW');\n";
@@ -290,6 +292,12 @@ public class ServerAffectedSelectionReportExtensionTests
         // Edited: every route that runs the base report runs its trigger, and only those tests run.
         Write(bundle, "Ext.ReportExt.al", Extension(60724, "RExt Ext SX", "RExt Report SX", ProbeExt));
         AssertNarrowed(await Send(server, bundle), RunBaseReport, "PROBE-EXT");
+        Write(bundle, "Ext.ReportExt.al", Extension(60724, "RExt Ext SX", "RExt Report SX"));
+        AssertNarrowed(await Send(server, bundle), RunBaseReport, null);
+
+        // A whole-object edit (a column the extension adds), which also keys the metadata tables listing it.
+        Write(bundle, "Ext.ReportExt.al", Extension(60724, "RExt Ext SX", "RExt Report SX", dataset: AddedColumn));
+        AssertNarrowed(await Send(server, bundle), RunBaseReport, null);
         Write(bundle, "Ext.ReportExt.al", Extension(60724, "RExt Ext SX", "RExt Report SX"));
         AssertNarrowed(await Send(server, bundle), RunBaseReport, null);
 

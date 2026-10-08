@@ -1048,6 +1048,38 @@ An event an extension declares, and the subscribers it contains, are selected as
 recorded before #5025 has no `pext|` keys, so a pageextension removed since then
 forces a full run.
 
+#### affectedOnly and report extensions
+
+A reportextension's code and dataset run when its base report runs, so a changed
+`ReportExtension` (added, edited, removed) selects the tests that ran the base report
+(#5088), as a pageextension selects the tests that opened its base page. Every way a test
+runs a report builds an instance of the base report, which the recording keeps as the
+report's key: `Report.Run`, `Report.RunModal`, `Report.SaveAs`, a `Report` variable's `Run`,
+and showing the request page (`Report.RunRequestPage`, `Report.Run` with a handler). A base
+report in a dependency is kept as its `dep|Report|id:<n>` key, so its tests are selected the
+same way, in the request's own sources and in "affectedOnly across environments".
+
+The base comes from the runner's registry now (the source-parsed reportextensions and the
+reportextensions of the dependency packages, each base resolved by name among the
+source-parsed and the dependency reports, so an added extension is named) and from the
+recording: each recording run stores a `rext|<extension>|<report>` key in the bundle's
+`<bundle>` entry for every reportextension the registry resolved then, which names the base
+of an extension removed since or edited to extend another report. The baseline schema moved
+to 9 for it: a schema-8 file never held those keys, so it is no baseline.
+
+A full run is forced, with a `reason`, when the registry and the recording name no base, when
+the registry could not be read, or when an instance of the base report was built outside any
+one test (a test codeunit's global, a SingleInstance codeunit), the same three rules as for a
+pageextension. An event an extension declares, and the subscribers it contains, are selected
+as in "affectedOnly and event subscribers". A whole-object change also keys the metadata
+virtual tables that list the kind, as for any other kind.
+
+What a selection can still add on top, and what the tests of this section have to arrange
+around: a test that runs a report writes the last error, and one that saves it or shows its
+request page uses a SingleInstance System codeunit, so a narrowed run of one such test also
+selects the earlier writers and later readers of that session state ("affectedOnly and
+session state").
+
 #### affectedOnly and metadata virtual tables
 
 A test that reads object metadata through a virtual table (`AllObj`,
@@ -1105,12 +1137,25 @@ selects nothing while a full run would fail a test. This covers:
 - an `Enum` or `EnumExtension`: no test records reading an enum's values, captions or
   implementations. A caption, a value's name, an added value or an `Implementation`
   change keeps every ordinal and changes no other object, yet changes what
-  `Format`, `Ordinals()` or an interface call on the enum answers;
-- a `ReportExtension`, a `Profile`, `PageCustomization`, `ControlAddIn`, `Entitlement`, and any kind not listed above.
+  `Format`, `Ordinals()` or an interface call on the enum answers. Why no metadata table
+  carries it (#5088, #5076): the enum reaches AL through runner-built metadata objects
+  (`AlEnumOptionMetadata`) that a process-wide memo hands out after the first
+  `NCLEnumMetadata.Create`, that are baked into a table's field metadata once per process,
+  and that page enum fields read from the registry directly. None of those is a virtual
+  table, and a per-`Create` record would miss every later test. The one test shape
+  `AllObj` and `Enum` rows serve (counting or listing enums) is already keyed by the
+  metadata tables. Attributing the rest needs a record taken inside the metadata object's
+  own methods, and a proof that the incremental compile re-emits callers whose enum
+  ordinals changed; neither exists, so these stay a full run (and `approximate` across
+  environments);
+- a `Profile`, `PageCustomization`, `ControlAddIn`, `Entitlement`, and any kind not listed above.
 
 A `PermissionSet` or `PermissionSetExtension` is not one of them (#5076): the permission
 tables are the only thing that reads a declared set, so it selects the tests that read those
 tables, as in "affectedOnly and metadata virtual tables".
+
+A `ReportExtension` is not one of them either (#5088): it selects the tests that ran its base
+report, as in "affectedOnly and report extensions".
 
 An `Interface` is one of them: adding or removing an `extends` changes what `is` and
 `as` answer for every implementer, while no implementer or caller changes. The same
@@ -1141,7 +1186,7 @@ forced full with a `reason` naming the file.
 A `ControlAddIn` is a kind no test records, so its changed resource forces a full run
 (see "affectedOnly and object kinds no test records"); a changed `Report` selects the
 tests that built it. Across server processes the store keeps the fingerprints
-(schema 8; a schema-7 file is no baseline) and a changed one forces a full run naming
+(since schema 8; an older file is no baseline) and a changed one forces a full run naming
 the file, since the store does not keep which object names it.
 
 Two tests pin the population: every member of BC's `IFileSystem` is a recorded read or

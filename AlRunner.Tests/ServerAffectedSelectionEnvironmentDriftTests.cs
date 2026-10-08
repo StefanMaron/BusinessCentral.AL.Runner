@@ -75,6 +75,45 @@ public class ServerAffectedSelectionEnvironmentDriftTests
         }
         """;
 
+    // #5088: a dependency's report and the reportextension of it, and a test that runs the report.
+    private const string DriftReportSource = """
+        report 60476 "Drift Report SX"
+        {
+            ProcessingOnly = true;
+            dataset
+            {
+                dataitem(Int; Integer)
+                {
+                    DataItemTableView = where(Number = const(1));
+                    column(Num; Number) { }
+                }
+            }
+        }
+        """;
+
+    private static string ReportExtensionSource(string body) => $$"""
+        reportextension 60477 "Drift Report Ext SX" extends "Drift Report SX"
+        {
+            trigger OnPreReport()
+            begin
+                {{body}}
+            end;
+        }
+        """;
+
+    private const string ReportTestsSource = """
+        codeunit 60482 "Drift Report Tests SX"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure RunsReport()
+            begin
+                Report.Run(Report::"Drift Report SX", false, false);
+            end;
+        }
+        """;
+
     private const string TestsSource = """
         codeunit 60480 "Drift Tests SX"
         {
@@ -128,7 +167,7 @@ public class ServerAffectedSelectionEnvironmentDriftTests
         }));
     }
 
-    private static (string App, string TestApp, string Cache) Layout(string name, bool permissionSet = false)
+    private static (string App, string TestApp, string Cache) Layout(string name, bool permissionSet = false, bool report = false)
     {
         var root = TestScratch.Dir("al-runner-server-affected-drift-" + name);
         var app = Path.Combine(root, "App");
@@ -144,13 +183,19 @@ public class ServerAffectedSelectionEnvironmentDriftTests
             File.WriteAllText(Path.Combine(app, "src", "Perm.PermissionSet.al"), PermissionSetSource("Drift Perm A"));
             File.WriteAllText(Path.Combine(testApp, "PermTests.Codeunit.al"), PermTestsSource);
         }
-        Package(app, testApp, permissionSet ? "Drift Perm A" : null);
+        if (report)
+        {
+            File.WriteAllText(Path.Combine(app, "src", "Report.Report.al"), DriftReportSource);
+            File.WriteAllText(Path.Combine(app, "src", "ReportExt.ReportExt.al"), ReportExtensionSource("exit;"));
+            File.WriteAllText(Path.Combine(testApp, "ReportTests.Codeunit.al"), ReportTestsSource);
+        }
+        Package(app, testApp, permissionSet ? "Drift Perm A" : null, report);
         return (app, testApp, Path.Combine(root, "cache"));
     }
 
     // Rebuilds App.app from App/, at App/app.json's version, replacing the previous build: the
     // second environment.
-    private static void Package(string app, string testApp, string? permissionSetCaption = null)
+    private static void Package(string app, string testApp, string? permissionSetCaption = null, bool report = false)
     {
         var identity = InProcessAppPackager.ReadIdentity(Path.Combine(app, "app.json"))!;
         var packages = Path.Combine(testApp, ".alpackages");
@@ -174,6 +219,8 @@ public class ServerAffectedSelectionEnvironmentDriftTests
                     new { Name = "Assignable", Value = "true" }, new { Name = "Caption", Value = permissionSetCaption },
                 },
             } },
+            Reports = report ? new object[] { new { Id = 60476, Name = "Drift Report SX", RequestPage = new { Id = 0, Name = "RequestOptionsPage" } } } : Array.Empty<object>(),
+            ReportExtensions = report ? new object[] { new { Id = 60477, Name = "Drift Report Ext SX", Target = "Drift Report SX", RequestPage = new { ControlChanges = Array.Empty<object>() } } } : Array.Empty<object>(),
         });
         InProcessAppPackager.EmitAppPackageToFile(app, identity,
             Path.Combine(packages, $"AL Runner_Drift App_{version}.app"), symbols);
@@ -346,6 +393,30 @@ public class ServerAffectedSelectionEnvironmentDriftTests
         var d = drifted.Drift ?? throw new Xunit.Sdk.XunitException("no environmentDrift: " + drifted.Raw);
         Assert.Equal("diffed", d.GetProperty("mode").GetString());
         Assert.Equal(new[] { "PermissionSet 60474 Drift Perm SX" },
+            d.GetProperty("objects").EnumerateArray().Select(o => o.GetString()));
+    }
+
+    // #5088: a dependency's changed reportextension is attributed to the tests that ran its base report,
+    // so the diff stays exact and only those tests run.
+    [SkippableFact]
+    public async Task ReportExtensionDiffers_SelectsTheTestThatRanItsBaseReport_AndTheDiffStaysExact()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (app, testApp, cache) = Layout("report-extension", report: true);
+        await RecordBaseline(testApp, cache, tests: 4);
+
+        File.WriteAllText(Path.Combine(app, "src", "ReportExt.ReportExt.al"), ReportExtensionSource("Error('Drift Ext B');"));
+        Package(app, testApp, report: true);
+
+        await using var second = await CliServer.StartAsync(new[] { "--cache", cache });
+        var drifted = await Send(second, testApp);
+        Assert.False(drifted.ForcedFull, drifted.Raw);
+        Assert.Equal(new[] { "RunsReport" }, drifted.Status.Keys);
+        Assert.True(drifted.Status["RunsReport"] == "fail", drifted.Raw);
+        Assert.Contains("Drift Ext B", drifted.Raw, StringComparison.Ordinal);
+        var d = drifted.Drift ?? throw new Xunit.Sdk.XunitException("no environmentDrift: " + drifted.Raw);
+        Assert.Equal("diffed", d.GetProperty("mode").GetString());
+        Assert.Equal(new[] { "ReportExtension 60477 Drift Report Ext SX" },
             d.GetProperty("objects").EnumerateArray().Select(o => o.GetString()));
     }
 
