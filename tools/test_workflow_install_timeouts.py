@@ -10,7 +10,12 @@ The population is DERIVED, not listed: every step whose `run:` calls `apt-get in
 `apt install`) is checked, so a new install step is in scope the day it lands. The command
 line is tokenised like a shell and the subcommand is the first argument that is not an option
 or the value of a value-taking option, so `apt-get -o Dpkg::Lock::Timeout=60 install` is seen
-(#5458). `aptitude` is out of scope (different option table; nothing here uses it). Two rules:
+(#5458); a quoted `sh -c`/`bash -c` argument and a `$(...)`/backtick body are scanned as scripts
+of their own. A script that does not name apt is never tokenised, and one that names apt but
+will not tokenise falls back to the old raw-text scan with a printed NOTE rather than refusing:
+this guard gates every PR, so an unrelated heredoc must not be able to red it. Not covered: an
+install behind `$PM`/`eval`, abbreviated long options, `aptitude` (different option table; nothing
+here uses it). Two rules:
 
   1. each such step carries a step-level `timeout-minutes` of at most STEP_MAX;
   2. the one job named in BOUNDED_JOBS carries a job-level `timeout-minutes` of at most
@@ -373,6 +378,8 @@ CASES = [
     ("quoted $(...) install", {"bc-tests.yml": _wf_with('out="$(apt-get install -y x)"')}, 1),
     ("backtick install", {"bc-tests.yml": _wf_with("out=`apt-get install -y x`")}, 1),
     ("nested bash -c install", {"bc-tests.yml": _wf_with("bash -c \"sh -c 'apt-get install x'\"")}, 1),
+    ("bash -lc (combined option) install", {"bc-tests.yml": _wf_with("bash -lc 'apt-get install x'")}, 1),
+    ("install in a substitution inside echo", {"bc-tests.yml": _wf_with('echo "$(apt-get install -y x)"')}, 1),
     ("bash -c install, bounded", {"bc-tests.yml": _wf_with('bash -c "apt-get install -y x"', 10)}, 0),
     ("sh -c install, bounded", {"bc-tests.yml": _wf_with("sudo sh -c 'apt-get -o X=1 install x'", 10)}, 0),
     ("quoted $(...) install, bounded", {"bc-tests.yml": _wf_with('out="$(apt-get install -y x)"', 10)}, 0),
@@ -400,7 +407,21 @@ def _self_test() -> int:
         ok = rc == want
         failed += not ok
         print(f"{'ok  ' if ok else 'FAIL'} {name}: exit {rc} (want {want}) | {msgs[0]}")
-    print(f"Total: {len(CASES)}, Failed: {failed}, Passed: {len(CASES) - failed}")
+    # which path a script took: a script without an apt word is never tokenised (no note, even
+    # when the shell would refuse it); one that names apt and will not tokenise says so.
+    paths = [
+        ("no apt word is not tokenised", "echo 'unterminated", (False, False)),
+        ("apt word, untokenisable: noted, raw scan finds the install",
+         "echo 'x\napt-get -y install gcc", (True, True)),
+        ("apt word, tokenisable: no note", "apt-get -y install gcc", (True, False)),
+    ]
+    for name, script, (want_found, want_note) in paths:
+        found, note = step_installs(script)
+        ok = (found, note is not None) == (want_found, want_note)
+        failed += not ok
+        print(f"{'ok  ' if ok else 'FAIL'} {name}: found={found} note={note is not None}")
+    total = len(CASES) + len(paths)
+    print(f"Total: {total}, Failed: {failed}, Passed: {total - failed}")
     return 1 if failed else 0
 
 
