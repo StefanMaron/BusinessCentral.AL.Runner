@@ -35,7 +35,7 @@ public sealed class TddMissingObjectPackageTests : IDisposable
 
     /// <summary>A symbols-only package declaring codeunit 65400 "Package Only Points", in the shape the compiler's
     /// package scanner reads (the NAVX header of <c>TddPrecompiledTests</c>).</summary>
-    internal static byte[] BuildPackage(string codeunitSymbols, string? source = null, string? appId = null, string? name = null)
+    internal static byte[] BuildPackage(string codeunitSymbols, string? source = null, string? appId = null, string? name = null, byte[]? nestedApp = null)
     {
         appId ??= PackageAppId;
         name ??= PackageName;
@@ -61,6 +61,7 @@ public sealed class TddMissingObjectPackageTests : IDisposable
             Add("NavxManifest.xml", manifest);
             Add("SymbolReference.json", symbols);
             if (source != null) Add("src/PackageOnlyPoints.Codeunit.al", source);
+            if (nestedApp != null) { var e = zip.CreateEntry("inner.app"); using var es = e.Open(); es.Write(nestedApp); }
         }
         var payload = zipBuffer.ToArray();
         using var app = new MemoryStream();

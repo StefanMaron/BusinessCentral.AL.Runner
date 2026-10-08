@@ -67,16 +67,22 @@ survived the cheaper checks above, and it runs before the id is reserved, so a r
 An unreadable package may be the object's home, and "unreadable" is not "absent". But the compile tolerates such a
 file (a valid manifest, a malformed `SymbolReference.json`: only the AL0185 for the missing codeunit, no AL1023), and
 refusing on it for every name would turn the whole generation off for the run. So the refusal depends on the NAME: the
-package's `SymbolReference.json` text (every module of it) is searched, ignoring case, after the JSON escapes that could
-hide the name are undone (`\uXXXX` in either case, `\/`).
+package's `SymbolReference.json` text (every module of it: the outer .app and the one nested in it) is searched,
+ignoring case, after its JSON escapes are decoded: `\uXXXX` in either case and `\/ \" \\ \' \n \r \t \b \f`.
 
 - the name is not in the text: the package cannot declare it. It is skipped, and the run says so on one line:
   `--tdd: the package Broken Unrelated 1.0.0.0 (Broken_Unrelated_1.0.0.0.app) could not be read (JsonReaderException: ...), but its symbols text never mentions "X", so it cannot declare it and was skipped; remove or replace that file`
 - the name is in the text, or the text cannot prove an absence: refuses, naming the package and the remedy
   (`... could not be read (...), so it cannot be ruled out as the home of the codeunit; remove or replace that file`).
-  The text cannot prove an absence when the name holds a backslash or a control character (spelled with an escape the
-  search does not undo), when the text holds a NUL (UTF-16 without a byte-order mark reads as interleaved NULs), and when
-  the file cannot be opened at all.
+  The text cannot prove an absence when it holds a backslash sequence outside the decoded set (`\a`, `\x41`, an octal
+  `\101`, a short `\u12`, a lone trailing backslash), when the name holds a backslash, quote or control character,
+  when the text holds a NUL (UTF-16 without a byte-order mark reads as interleaved NULs), and when the file cannot be
+  opened at all.
+
+The rule is "an escape the search does not know refuses", not "any backslash refuses": BC's own writer emits the
+decoded set in captions and doc comments, so an unrelated package with those and a trailing comma is still skipped.
+The set is closed on purpose: BC reads symbols with Newtonsoft, which accepts more than the reader that refused the
+file (it takes `\'` and a trailing comma), so a spelling nobody decoded must not read as an absence.
 
 Trap: a wrong "absent" is a shadow again, so every doubt refuses; widening what the search proves absent needs a test
 per new spelling.

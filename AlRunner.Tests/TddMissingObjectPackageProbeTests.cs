@@ -127,6 +127,8 @@ public sealed class TddMissingObjectPackageProbeTests : IDisposable
     [InlineData("Caf\u00e9 Points", "\"Codeunits\":[{\"Name\":\"Caf\u00e9 Points\",")]
     [InlineData("In/Out Points", "\"Codeunits\":[{\"Name\":\"In\\/Out Points\",")]
     [InlineData("Plain Points", "\"Codeunits\":[{\"Name\":\"\\u0050lain Points\",")]
+    [InlineData("Bob's Points", "\"Codeunits\":[{\"Name\":\"Bob\\'s Points\",")]
+    [InlineData("Bob's Points", "\"Codeunits\":[{\"Name\":\"Bob's Points\",")]
     public void AnUnreadablePackage_SpellingTheNameWithEscapes_StillRefuses(string name, string symbols)
     {
         var (reason, notes) = Probe(new[] { Package("bad.app", "Broken", symbols) }, name);
@@ -144,6 +146,61 @@ public sealed class TddMissingObjectPackageProbeTests : IDisposable
         var (reason, notes) = Probe(new[] { Package("bad.app", "Broken", "\"Codeunits\":[") }, name);
         Assert.StartsWith("the package Broken 1.0.0.0 (bad.app) could not be read (", reason);
         Assert.Empty(notes);
+    }
+
+    /// <summary>BC reads symbols through Newtonsoft, which is more permissive than the reader that refused the file, so
+    /// an escape the search does not positively know how to decode (invalid in both, Newtonsoft-only, or a future one)
+    /// proves nothing about the name: the unreadable package refuses.</summary>
+    [Theory]
+    [InlineData("\"Codeunits\":[{\"Name\":\"Other\\a\",")]
+    [InlineData("\"Codeunits\":[{\"Name\":\"Other\\x41\",")]
+    [InlineData("\"Codeunits\":[{\"Name\":\"Other\\101\",")]
+    [InlineData("\"Codeunits\":[{\"Name\":\"Other\\u12\",")]
+    [InlineData("\"Codeunits\":[{\"Name\":\"Other\\u12G4\",")]
+    [InlineData("\"Codeunits\":[{\"Name\":\"Other\\")]
+    [InlineData("\"Codeunits\":[{\"Name\":\"Other\\\\\\a\",")]
+    public void AnUnreadablePackage_WithAnEscapeTheSearchCannotDecode_Refuses(string symbols)
+    {
+        var (reason, notes) = Probe(new[] { Package("bad.app", "Broken", symbols) }, Name);
+        Assert.StartsWith("the package Broken 1.0.0.0 (bad.app) could not be read (", reason);
+        Assert.Empty(notes);
+    }
+
+    /// <summary>The other direction: BC's own writer emits \n \t \r \b \f \" \\ \/ and \u escapes in captions and doc
+    /// comments, so an unrelated package whose text holds all of them and is unreadable for another reason (a trailing
+    /// comma) is still skipped when the name is absent. The rule is "unknown escape refuses", not "any backslash".</summary>
+    [Fact]
+    public void AnUnreadablePackage_WithOnlyKnownEscapes_AndTheNameAbsent_IsStillSkipped()
+    {
+        const string symbols = "\"Codeunits\":[{\"Name\":\"Other\",\"Caption\":\"a\\nb \\\"q\\\" \\\\ \\t\\r\\b\\f \\/ \\u0026 \\'x\\'\",";
+        var (reason, notes) = Probe(new[] { Package("bad.app", "Broken", symbols) }, Name);
+        Assert.Null(reason);
+        Assert.Single(notes);
+    }
+
+    private BcCompiler.PackageScanEntry NestedPackage(string file, string name, string outerSymbols, string nestedSymbols)
+    {
+        var path = Path.Combine(_scratch, file);
+        File.WriteAllBytes(path, TddMissingObjectPackageTests.BuildPackage(outerSymbols,
+            nestedApp: TddMissingObjectPackageTests.BuildPackage(nestedSymbols)));
+        return new BcCompiler.PackageScanEntry(path, Guid.NewGuid(), "AL Runner Fixtures", name, new Version(1, 0, 0, 0));
+    }
+
+    /// <summary>A package carries one SymbolReference.json per module (the outer .app and the .app nested in it), and the
+    /// search reads every one: a broken outer module with the name only in the nested one still refuses; with the name in
+    /// neither the package is skipped.</summary>
+    [Fact]
+    public void AnUnreadablePackage_SearchesEveryModule_NotOnlyTheFirst()
+    {
+        var inNested = NestedPackage("n1.app", "Nested", "\"Codeunits\":[", "\"Codeunits\":[{\"Id\":65390,\"Name\":\"Nowhere Declared Points\",\"Methods\":[],\"Properties\":[]}]");
+        var (refused, refusedNotes) = Probe(new[] { inNested }, Name);
+        Assert.StartsWith("the package Nested 1.0.0.0 (n1.app) could not be read (", refused);
+        Assert.Empty(refusedNotes);
+
+        var inNeither = NestedPackage("n2.app", "Nested", "\"Codeunits\":[", "\"Codeunits\":[{\"Id\":65391,\"Name\":\"Other Points\",\"Methods\":[],\"Properties\":[]}]");
+        var (skipped, skippedNotes) = Probe(new[] { inNeither }, Name);
+        Assert.Null(skipped);
+        Assert.Single(skippedNotes);
     }
 
     /// <summary>Text that is not ASCII-compatible once decoded (a NUL: UTF-16 with no byte-order mark reads as

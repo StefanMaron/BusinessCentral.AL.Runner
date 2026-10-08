@@ -156,13 +156,20 @@ public static partial class TddGeneration
         return null;
     }
 
+    // One JSON escape, left to right so `\\` is consumed before the character after it. The first two groups are the
+    // escapes decoded; `other` takes anything else, including a lone trailing backslash and a short \u.
+    private static readonly System.Text.RegularExpressions.Regex JsonEscape = new(
+        @"\\(?:u(?<hex>[0-9a-fA-F]{4})|(?<simple>[""\\/'nrtbf])|(?<other>[\s\S]?))",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
     /// <summary>
-    /// True unless the text of the package's <c>SymbolReference.json</c> files proves they cannot declare
-    /// <paramref name="name"/>: it is searched ignoring case after the JSON escapes that could hide it are undone
-    /// (<c>\uXXXX</c> any case, <c>\/</c>). When in doubt true, because a wrong false is a shadow again (#5446):
-    /// a name holding a quote, backslash or control character (spelled with an escape the search does not undo), and
-    /// text holding a NUL (UTF-16 without a byte-order mark reads as interleaved NULs). Throws when the file cannot be
-    /// read at all; the caller reads that as true too.
+    /// True unless the text of the package's <c>SymbolReference.json</c> files (every module) proves they cannot declare
+    /// <paramref name="name"/>: it is searched ignoring case after the JSON escapes are decoded (<c>\uXXXX</c> of either
+    /// case, <c>\/ \" \\ \' \n \r \t \b \f</c>). When in doubt true, because a wrong false is a shadow again (#5446):
+    /// BC reads symbols with Newtonsoft, more permissive than the reader that refused the file, so any other backslash
+    /// sequence (invalid in both, Newtonsoft-only, future) means the text cannot be trusted and refuses; so does a name
+    /// holding a backslash, quote or control character, and text holding a NUL (UTF-16 without a byte-order mark reads
+    /// as interleaved NULs). Throws when the file cannot be read at all; the caller reads that as true too.
     /// </summary>
     private static bool SymbolTextMayMention(string packagePath, string name)
     {
@@ -170,9 +177,14 @@ public static partial class TddGeneration
         foreach (var raw in Patches.BcAppSymbolCache.ReadSymbolReferences(packagePath))
         {
             if (raw.Contains('\0')) return true;
-            var text = System.Text.RegularExpressions.Regex.Replace(raw.Replace("\\/", "/"), @"\\u([0-9a-fA-F]{4})",
-                m => ((char)Convert.ToInt32(m.Groups[1].Value, 16)).ToString());
-            if (text.Contains(name, StringComparison.OrdinalIgnoreCase)) return true;
+            var unknownEscape = false;
+            var text = JsonEscape.Replace(raw, m =>
+            {
+                if (m.Groups["hex"].Success) return ((char)Convert.ToInt32(m.Groups["hex"].Value, 16)).ToString();
+                if (!m.Groups["simple"].Success) { unknownEscape = true; return m.Value; }
+                return m.Groups["simple"].Value[0] switch { 'n' => "\n", 'r' => "\r", 't' => "\t", 'b' => "\b", 'f' => "\f", var c => c.ToString() };
+            });
+            if (unknownEscape || text.Contains(name, StringComparison.OrdinalIgnoreCase)) return true;
         }
         return false;
     }
