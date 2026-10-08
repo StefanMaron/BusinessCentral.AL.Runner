@@ -359,6 +359,8 @@ var isolation = AlRunner.TestIsolation.Codeunit;
 bool strictExitCode = true;
 // --test PATTERN: substring filter applied to "Codeunit.Method" — case-insensitive.
 string? testFilter = null;
+// --test-exact NAME (repeatable): select a test by its WHOLE qualified name CodeunitNNNN.Method, case-insensitive (#5439).
+var testExact = new List<string>();
 // --test-timeout SECONDS: per-test timeout override (v1 carryover; v2 previously
 // hardcoded 60s with no CLI override — see #1648). Takes precedence over the
 // AL_RUNNER_TEST_TIMEOUT_SEC env var. Null = env var / 60s default.
@@ -602,6 +604,7 @@ for (int i = 0; i < args.Length; i++)
     if (args[i] == "--strict") { strictExitCode = true; continue; }  // no-op: default since the v2 cut
     if (args[i] == "--no-strict-exit") { strictExitCode = false; continue; }
     if ((args[i] == "--test" || args[i] == "--filter") && i + 1 < args.Length) { testFilter = args[++i]; continue; }
+    if (args[i] == "--test-exact" && i + 1 < args.Length) { testExact.Add(args[++i]); continue; }
     if (args[i] == "--test-timeout" && i + 1 < args.Length)
     {
         var rawTimeout = args[++i];
@@ -677,6 +680,13 @@ for (int i = 0; i < args.Length; i++)
 // resolver that reads AlRunner.Infrastructure.BcArtifacts.SelectedCountry gets a chance
 // to run. The setter itself normalizes (trim + lowercase, empty/whitespace -> "w1").
 AlRunner.Infrastructure.BcArtifacts.SelectedCountry = countryArg;
+// #5439: a --server request replaces the executor's exact selection on every runTests call, so a
+// startup --test-exact would be dropped without a word; the per-request forms are runTests' test field.
+if (serverMode && testExact.Count > 0)
+{
+    Console.Error.WriteLine("--test-exact is not supported with --server: a runTests request selects with its own test field (a --test pattern), and a startup --test-exact would be ignored.");
+    return 2;
+}
 if (serverMode && watchMode)
 {
     Console.Error.WriteLine("--server and --watch are mutually exclusive (both stay warm in-process; pick one).");
@@ -693,7 +703,7 @@ if (watchAffected || watchIncludeFailing || watchStrictEnvironment)
         : !watchMode ? "--affected is only valid with --watch (a --server client sets runTests' affectedOnly instead)."
         : tddMode ? "--affected cannot be combined with --tdd."
         : !bundledMode ? "--affected cannot be combined with --per-suite."
-        : testFilter != null ? "--affected cannot be combined with --test/--filter: selection decides which tests run."
+        : (testFilter != null || testExact.Count > 0) ? "--affected cannot be combined with --test/--filter/--test-exact: selection decides which tests run."
         : null;
     if (affectedProblem != null)
     {
@@ -2369,6 +2379,13 @@ AlRunner.PerfTrace.Log($"BcRuntime.EnsureApplied {t0.ElapsedMilliseconds}ms");
 var emitter = new BcCompiler();
 var assembler = new BcAssembler();
 var executor = new TestExecutor { Isolation = isolation, TestFilter = testFilter, TimeoutSeconds = testTimeoutSeconds, Expectations = expectations };
+// #5439: --test-exact picks tests by whole qualified name. The executor's exact allowlist is the
+// existing mechanism (the server's affectedOnly selection feeds it); OrdinalIgnoreCase makes the
+// comparison case-insensitive like --test and --exclude-test, and Trim mirrors TestExclusionFilter.
+if (testExact.Count > 0)
+    executor.ExactTestFilter = new HashSet<string>(
+        testExact.Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim()),
+        StringComparer.OrdinalIgnoreCase);
 // --exclude-test: the only way to reach tests a watchdog abort abandoned. TestExecutor stops
 // the whole suite when a test hangs — correctly, since the hung thread is never killed and
 // keeps mutating shared BC state — so those tests are reachable only from a fresh process that
@@ -5366,21 +5383,29 @@ if (expectationsRequireMatch)
 // parent decides (TestSelectionAudit). A bundle that did not compile or execute, a sliced
 // resume attempt or a lost carry file makes the zero unattributable, so those stand down.
 bool testSelectionEmpty = false;
-if (testFilter != null && !watchMode && !willResume && !carryIncomplete)
+if ((testFilter != null || testExact.Count > 0) && !watchMode && !willResume && !carryIncomplete)
 {
-    var selected = executor.FilterSelectedCount + carriedResults.Sum(b => (long)b.Tests.Count);
+    // #5439: what the selection left TO RUN. --exclude-test that removes every selected test is the
+    // same zero as a selection that matched nothing. A run carrying earlier attempts keeps the
+    // before-exclusion count: its exclusions are the accumulated hung tests, which are meant to vanish.
+    var selectedBeforeExclusion = executor.FilterSelectedCount + carriedResults.Sum(b => (long)b.Tests.Count);
+    var excludedAll = carriedResults.Count == 0 && selectedBeforeExclusion > 0
+        && executor.FilterExcludedCount == selectedBeforeExclusion;
+    var selected = selectedBeforeExclusion - (carriedResults.Count == 0 ? executor.FilterExcludedCount : 0);
     if (AlRunner.Infrastructure.TestSelectionAudit.IsWorker)
         Console.Error.WriteLine(AlRunner.Infrastructure.TestSelectionAudit.FormatWorkerLine(selected));
     else if (selected == 0 && allResults.All(b => b.Tests.Count == 0))
     {
+        var selectionText = AlRunner.Infrastructure.TestSelectionAudit.SelectionText(testFilter, testExact);
         if (allResults.Any(b => b.Stage is BucketStage.CompileFailed or BucketStage.ExecuteFailed || b.CompileErrors.Count > 0))
             Console.Error.WriteLine(
-                $"test-selection: --test '{testFilter}' selected no test, not judged: a bundle did not "
-                + "compile or execute, so its tests were never offered to the pattern.");
+                $"test-selection: {selectionText} selected no test, not judged: a bundle did not "
+                + "compile or execute, so its tests were never offered to the selection.");
         else
         {
             testSelectionEmpty = true;
-            Console.Error.WriteLine("test-selection: " + AlRunner.Infrastructure.TestSelectionAudit.Describe(testFilter));
+            Console.Error.WriteLine("test-selection: " + AlRunner.Infrastructure.TestSelectionAudit.Describe(
+                testFilter, testExact, excludedAll, excludesInEffect: false));
         }
     }
 }

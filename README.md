@@ -289,7 +289,7 @@ table is a copy and the CLI is the authority.
 | `3` | A bundle could not compile |
 | `4` | `--count-baseline`: a suite's test or app-group count did not exactly match its declared baseline, or under `--count-baseline-require-all` a declared suite produced no bucket |
 | `5` | `--expectations-require-match`: an expectations entry matched no test in this run |
-| `6` | `--test PATTERN` selected no test in this run (under `--jobs`, summed across workers; not applied in `--watch`/`--server`) |
+| `6` | `--test PATTERN` / `--test-exact NAME` selected no test in this run, or `--exclude-test` removed every test they selected (under `--jobs`, summed across workers; not applied in `--watch`/`--server`) |
 
 When a run holds several of these at once it reports the most fundamental, in the order
 **`3` > `2` > `4` > `6` > `1` > `5`**. The boundary that matters is between `3`/`2`/`4`/`6` — *this

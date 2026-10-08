@@ -167,10 +167,16 @@ public sealed class TestExecutor
     /// </summary>
     public long FilterSelectedCount { get; private set; }
     /// <summary>
+    /// How many of <see cref="FilterSelectedCount"/> --exclude-test then removed, counted at the same
+    /// point. Equal to it means the exclusions left nothing to run (#5439).
+    /// </summary>
+    public long FilterExcludedCount { get; private set; }
+    /// <summary>
     /// Optional exact-match test allowlist in the same "{Codeunit}.{Method}" key shape
     /// ServerProtocol emits on the wire. Null = unchanged behaviour (no exact allowlist).
     /// Applied after <see cref="TestFilter"/>, so callers can combine a coarse substring
-    /// filter with a precise per-test subset.
+    /// filter with a precise per-test subset. Also the CLI's <c>--test-exact</c> (#5439), whose set
+    /// is case-insensitive; the server's affectedOnly set is ordinal.
     /// </summary>
     public IReadOnlySet<string>? ExactTestFilter { get; set; }
 
@@ -910,12 +916,22 @@ public sealed class TestExecutor
             scanMs += stageSw.ElapsedMilliseconds;
             if (!isTestCu) continue;
             if (filter != null && !CodeunitMatchesFilter(t, filter)) continue;
+            // #5439: a codeunit holding none of the exact names is not instantiated either, so its
+            // constructor or global initialisation cannot fail a run that never selected it.
+            if (exactFilter != null && !t.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .Any(m => IsTestMethod(m) && exactFilter.Contains($"{t.Name}.{m.Name}"))) continue;
             // After the filter, so a codeunit --test deselects is never claimed, and before the
             // selected count so the workers' counts sum to the run's (#5130).
             if (UnitClaim != null && !UnitClaim.TryClaim(assembly.GetName().Name ?? "", t.Name)) continue;
-            if (filter != null)
-                FilterSelectedCount += t.GetMethods(BindingFlags.Public | BindingFlags.Instance)
-                    .Count(m => IsTestMethod(m) && MethodMatchesFilter(t.Name, m.Name, filter));
+            if (filter != null || exactFilter != null)
+                foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+                {
+                    if (!IsTestMethod(m)) continue;
+                    if (filter != null && !MethodMatchesFilter(t.Name, m.Name, filter)) continue;
+                    if (exactFilter != null && !exactFilter.Contains($"{t.Name}.{m.Name}")) continue;
+                    FilterSelectedCount++;
+                    if (Exclusions?.IsExcluded(t.Name, m.Name) == true) FilterExcludedCount++;
+                }
 
             // W-8b A-prime: this assembly may contain AL [EventSubscriber] codeunits whose
             // classes weren't in AppDomain when PopulateNclMetadataCache initially ran

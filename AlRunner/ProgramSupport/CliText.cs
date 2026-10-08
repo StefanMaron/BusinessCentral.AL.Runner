@@ -623,7 +623,17 @@ internal static partial class ProgramSupport
         w.WriteLine("                          --jobs, summed across workers). Not judged in --watch, where");
         w.WriteLine("                          each cycle reports its own count. Under --server a request");
         w.WriteLine("                          sets it per request with runTests' test field, with the same");
-        w.WriteLine("                          exit 6 (a startup --test is not judged).");
+        w.WriteLine("                          exit 6 (a startup --test is not judged). With --exclude-test,");
+        w.WriteLine("                          a run whose exclusions remove every test PATTERN selected is");
+        w.WriteLine("                          also exit 6 (CLI only; a server request keeps exit 0).");
+        w.WriteLine("  --test-exact NAME       Run only the test whose WHOLE qualified name is NAME");
+        w.WriteLine("                          (Codeunit78950.GrowPre), case-insensitively; repeatable.");
+        w.WriteLine("                          Unlike --test it is never a substring, so GrowPre does not");
+        w.WriteLine("                          select GrowPreTwin. A codeunit name alone is not a test");
+        w.WriteLine("                          name. Combined with --test it is the intersection; with");
+        w.WriteLine("                          --exclude-test, the names that remain. Selecting no test");
+        w.WriteLine("                          (or all removed by --exclude-test) is exit 6, as for --test.");
+        w.WriteLine("                          Refused with --server and with --watch --affected.");
         w.WriteLine("  --isolation MODE, --test-isolation MODE");
         w.WriteLine("                          Test isolation:");
         w.WriteLine("                            codeunit  state shared inside a codeunit, reset between");
@@ -977,7 +987,8 @@ internal static partial class ProgramSupport
         w.WriteLine("                               produced no bucket");
         w.WriteLine("                            5  --expectations-require-match: an expectations entry matched");
         w.WriteLine("                               no test in this run");
-        w.WriteLine("                            6  --test PATTERN selected no test in this run");
+        w.WriteLine("                            6  --test/--test-exact selected no test in this run, or");
+        w.WriteLine("                               --exclude-test removed every test they selected");
         w.WriteLine("  --no-strict-exit        Always exit 0 regardless of test outcome, so callers can");
         w.WriteLine("                          parse the JSON output without the process failing the step.");
         w.WriteLine("  --dump-csharp DIR       Write the intermediate C# emitted by BC's Compilation.Emit");
