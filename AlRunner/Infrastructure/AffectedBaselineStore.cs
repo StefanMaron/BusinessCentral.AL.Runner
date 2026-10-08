@@ -48,8 +48,11 @@ internal static class AffectedBaselineStore
     //    file holds the C# name ("On_Quoted_Work"); read, it would skip that event's raisers for good.
     // 8: #5087's compile inputs ("Inputs") in each module. A version-7 file never recorded them, so it
     //    cannot say a layout file or a control add-in resource is unchanged: it is no baseline.
-    internal const int SchemaVersion = 8;
-    internal const int OldestReadableSchema = 8;
+    // 9: #5088's "rext|<extension>|<report>" bundle-wide keys. A version-8 file never recorded them, so a
+    //    reportextension edited to extend another report, or removed since, could not name the report it
+    //    extended: it is no baseline.
+    internal const int SchemaVersion = 9;
+    internal const int OldestReadableSchema = 9;
     internal const string CacheName = "affected-baseline";
 
     /// <summary>The file for one request's bundle set. Order and duplicates do not change the key.</summary>

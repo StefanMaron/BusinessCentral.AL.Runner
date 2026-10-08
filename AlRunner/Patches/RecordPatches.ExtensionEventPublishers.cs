@@ -109,6 +109,49 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// #5088: every reportextension id this run knows (source-parsed, then precompiled in a dependency
+    /// .app, where a same-numbered source-parsed one wins) to the ids its base report name resolves to
+    /// among the source-parsed and the dependency reports; empty when it resolves to none. Same-named
+    /// reports all count, which can only select more tests. Null when a dependency .app's symbols
+    /// cannot be read, which is no answer rather than "no extensions".
+    /// </summary>
+    internal static Dictionary<int, List<int>>? ReportExtensionBaseReportIds()
+    {
+        try
+        {
+            var reportIdsByName = new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
+            void Index(string name, int id)
+            {
+                var key = NameKey(name);
+                if (!reportIdsByName.TryGetValue(key, out var ids)) reportIdsByName[key] = ids = new List<int>();
+                if (!ids.Contains(id)) ids.Add(id);
+            }
+            foreach (var r in _parsedReports.Values) Index(r.Name, r.Id);
+            var dependencies = DependencyAppSymbols().ToList();
+            foreach (var symbols in dependencies)
+                foreach (var r in symbols.Reports)
+                    Index(r.Name, r.Id);
+
+            var result = new Dictionary<int, List<int>>();
+            void Add(int extId, string? baseName)
+                => result[extId] = baseName is { Length: > 0 } && reportIdsByName.TryGetValue(NameKey(baseName), out var ids)
+                    ? ids.ToList() : new List<int>();
+            foreach (var ext in _parsedReportExtensions.Values) Add(ext.Id, ext.BaseObjectName);
+            foreach (var symbols in dependencies)
+                foreach (var ext in symbols.ReportExtensions ?? (IReadOnlyList<BcAppSymbolCache.ReportExtensionSymbol>)Array.Empty<BcAppSymbolCache.ReportExtensionSymbol>())
+                    if (!result.ContainsKey(ext.Id)) Add(ext.Id, ext.TargetName);
+            return result;
+        }
+        catch (AlRunner.Infrastructure.BcAppSymbolReadException)
+        {
+            return null;
+        }
+
+        // The NamesEqual rule (case- and space-insensitive) as a dictionary key.
+        static string NameKey(string name) => name.Replace(" ", "");
+    }
+
+    /// <summary>
     /// The extension ids of base object <paramref name="baseId"/> of <paramref name="baseKind"/>
     /// (<c>Table</c>, <c>Page</c>, <c>Report</c>), source-parsed and precompiled — the registries
     /// the extension instances themselves are created from.

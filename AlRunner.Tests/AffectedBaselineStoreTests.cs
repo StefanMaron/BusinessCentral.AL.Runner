@@ -191,6 +191,24 @@ public class AffectedBaselineStoreTests
         Assert.Contains("schema version 7", schema7.Unusable);
     }
 
+    /// <summary>A version-8 file never recorded the <c>rext|</c> keys (#5088), so a reportextension edited to
+    /// extend another report, or removed since, cannot name the report it extended: it must read as no
+    /// baseline, forcing a full run.</summary>
+    [Fact]
+    public void SchemaEightFile_WithoutReportExtensionBases_IsNoBaseline()
+    {
+        var dir = TestScratch.Dir("al-runner-affected-store-schema8");
+        var path = Path.Combine(dir, "s.json");
+        AffectedBaselineStore.Write(path, Sample());
+        Assert.NotNull(AffectedBaselineStore.Load(path).Baseline);
+
+        var current = AffectedBaselineStore.SchemaVersion;
+        File.WriteAllText(path, File.ReadAllText(path).Replace($"\"Schema\":{current},", "\"Schema\":8,", StringComparison.Ordinal));
+        var schema8 = AffectedBaselineStore.Load(path);
+        Assert.Null(schema8.Baseline);
+        Assert.Contains("schema version 8", schema8.Unusable);
+    }
+
     /// <summary>A changed compile input forces a full run naming the file; an unchanged one does not (#5087).</summary>
     [Fact]
     public void ChangedSince_AChangedCompileInput_ForcesAFullRunNamingIt_AnUnchangedOneDoesNot()

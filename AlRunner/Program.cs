@@ -8215,7 +8215,8 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 activePreviousEvents != null
                 && activePreviousEvents.TryGetValue(AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey, out var bundleWide)
                     ? bundleWide : null,
-                AlRunner.Patches.RecordPatches.PageExtensionBasePageIds());
+                AlRunner.Patches.RecordPatches.PageExtensionBasePageIds(),
+                AlRunner.Patches.RecordPatches.ReportExtensionBaseReportIds());
             foreach (var (recordEnv, keys) in resolved.KeysByRecord) activeEnvKeysByRecord[recordEnv] = keys;
             activeExactRecordEnvs.UnionWith(resolved.ExactRecords);
             activeDrift = resolved.Info;
@@ -8267,6 +8268,13 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                             activePreviousEvents != null
                             && activePreviousEvents.TryGetValue(AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey, out var bundleWidePageBases)
                                 ? bundleWidePageBases : null);
+                        // #5088: a reportextension selects the tests that ran its base report.
+                        var reportExtensionResult = AlRunner.Infrastructure.AffectedEventSelection.ChangedReportExtensionKeys(
+                            activeChangedObjectIds.Select(o => (o.Kind, o.Id)),
+                            AlRunner.Patches.RecordPatches.ReportExtensionBaseReportIds(),
+                            activePreviousEvents != null
+                            && activePreviousEvents.TryGetValue(AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey, out var bundleWideReportBases)
+                                ? bundleWideReportBases : null);
                         // #5084: an object another test's metadata table read lists.
                         var metadataResult = AlRunner.Infrastructure.AffectedMetadataTables.ChangedKeys(
                             activeChangedObjectIds,
@@ -8278,17 +8286,19 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                         var unkeyedKindReason = AlRunner.Infrastructure.AffectedEventSelection.UnkeyedKindChange(activeChangedObjectIds);
                         if (unkeyedKindReason != null || eventResult.ForceFullReason != null || tableResult.ForceFullReason != null
                             || longLivedReason != null || pageExtensionResult.ForceFullReason != null
-                            || metadataResult.ForceFullReason != null)
+                            || reportExtensionResult.ForceFullReason != null || metadataResult.ForceFullReason != null)
                         {
                             activeForcedFull = true;
                             activeForcedReason = unkeyedKindReason ?? eventResult.ForceFullReason ?? tableResult.ForceFullReason
-                                ?? longLivedReason ?? pageExtensionResult.ForceFullReason ?? metadataResult.ForceFullReason;
+                                ?? longLivedReason ?? pageExtensionResult.ForceFullReason ?? reportExtensionResult.ForceFullReason
+                                ?? metadataResult.ForceFullReason;
                         }
                         else
                         {
                             changedEventKeys = eventResult.Keys.Union(tableResult.Keys).Union(metadataResult.Keys).ToHashSet(StringComparer.Ordinal);
                             activeChangedObjectKeys = changedObjectKeys;
                             changedObjectKeys.UnionWith(pageExtensionResult.Keys);
+                            changedObjectKeys.UnionWith(reportExtensionResult.Keys);
                         }
                     }
                 }
@@ -8598,11 +8608,14 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                     exts.Add(ext);
                 }
             var eventsByTest = AlRunner.Infrastructure.AlEventRaiseTracker.CollectPerTest(extensionsOfTable);
-            // #5025: the base of every pageextension now, so a later removal can still be keyed.
-            var pageExtensionBaseKeys = new HashSet<string>(StringComparer.Ordinal);
+            // #5025, #5088: the base of every page- and reportextension now, so a later removal can still be keyed.
+            var extensionBaseKeys = new HashSet<string>(StringComparer.Ordinal);
             foreach (var (ext, pages) in AlRunner.Patches.RecordPatches.PageExtensionBasePageIds() ?? new Dictionary<int, List<int>>())
                 foreach (var page in pages)
-                    pageExtensionBaseKeys.Add(AlRunner.Infrastructure.AffectedEventSelection.PageExtensionBaseKey(ext, page));
+                    extensionBaseKeys.Add(AlRunner.Infrastructure.AffectedEventSelection.PageExtensionBaseKey(ext, page));
+            foreach (var (ext, reports) in AlRunner.Patches.RecordPatches.ReportExtensionBaseReportIds() ?? new Dictionary<int, List<int>>())
+                foreach (var report in reports)
+                    extensionBaseKeys.Add(AlRunner.Infrastructure.AffectedEventSelection.ReportExtensionBaseKey(ext, report));
             var bundleWideKey = AlRunner.Infrastructure.AlEventRaiseTracker.BundleWideKey;
             // #5011: objects built and scopes entered, which an empty body or a page without
             // triggers leaves out of statement coverage.
@@ -8838,7 +8851,7 @@ AlRunner.Infrastructure.AffectedRunOutcome RunTestsWithSelection(AlRunner.Infras
                 // tests' long-lived records, so the previous entry's are kept as well.
                 var bundleWide = new HashSet<string>(eventsByTest[bundleWideKey], StringComparer.Ordinal);
                 bundleWide.UnionWith(longLivedObjectKeys);
-                bundleWide.UnionWith(pageExtensionBaseKeys);
+                bundleWide.UnionWith(extensionBaseKeys);
                 foreach (var type in longLivedTypes)
                     if ((UsedObjectOf(type) is not { } lo
                             || AlRunner.Infrastructure.DependencyPackageFingerprint.IsUnderAny(lo.Path, packagedSourceRoots))
