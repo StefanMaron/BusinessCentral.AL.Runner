@@ -66,7 +66,9 @@ public sealed class DependencyAppSymbolWalkSourceGuardTests
         ("AlRunner/TddGeneration.MissingObject.cs", 1,
             "#5446: FindPackageDeclaringCodeunit, which asks every scanned package whether it declares the "
             + "codeunit --tdd is about to generate. Vanished or unreadable -> a refusal naming the package "
-            + "(it may be the object's home), never a skip: reading it as absent would shadow the real object."),
+            + "(it may be the object's home), unless (#5450) the package's symbols TEXT proves the name is not in it "
+            + "(SymbolTextMayMention: an unreadable file, an escaped name or a NUL always refuses): then a --tdd note and "
+            + "a skip. Reading an unreadable package as absent without that proof would shadow the real object."),
 
         ("AlRunner/Patches/EnumMetadataPatches.cs", 1,
             "#3143: AlEnumMetadataRegistry.RegisterFromAppPath — no live callers, but public, "
