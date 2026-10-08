@@ -235,4 +235,51 @@ public sealed class TddMissingObjectPackageProbeTests : IDisposable
         const string both = table + ",\"Codeunits\":[{\"Id\":65411,\"Name\":\"Nowhere Declared Points\",\"Methods\":[],\"Properties\":[]}]";
         Assert.NotNull(TddGeneration.FindPackageDeclaringCodeunit(new[] { Package("t2.app", "Tabular", both) }, Name));
     }
+
+    private const string TableName = "Nowhere Declared Ledger";
+    private const string LedgerTable = "\"Tables\":[{\"Id\":65410,\"Name\":\"Nowhere Declared Ledger\",\"Fields\":[],\"Properties\":[]}]";
+
+    /// <summary>#5445, the table half of the kind check: a package's TABLE of the name is refused, in the table's words,
+    /// and a package's CODEUNIT of the same name does not block it (the mirror of the test above).</summary>
+    [Fact]
+    public void ATableOfThePackage_BlocksTheTable_AndACodeunitOfTheNameDoesNot()
+    {
+        var reason = TddGeneration.FindPackageDeclaringObject(new[] { Package("t.app", "Tabular", LedgerTable) }, TableName, "Table");
+        Assert.StartsWith("the package Tabular 1.0.0.0 (t.app) declares it - if the test means that table, add the dependency on it to app.json; if it means a new one, give it another name; an empty table would shadow it", reason);
+
+        const string codeunit = "\"Codeunits\":[{\"Id\":65411,\"Name\":\"Nowhere Declared Ledger\",\"Methods\":[],\"Properties\":[]}]";
+        Assert.Null(TddGeneration.FindPackageDeclaringObject(new[] { Package("c.app", "Codeful", codeunit) }, TableName, "Table"));
+        Assert.Null(TddGeneration.FindPackageDeclaringObject(new[] { Package("x.app", "Neither", Other) }, TableName, "Table"));
+    }
+
+    /// <summary>An unreadable package mentioning the name may be the table's home, and says "table" when it refuses.</summary>
+    [Fact]
+    public void AnUnreadablePackageMentioningTheTableName_RefusesInTheTablesWords()
+    {
+        var reason = TddGeneration.FindPackageDeclaringObject(
+            new[] { Package("bad.app", "Broken", "\"Tables\":[{\"Id\":65390,\"Name\":\"NOWHERE declared ledger\",") }, TableName, "Table");
+        Assert.StartsWith("the package Broken 1.0.0.0 (bad.app) could not be read (", reason);
+        Assert.Contains("so it cannot be ruled out as the home of the table;", reason);
+    }
+
+    /// <summary>The sibling-bundle text probe (#5431) for a table: a `table N "Name"` declaration of another bundle is
+    /// found, a table of another name, a tableextension and a codeunit of the same name are not.</summary>
+    [Fact]
+    public void ASiblingBundlesTable_IsFoundByTheTextProbe_AndNothingElseIs()
+    {
+        var bundle = Path.Combine(_scratch, "bundle");
+        Directory.CreateDirectory(bundle);
+        File.WriteAllText(Path.Combine(bundle, "Other.al"),
+            "tableextension 50000 \"Nowhere Declared Ledger\" extends Customer { }\ncodeunit 50001 \"Nowhere Declared Ledger\" { }\ntable 50002 \"Different Ledger\" { }\n");
+        TddCrossBundle.RegisterRunBundle(bundle);
+        try
+        {
+            Assert.Null(TddCrossBundle.RunDeclaresTable(TableName));
+            File.WriteAllText(Path.Combine(bundle, "Ledger.Table.al"), "table 50003 \"nowhere DECLARED ledger\"\n{\n}\n");
+            Assert.Equal(Path.Combine(bundle, "Ledger.Table.al"), TddCrossBundle.RunDeclaresTable(TableName));
+            // The codeunit probe sees the codeunit in Other.al and never the table file.
+            Assert.Equal(Path.Combine(bundle, "Other.al"), TddCrossBundle.RunDeclaresCodeunit("Nowhere Declared Ledger"));
+        }
+        finally { TddCrossBundle.ClearSourceImpls(); }
+    }
 }

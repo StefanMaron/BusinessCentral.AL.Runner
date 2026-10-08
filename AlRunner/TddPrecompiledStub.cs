@@ -49,13 +49,23 @@ internal static class TddPrecompiledStub
     /// <summary>The first object id of <paramref name="idRanges"/> that no codeunit of <paramref name="trees"/>
     /// uses and <paramref name="reserved"/> does not hold.</summary>
     internal static int? FreeCodeunitId(NavSyntax.SyntaxTree[] trees, IReadOnlyList<(int From, int To)> idRanges,
-        ISet<int> reserved)
+        ISet<int> reserved) => FreeObjectId(trees, idRanges, reserved,
+            o => o is NavSyntax.CodeunitSyntax cu ? cu.ObjectId?.Value.Value as int? : null);
+
+    /// <summary>The same for a table (#5445). Ids are per object type, so a codeunit with id 65322 does not take
+    /// it from a table.</summary>
+    internal static int? FreeTableId(NavSyntax.SyntaxTree[] trees, IReadOnlyList<(int From, int To)> idRanges,
+        ISet<int> reserved) => FreeObjectId(trees, idRanges, reserved,
+            o => o is NavSyntax.TableSyntax t ? t.ObjectId?.Value.Value as int? : null);
+
+    private static int? FreeObjectId(NavSyntax.SyntaxTree[] trees, IReadOnlyList<(int From, int To)> idRanges,
+        ISet<int> reserved, Func<NavSyntax.ObjectSyntax, int?> idOfThisType)
     {
         var used = new HashSet<int>(reserved);
         foreach (var t in trees)
             if (t.GetRoot() is NavSyntax.CompilationUnitSyntax root)
                 foreach (var o in root.Objects)
-                    if (o is NavSyntax.CodeunitSyntax cu && cu.ObjectId?.Value.Value is int id) used.Add(id);
+                    if (idOfThisType(o) is int id) used.Add(id);
         foreach (var (from, to) in idRanges)
             for (var id = from; id <= to; id++)
                 if (!used.Contains(id)) return id;

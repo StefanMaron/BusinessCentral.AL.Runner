@@ -1,4 +1,4 @@
-# `--tdd` and a codeunit that no app declares (#5431)
+# `--tdd` and a codeunit or table that no app declares (#5431, #5445)
 
 `al-runner --tdd test`, where a test names a codeunit that exists in no app of the run:
 
@@ -30,6 +30,42 @@ Each test that reaches the object is annotated like any generated member (`gener
 declares the variable, or passes it on, names the object alone. "Reaches" is the static call graph of
 `TddCallGraph` from the type reference, and for a variable declared outside any procedure (a global of the test
 codeunit) from every mention of its name in the object.
+
+## A table (#5445)
+
+```al
+[Test] procedure UsesATable()
+var T: Record "No Such Table";
+begin T."Amount" := 5; T.Insert(); end;
+```
+
+`error AL0185: Table 'No Such Table' is missing`, handled like the codeunit above, with these differences:
+
+- **The shape.** AL refuses an empty table (`AL0366: A table has to have at least one Normal field`, measured), so the
+  generated table has ONE field, `"TDD Key": Integer` with `AutoIncrement = true`, and a clustered primary key on it.
+  The key is explicit although the compiler accepts a keyless table and the runner gave the same results for both
+  (measured), so a compiler that requires one does not change the result. AutoIncrement because no test can name this field to
+  give each row its own key: without it a second `Insert` is "The record already exists". Cost: `T.Get(1)` finds the
+  first row inserted, not a row the test keyed; a test that needs its own key values stays unable to say so, loudly.
+- **Fields.** The existing member generation does the rest in the repeat compile, for a table that is generated exactly
+  as for one the app declares: a field is added from `Rec.Field := <typed expression>` and from nothing else. Measured on a
+  table that EXISTS and lacks the field (so not specific to this change): `T.Amount := 3` is generated, a field that is
+  only read (`X := T.Qty`) is AL0132 and not generated, a field named in `SetRange`, `FieldNo` or `Get` arguments is AL0118
+  and not generated, a Text assignment has no length to infer. Each of these FAILS the file naming it, loudly; the table
+  is still generated.
+- **Annotation.** `No Such Table: table 65322` for the object, `No Such Table: field "Amount": Integer` for each
+  field; the stderr line says the placeholder key is the table's only field.
+- **Ids** come from the same `idRanges`, free for TABLES only: a codeunit with the same number does not take it, nor a table
+  a codeunit's (`TddPrecompiledStub.FreeTableId`). A codeunit and a table may share a name, and each is generated and
+  annotated on its own; a missing field of the table is added to the table, never to the codeunit beside it
+  (`TddGeneration.TryGenerate` matches the object by name AND type).
+- **The record engine** reads a table's shape from its own parse of the source files, which cannot see an in-memory
+  object, so the generated table is handed to it as well (`RecordPatches.TddReparseAndRefreshTable`, the call a generated
+  field already needs).
+- **Refused** like a codeunit, with a table's words: a table of that name in another module or namespace, in another
+  bundle of the run (`TddCrossBundle.RunDeclaresTable`: a `table <id> "Name"` declaration, never a `tableextension`), in a
+  package (readable or not, `FindPackageDeclaringObject` with the symbol cache's kind `Table`; a package's CODEUNIT of the
+  name does not block a table, nor its table a codeunit), a name written as an id or with a namespace, no free table id.
 
 ## Refused, and the run says why (`--tdd: codeunit "X" not generated - ...`)
 
@@ -98,7 +134,7 @@ dependency is AL0185.
   another file naming it is not touched. If that file is dropped (a call `--tdd` refuses elsewhere in it, or any
   other compile error), the object goes with it and every other file naming it is dropped too, reported FAILED
   with the emitter's own message rather than the AL0185. Loud, never a silent pass, but one refused call in the
-  first file costs the others. Measured, not fixed here (#5447).
+  first file costs the others. Measured, not fixed here (#5447). The same holds for a table.
 - **Order.** The diagnostics, the sites and the ids follow no feed order: names are taken in ordinal order, sites
   by file then position, and `TddGeneration.Generate` now sorts the diagnostics it reads by file, position and id
   before inferring anything (the shape of a member is the first call that fixes it, #5244). That also fixes the
@@ -109,9 +145,13 @@ dependency is AL0185.
   the AL0132s of the repeat are generated as usual (`BcCompiler`, `TddRecompile`). A second AL0185 this does not
   generate (a `Record "X"`, a page, an enum, a refused name) in ANY file of the same compile makes the repeat throw
   again, so the members of the objects that were generated are not added either. The objects are still reported (#5447).
+  A table or codeunit is no longer such a second AL0185 once it is generated (#5445).
 - `Run` on the new object is the codeunit's own `Run`, never a generated procedure.
 
 ## Not covered
 
-A table, page, enum, report, query or xmlport that no app declares; a codeunit named only by `Codeunit::"X"`
-with no variable of that type. The other kinds are #5445.
+A page, enum, report, query, xmlport or interface that no app declares (#5445 keeps them; each needs its own inference: a
+page its source table and controls, an enum its values from `Enum::"X"::Value`, an interface its procedures and an
+implementer); a codeunit named only by `Codeunit::"X"` or a table only by `TableNo = "X"`, `RecordRef.Open(...)` or a
+property, with no variable of that type; a table's primary key and its field types beyond what `Rec.Field := x` fixes;
+a second table, codeunit or any member generated into a bundle other than the one that names the object.
