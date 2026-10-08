@@ -63,6 +63,11 @@ public sealed class DependencyAppSymbolWalkSourceGuardTests
             + "call hit. Vanished or unreadable -> a [provision-gap] note on stderr and no "
             + "attribution, so the failure prints its full remedy instead of the pointer."),
 
+        ("AlRunner/TddGeneration.MissingObject.cs", 1,
+            "#5446: FindPackageDeclaringCodeunit, which asks every scanned package whether it declares the "
+            + "codeunit --tdd is about to generate. Vanished or unreadable -> a refusal naming the package "
+            + "(it may be the object's home), never a skip: reading it as absent would shadow the real object."),
+
         ("AlRunner/Patches/EnumMetadataPatches.cs", 1,
             "#3143: AlEnumMetadataRegistry.RegisterFromAppPath — no live callers, but public, "
             + "so its swallow was converted to a refusal rather than left for a future caller "

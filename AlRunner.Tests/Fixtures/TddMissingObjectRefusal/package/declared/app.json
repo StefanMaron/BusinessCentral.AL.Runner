@@ -1,0 +1,22 @@
+{
+  "id": "6e3d9f52-8c1a-4047-b2e6-7f4c0d1a8b39",
+  "name": "Runner Tests Fixture - Tdd Missing Object Package Declared",
+  "publisher": "AL Runner Fixtures",
+  "version": "1.0.0.0",
+  "dependencies": [
+    {
+      "id": "7a1f4c93-2d68-4b05-9e37-c8d15a6b0e42",
+      "name": "Tdd Package Only",
+      "publisher": "AL Runner Fixtures",
+      "version": "1.0.0.0"
+    }
+  ],
+  "idRanges": [
+    {
+      "from": 65380,
+      "to": 65399
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
