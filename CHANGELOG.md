@@ -24,6 +24,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **selection:** key a changed permission set to the permission tables under affectedOnly
 - **tdd:** refuse a generated codeunit that would shadow an object of an undeclared package
 - **dotnet:** a runtime-only dotnet install no longer overflows the stack in the DotNet binder
 - **query:** const(Database::X) in a precompiled query DataItemTableFilter
