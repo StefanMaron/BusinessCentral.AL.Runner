@@ -168,6 +168,9 @@ All notable changes to this project are documented here. Format based on
 - **testpage:** a part's SubPageView Sorting orders the part's rows
 - **testpage:** New() on an empty linked part raises the part's OnNewRecord
 
+### Documentation
+- **readme:** name the .NET 8 runtime as a prerequisite
+
 ### Changed
 - **provision:** the implicit-version resolution test no longer depends on the live artifact CDN
 - **isolation:** a class that deletes a loaded assembly's directory no longer poisons later classes
