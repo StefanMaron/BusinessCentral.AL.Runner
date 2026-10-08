@@ -30,6 +30,7 @@ Exit: 0 measured and fine, 1 measured and broken, 3 could not measure.
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import sys
 import tempfile
@@ -57,6 +58,15 @@ VALUE_LONG = frozenset({"--option", "--config-file", "--target-release", "--defa
                         "--host-architecture"})
 SEPARATOR_CHARS = frozenset("();&|<>")
 NOT_COMMANDS = ("echo", "printf")
+# A shell's `-c` argument and a `$(...)` / backtick body are scripts of their own.
+SHELLS = ("sh", "bash", "dash", "zsh")
+MAX_DEPTH = 3
+# Only a script naming apt is tokenised at all: any other `run:` (heredocs, PowerShell
+# here-strings) can hold quotes a shell tokeniser rejects, and must never be able to refuse.
+APT_WORD = re.compile(r"\bapt(-get)?\b")
+# What an untokenisable script that names apt falls back to: the raw-text scan this guard
+# shipped with (#5441). Weaker than the tokeniser, and stated as such in the output.
+RAW_INSTALL = re.compile(r"\bapt-get\s+(?:-\S+\s+)*install\b")
 
 
 class Untokenisable(Exception):
@@ -66,7 +76,7 @@ class Untokenisable(Exception):
 def _normalise(script):
     """One line of shell: unquoted comments dropped, unquoted newlines turned into `;`, and
     `\\<newline>` continuations joined. Quotes are tracked so a multi-line quoted string stays whole."""
-    out, quote, prev, i = [], None, "\n", 0
+    out, quote, prev, i, ticks = [], None, "\n", 0, False
     while i < len(script):
         ch = script[i]
         if quote == "'":
@@ -84,6 +94,11 @@ def _normalise(script):
             i, ch = i + 1, script[i + 1]
         elif ch in "'\"":
             quote = ch
+        elif ch == "`":  # an unquoted backtick pair is a subshell: ` ( ` ... ` ) `
+            ticks = not ticks
+            out.append(" ( " if ticks else " ) ")
+            prev, i = " ", i + 1
+            continue
         elif ch == "#" and prev.isspace():
             while i < len(script) and script[i] != "\n":
                 i += 1
@@ -140,15 +155,66 @@ def _subcommand(args):
     return None
 
 
-def runs_install(script):
-    """True when any simple command in `script` is `apt-get`/`apt` with subcommand `install`."""
+def _substitutions(tok):
+    """Bodies of `$(...)` and backtick command substitutions inside one token."""
+    bodies, i = [], 0
+    while True:
+        i = tok.find("$(", i)
+        if i < 0:
+            break
+        depth, j = 1, i + 2
+        while j < len(tok) and depth:
+            depth += (tok[j] == "(") - (tok[j] == ")")
+            j += 1
+        bodies.append(tok[i + 2:j - 1 if depth == 0 else j])
+        i = j
+    parts = tok.split("`")
+    bodies.extend(parts[1::2])
+    return bodies
+
+
+def _shell_scripts(seg):
+    """The `-c` script argument of each `sh`/`bash`/`dash`/`zsh` word in the command."""
+    for i, tok in enumerate(seg):
+        if tok.rsplit("/", 1)[-1] not in SHELLS:
+            continue
+        for j in range(i + 1, len(seg) - 1):
+            a = seg[j]
+            if a.startswith("-") and not a.startswith("--") and "c" in a:
+                yield seg[j + 1]
+                break
+
+
+def runs_install(script, depth=0):
+    """True when any simple command in `script` is `apt-get`/`apt` with subcommand `install`,
+    including inside a shell's `-c` argument or a command substitution."""
+    if depth > MAX_DEPTH:
+        raise Untokenisable("nested deeper than the guard follows")
     for seg in _segments(script):
+        for tok in seg:
+            for body in _substitutions(tok):
+                if runs_install(body, depth + 1):
+                    return True
         if seg[0] in NOT_COMMANDS:
             continue
+        for inner in _shell_scripts(seg):
+            if runs_install(inner, depth + 1):
+                return True
         for i, tok in enumerate(seg):
             if tok.rsplit("/", 1)[-1] in INSTALLERS and _subcommand(seg[i + 1:]) == "install":
                 return True
     return False
+
+
+def step_installs(script):
+    """(installs, note): tokenised when the script names apt; when it will not tokenise, the raw
+    regex scan stands in and the note says so. A script without an apt word is never tokenised."""
+    if not APT_WORD.search(script):
+        return False, None
+    try:
+        return runs_install(script), None
+    except Untokenisable as exc:
+        return bool(RAW_INSTALL.search(script)), f"tokeniser refused ({exc}); raw-text scan used"
 
 
 def _minutes(value):
@@ -174,7 +240,7 @@ def check(root: str):
             return 3, [f"UNMEASURABLE: {name} could not be read as YAML ({exc})."]
         docs[name] = doc if isinstance(doc, dict) else {}
 
-    failures, installs = [], 0
+    failures, installs, notes = [], 0, []
     for name, doc in docs.items():
         jobs = doc.get("jobs")
         for job_id, job in (jobs.items() if isinstance(jobs, dict) else []):
@@ -183,11 +249,11 @@ def check(root: str):
                 if not isinstance(run, str):
                     continue
                 label = f"{name} job `{job_id}` step {i + 1} ({step.get('name', 'unnamed')})"
-                try:
-                    if not runs_install(run):
-                        continue
-                except Untokenisable as exc:
-                    return 3, [f"UNMEASURABLE: {label}: `run:` cannot be tokenised ({exc})."]
+                found, note = step_installs(run)
+                if note:
+                    notes.append(f"NOTE: {label}: {note}.")
+                if not found:
+                    continue
                 installs += 1
                 got = step.get("timeout-minutes")
                 m = _minutes(got)
@@ -217,9 +283,9 @@ def check(root: str):
                             f"integer <= {JOB_MAX}.")
 
     if failures:
-        return 1, ["FAIL:"] + ["  " + f for f in failures]
+        return 1, ["FAIL:"] + ["  " + f for f in failures] + notes
     return 0, [f"PASS: {installs} package-install step(s) bounded; "
-               f"{len(BOUNDED_JOBS)} named job(s) bounded."]
+               f"{len(BOUNDED_JOBS)} named job(s) bounded."] + notes
 
 
 # ---- the refusal and failure paths, driven in throwaway trees -------------------------
@@ -289,7 +355,34 @@ CASES = [
     ("install only in a trailing comment", {"bc-tests.yml": _wf_with("echo hi # apt-get install gcc")}, 0),
     ("install on a continued line", {"bc-tests.yml": _wf_with("sudo apt-get -o X=1 \\\n  install gcc")}, 1),
     ("install on the third line, after an apostrophe in a comment", {"bc-tests.yml": _wf_with("# don't skip this\nset -e\nsudo apt-get -y install gcc")}, 1),
-    ("shell the guard cannot tokenise", {"bc-tests.yml": _wf_with("echo 'unterminated")}, 3),
+    # (A) a script without an apt word is never tokenised, so it can never refuse the run
+    ("heredoc body with an apostrophe, no apt", {"bc-tests.yml": _wf_with("cat <<'EOF'\nit's here\nEOF")}, 0),
+    ("heredoc body with a lone double quote, no apt", {"bc-tests.yml": _wf_with("cat <<EOF\nsay \"hi\nEOF")}, 0),
+    ("ANSI-C quoted escape, no apt", {"bc-tests.yml": _wf_with("echo $'it\\'s'")}, 0),
+    ("pwsh here-string with an apostrophe, no apt", {"bc-tests.yml": _wf_with("$t = @'\nit's\n'@\nWrite-Output $t")}, 0),
+    ("unterminated quote, no apt", {"bc-tests.yml": _wf_with("echo 'unterminated")}, 0),
+    # (A) an untokenisable script that names apt degrades to the raw-text scan, not to exit 3
+    ("heredoc with an apostrophe and an unbounded install", {"bc-tests.yml": _wf_with("cat <<'EOF' > x.md\nit's here\nEOF\nsudo apt-get -y install gcc")}, 1),
+    ("heredoc with an apostrophe and a bounded install", {"bc-tests.yml": _wf_with("cat <<'EOF' > x.md\nit's here\nEOF\nsudo apt-get -y install gcc", 10)}, 0),
+    ("unterminated quote and an unbounded install", {"bc-tests.yml": _wf_with("echo 'unterminated\napt-get install gcc")}, 1),
+    # (B) a quoted script handed to a shell, and a command substitution, are scripts of their own
+    ("bash -c double-quoted install", {"bc-tests.yml": _wf_with('bash -c "apt-get install -y x"')}, 1),
+    ("sudo sh -c single-quoted install with -o", {"bc-tests.yml": _wf_with("sudo sh -c 'apt-get -o X=1 install x'")}, 1),
+    ("bash -eo pipefail -c install", {"bc-tests.yml": _wf_with("bash -o pipefail -c 'apt-get install x'")}, 1),
+    ("docker run ... sh -c install", {"bc-tests.yml": _wf_with("docker run --rm img sh -c 'apt-get install -y x'")}, 1),
+    ("quoted $(...) install", {"bc-tests.yml": _wf_with('out="$(apt-get install -y x)"')}, 1),
+    ("backtick install", {"bc-tests.yml": _wf_with("out=`apt-get install -y x`")}, 1),
+    ("nested bash -c install", {"bc-tests.yml": _wf_with("bash -c \"sh -c 'apt-get install x'\"")}, 1),
+    ("bash -c install, bounded", {"bc-tests.yml": _wf_with('bash -c "apt-get install -y x"', 10)}, 0),
+    ("sh -c install, bounded", {"bc-tests.yml": _wf_with("sudo sh -c 'apt-get -o X=1 install x'", 10)}, 0),
+    ("quoted $(...) install, bounded", {"bc-tests.yml": _wf_with('out="$(apt-get install -y x)"', 10)}, 0),
+    ("echo of a string naming install", {"bc-tests.yml": _wf_with('echo "run apt-get install later"')}, 0),
+    ("bash -c that only echoes install", {"bc-tests.yml": _wf_with("bash -c 'echo apt-get install'")}, 0),
+    # (C) arms a mutation of the finder must not be able to remove unseen
+    ("an option-looking token after -- is the subcommand", {"bc-tests.yml": _wf_with("sudo apt-get -- -x install")}, 0),
+    ("-- then install", {"bc-tests.yml": _wf_with("sudo apt-get -- install gcc")}, 1),
+    ("echo of an install is not an install", {"bc-tests.yml": _wf_with("echo apt-get install -y x")}, 0),
+    ("absolute path to apt-get", {"bc-tests.yml": _wf_with("sudo /usr/bin/apt-get install -y x")}, 1),
 ] + [(f"unbounded: {n}", {"bc-tests.yml": _wf_with(r)}, 1) for n, r in _VALUE_OPTION_RUNS] + [
     (f"bounded: {n}", {"bc-tests.yml": _wf_with(r, 10)}, 0) for n, r in _VALUE_OPTION_RUNS]
 
