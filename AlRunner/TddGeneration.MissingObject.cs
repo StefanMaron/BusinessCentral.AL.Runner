@@ -123,27 +123,70 @@ public static partial class TddGeneration
     /// <paramref name="name"/> (any namespace, any case), or cannot be read to rule it out; null when none does (#5446).
     /// The compile resolves only the packages the app depends on, so a package it leaves out can declare the object
     /// that is AL0185 here and an empty codeunit added for it would shadow the real one. Packages are taken in name,
-    /// version, path order, so the package named does not depend on the scan order. Trap: an unreadable package is
-    /// not an absent one - it may be the object's home - so it refuses too.
+    /// version, path order, so the package named does not depend on the scan order.
+    /// Trap: an unreadable package is not an absent one - it may be the object's home - so it refuses, unless its
+    /// symbols TEXT proves the name is not in it (<see cref="SymbolTextMayMention"/>; #5450): then it is skipped with a
+    /// <paramref name="note"/> (a `--tdd:` line on stderr when null), because one bad file must not turn the generation off for every name.
     /// </summary>
-    internal static string? FindPackageDeclaringCodeunit(IReadOnlyList<BcCompiler.PackageScanEntry> packages, string name)
+    internal static string? FindPackageDeclaringCodeunit(IReadOnlyList<BcCompiler.PackageScanEntry> packages, string name, Action<string>? note = null)
     {
         foreach (var e in packages.OrderBy(p => p.Name, StringComparer.Ordinal).ThenBy(p => p.Version).ThenBy(p => p.Path, StringComparer.Ordinal))
         {
             var label = $"the package {e.Name} {e.Version} ({Path.GetFileName(e.Path)})";
             try
             {
-                // Vanished or unreadable: refuses below, naming the package (DependencyAppSymbolWalkSourceGuardTests).
+                // Vanished or unreadable: falls to the text search below, which refuses naming the package unless the
+                // text proves the name absent (DependencyAppSymbolWalkSourceGuardTests).
                 if (Patches.BcAppSymbolCache.Get(e.Path).Objects.Any(o =>
                         o.Kind == "Codeunit" && string.Equals(o.Name, name, StringComparison.OrdinalIgnoreCase)))
-                    return $"{label} declares it - add the dependency on it to app.json; an empty codeunit would shadow it";
+                    return $"{label} declares it - if the test means that codeunit, add the dependency on it to app.json; if it means a new one, give it another name; an empty codeunit would shadow it";
             }
             catch (Exception ex)
             {
-                return $"{label} could not be read ({ex.GetType().Name}: {FirstLine(ex.Message)}), so it cannot be ruled out as the home of the codeunit";
+                var unread = $"{label} could not be read ({ex.GetType().Name}: {FirstLine(ex.Message)})";
+                bool mayMention;
+                try { mayMention = SymbolTextMayMention(e.Path, name); }
+                catch { mayMention = true; } // no text to search is not a proof of absence
+                if (mayMention)
+                    return $"{unread}, so it cannot be ruled out as the home of the codeunit; remove or replace that file";
+                var skipped = $"{unread}, but its symbols text never mentions \"{name}\", so it cannot declare it and was skipped; remove or replace that file";
+                if (note != null) note(skipped); else Console.Error.WriteLine($"--tdd: {skipped}");
             }
         }
         return null;
+    }
+
+    // One JSON escape, left to right so `\\` is consumed before the character after it. The first two groups are the
+    // escapes decoded; `other` takes anything else, including a lone trailing backslash and a short \u.
+    private static readonly System.Text.RegularExpressions.Regex JsonEscape = new(
+        @"\\(?:u(?<hex>[0-9a-fA-F]{4})|(?<simple>[""\\/'nrtbf])|(?<other>[\s\S]?))",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// True unless the text of the package's <c>SymbolReference.json</c> files (every module) proves they cannot declare
+    /// <paramref name="name"/>: it is searched ignoring case after the JSON escapes are decoded (<c>\uXXXX</c> of either
+    /// case, <c>\/ \" \\ \' \n \r \t \b \f</c>). When in doubt true, because a wrong false is a shadow again (#5446):
+    /// BC reads symbols with Newtonsoft, more permissive than the reader that refused the file, so any other backslash
+    /// sequence (invalid in both, Newtonsoft-only, future) means the text cannot be trusted and refuses; so does a name
+    /// holding a backslash, quote or control character, and text holding a NUL (UTF-16 without a byte-order mark reads
+    /// as interleaved NULs). Throws when the file cannot be read at all; the caller reads that as true too.
+    /// </summary>
+    private static bool SymbolTextMayMention(string packagePath, string name)
+    {
+        if (name.Any(c => c is '"' or '\\' || char.IsControl(c))) return true;
+        foreach (var raw in Patches.BcAppSymbolCache.ReadSymbolReferences(packagePath))
+        {
+            if (raw.Contains('\0')) return true;
+            var unknownEscape = false;
+            var text = JsonEscape.Replace(raw, m =>
+            {
+                if (m.Groups["hex"].Success) return ((char)Convert.ToInt32(m.Groups["hex"].Value, 16)).ToString();
+                if (!m.Groups["simple"].Success) { unknownEscape = true; return m.Value; }
+                return m.Groups["simple"].Value[0] switch { 'n' => "\n", 'r' => "\r", 't' => "\t", 'b' => "\b", 'f' => "\f", var c => c.ToString() };
+            });
+            if (unknownEscape || text.Contains(name, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
     }
 
     private static bool IsPlainObjectName(string written, string name)

@@ -3906,7 +3906,7 @@ internal static partial class BcAppSymbolCache
         return m.Success && int.TryParse(m.Groups[1].Value, out var length) ? length : 0;
     }
 
-    private static IEnumerable<string> ReadSymbolReferences(string appPath)
+    internal static IEnumerable<string> ReadSymbolReferences(string appPath)
     {
         var bytes = File.ReadAllBytes(appPath);
         foreach (var json in ReadSymbolReferencesFromBytes(bytes))
