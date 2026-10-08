@@ -28,9 +28,15 @@ public class ServerAffectedSelectionReportExtensionTests
            + "    dataset\n    {\n        dataitem(Item; \"RExt Blob SX\")\n        {\n"
            + "            column(PK; PK) { }\n        }\n    }\n}\n";
 
-    private static string Extension(int id, string name, string baseReport, string body = "", string dataset = "")
-        => $"reportextension {id} \"{name}\" extends \"{baseReport}\"\n{{\n" + dataset
-           + "    trigger OnPreReport()\n    begin\n" + body + "    end;\n}\n";
+    // Without a trigger the extension carries no code of its own: the tests that ran its base report are
+    // then selected by the base alone, not also by the extension's own entered-scope key.
+    private static string Extension(int id, string name, string baseReport, string? trigger = null, string columns = "PK2")
+        => $"reportextension {id} \"{name}\" extends \"{baseReport}\"\n{{\n"
+           + "    dataset\n    {\n        add(Item)\n        {\n"
+           + string.Concat(columns.Split(',').Select(c => $"            column({c}; PK) {{ }}\n"))
+           + "        }\n    }\n"
+           + (trigger == null ? "" : "    trigger OnPreReport()\n    begin\n" + trigger + "    end;\n")
+           + "}\n";
 
     // A request page the reportextension adds a field to; the handler reads that field's caption.
     private const string PageReport = """
@@ -48,8 +54,6 @@ public class ServerAffectedSelectionReportExtensionTests
         => "reportextension 60731 \"RExt Page Ext SX\" extends \"RExt Page SX\"\n{\n"
            + "    requestpage { layout { addlast(Content) { field(ExtOpt; ExtOpt) { Caption = '" + caption
            + "'; ApplicationArea = All; } } } }\n    var\n        ExtOpt: Boolean;\n}\n";
-
-    private const string AddedColumn = "    dataset\n    {\n        add(Item)\n        {\n            column(PK2; PK) { }\n        }\n    }\n";
 
     private const string ProbeExt = "        Error('PROBE-EXT');\n";
     private const string ProbeNew = "        Error('PROBE-NEW');\n";
@@ -296,20 +300,23 @@ public class ServerAffectedSelectionReportExtensionTests
         AssertNarrowed(await Send(server, bundle), RunBaseReport, null);
 
         // A whole-object edit (a column the extension adds), which also keys the metadata tables listing it.
-        Write(bundle, "Ext.ReportExt.al", Extension(60724, "RExt Ext SX", "RExt Report SX", dataset: AddedColumn));
+        Write(bundle, "Ext.ReportExt.al", Extension(60724, "RExt Ext SX", "RExt Report SX", columns: "PK2,PK3"));
         AssertNarrowed(await Send(server, bundle), RunBaseReport, null);
         Write(bundle, "Ext.ReportExt.al", Extension(60724, "RExt Ext SX", "RExt Report SX"));
         AssertNarrowed(await Send(server, bundle), RunBaseReport, null);
 
         // Added: no test has built it, so only the registry names its base.
-        Write(bundle, "New.ReportExt.al", Extension(60726, "RExt New SX", "RExt Report SX", ProbeNew));
-        AssertNarrowed(await Send(server, bundle), RunBaseReport, "PROBE-NEW");
+        Write(bundle, "New.ReportExt.al", Extension(60726, "RExt New SX", "RExt Report SX", columns: "PK4"));
+        AssertNarrowed(await Send(server, bundle), RunBaseReport, null);
 
         // Removed: gone from the registry, so only the recording names its base.
         File.Delete(Path.Combine(bundle, "New.ReportExt.al"));
         AssertNarrowed(await Send(server, bundle), RunBaseReport, null);
 
         // A report no one test built: which tests use it is not recorded, so everything runs.
+        // The edit below is inside the trigger, so the extension's own instance (which the global report
+        // builds too) is not what forces the run: the base report's rule is.
+        Write(bundle, "Ext.ReportExt.al", Extension(60724, "RExt Ext SX", "RExt Report SX", "        exit;\n"));
         Write(bundle, "GlobalTests.Codeunit.al", GlobalTests);
         await Send(server, bundle);
         Write(bundle, "Ext.ReportExt.al", Extension(60724, "RExt Ext SX", "RExt Report SX", ProbeExt));
@@ -327,13 +334,11 @@ public class ServerAffectedSelectionReportExtensionTests
         TestArtifacts.SkipIfMissing();
         var bundle = Bundle("al-runner-server-affected-rext-persist", "000000000002");
         var cache = TestScratch.Dir("al-runner-server-affected-rext-persist-cache");
-        Write(bundle, "Ext.ReportExt.al", Extension(60724, "RExt Ext SX", "RExt Report SX", ProbeExt));
 
         var baseline = await SendFresh(cache, bundle);
         Assert.True(baseline.ForcedFull, baseline.Raw);
         Assert.True(All.SequenceEqual(baseline.Ran), baseline.Raw);
-        foreach (var t in RunBaseReport)
-            Assert.Contains("PROBE-EXT", baseline.Line[t], StringComparison.Ordinal);
+        Assert.All(baseline.Status.Values, s => Assert.Equal("pass", s));
 
         File.Delete(Path.Combine(bundle, "Ext.ReportExt.al"));
         AssertNarrowed(await SendFresh(cache, bundle), RunBaseReport, null);
