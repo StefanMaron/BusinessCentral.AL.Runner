@@ -5,8 +5,12 @@ weight: 2
 
 ## Prerequisites
 
-The .NET SDK, version 9 or 10 — [download it here](https://aka.ms/dotnet/download).
-That is the whole list on Windows and macOS.
+The .NET SDK, version 9 or 10, and the .NET 8 runtime beside it — [download them here](https://aka.ms/dotnet/download).
+The runner itself is a .NET 8 application, and a 9 or 10 SDK does not include the .NET 8
+runtime. Without it, `dotnet tool install` works but `al-runner` then stops at startup with
+`You must install or update .NET to run this application` and a `Framework:
+'Microsoft.NETCore.App', version '8.0.0'` line. The .NET 8 SDK includes the runtime, if you
+would rather install that. That is the whole list on Windows and macOS.
 
 On Linux there is one extra detail, and it usually needs nothing from you. A few
 Business Central assemblies call Win32 functions directly — the locale APIs, for
