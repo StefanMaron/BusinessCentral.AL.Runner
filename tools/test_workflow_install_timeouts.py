@@ -6,16 +6,21 @@ GitHub's 360-minute default applied; one `apt-get install` hung for 79 minutes w
 held the required `BC test matrix passed` context. The bounds, and the job durations they
 were sized from, are in the PR that added this file.
 
-The population is DERIVED, not listed: every step whose `run:` calls `apt-get install` (or
-`apt install`) is checked, so a new install step is in scope the day it lands. The command
-line is tokenised like a shell and the subcommand is the first argument that is not an option
-or the value of a value-taking option, so `apt-get -o Dpkg::Lock::Timeout=60 install` is seen
-(#5458); a quoted `sh -c`/`bash -c` argument and a `$(...)`/backtick body are scanned as scripts
-of their own. A script that does not name apt is never tokenised, and one that names apt but
-will not tokenise falls back to the old raw-text scan with a printed NOTE rather than refusing:
-this guard gates every PR, so an unrelated heredoc must not be able to red it. Not covered: an
-install behind `$PM`/`eval`, abbreviated long options, `aptitude` (different option table; nothing
-here uses it). Two rules:
+The population is DERIVED, not listed: every step whose `run:` calls `apt-get install` (or `apt
+install`) is checked, so a new install step is in scope the day it lands. The command line is
+tokenised like a shell and the subcommand is the first argument that is not an option or the
+value of a value-taking option, so `apt-get -o Dpkg::Lock::Timeout=60 install` is seen (#5458);
+a multi-word argument naming apt (`sh -c`, `su -c`, `ssh host`, `eval`, `script -qc`, a here-
+string) and a `$(...)`/backtick body are scanned as scripts of their own. A script that does
+not name apt is never tokenised, and one that names apt but will not tokenise falls back to the
+old raw-text scan with a printed NOTE rather than refusing: this guard gates every PR, so an
+unrelated heredoc must not be able to red it. Accepted residuals, which no static scan of one
+script can close: an install whose script is fed through a pipe or built elsewhere (`printf
+'...' | bash` -- main's raw regex caught that one only by accident --, `$PM`, `eval "$X"`, a
+command held in a variable set outside the step); nesting past MAX_DEPTH (only the raw-text
+scan then sees `apt-get ... install`, so `apt install` there matches main's blind spot);
+abbreviated long options; `aptitude` (different option table; nothing here uses it).
+Two rules:
 
   1. each such step carries a step-level `timeout-minutes` of at most STEP_MAX;
   2. the one job named in BOUNDED_JOBS carries a job-level `timeout-minutes` of at most
@@ -35,6 +40,7 @@ Exit: 0 measured and fine, 1 measured and broken, 3 could not measure.
 from __future__ import annotations
 
 import os
+import json
 import re
 import shlex
 import sys
@@ -63,8 +69,8 @@ VALUE_LONG = frozenset({"--option", "--config-file", "--target-release", "--defa
                         "--host-architecture"})
 SEPARATOR_CHARS = frozenset("();&|<>")
 NOT_COMMANDS = ("echo", "printf")
-# A shell's `-c` argument and a `$(...)` / backtick body are scripts of their own.
-SHELLS = ("sh", "bash", "dash", "zsh")
+# A multi-word argument naming apt (`sh -c '...'`, `su -c`, `ssh host '...'`, `eval`, a
+# here-string) and a `$(...)` / backtick body are scripts of their own, to this depth.
 MAX_DEPTH = 3
 # Only a script naming apt is tokenised at all: any other `run:` (heredocs, PowerShell
 # here-strings) can hold quotes a shell tokeniser rejects, and must never be able to refuse.
@@ -178,21 +184,9 @@ def _substitutions(tok):
     return bodies
 
 
-def _shell_scripts(seg):
-    """The `-c` script argument of each `sh`/`bash`/`dash`/`zsh` word in the command."""
-    for i, tok in enumerate(seg):
-        if tok.rsplit("/", 1)[-1] not in SHELLS:
-            continue
-        for j in range(i + 1, len(seg) - 1):
-            a = seg[j]
-            if a.startswith("-") and not a.startswith("--") and "c" in a:
-                yield seg[j + 1]
-                break
-
-
 def runs_install(script, depth=0):
     """True when any simple command in `script` is `apt-get`/`apt` with subcommand `install`,
-    including inside a shell's `-c` argument or a command substitution."""
+    including inside a multi-word argument naming apt or a command substitution."""
     if depth > MAX_DEPTH:
         raise Untokenisable("nested deeper than the guard follows")
     for seg in _segments(script):
@@ -202,8 +196,12 @@ def runs_install(script, depth=0):
                     return True
         if seg[0] in NOT_COMMANDS:
             continue
-        for inner in _shell_scripts(seg):
-            if runs_install(inner, depth + 1):
+        # A multi-word word naming apt may be a script handed to a command we cannot model
+        # (`su -c`, `ssh host`, `eval`, `script -qc`, a here-string): scan it like `sh -c`'s.
+        for tok in seg:
+            body = tok.split("=", 1)[1] if re.match(r"[A-Za-z_]\w*=", tok) else tok
+            if any(c.isspace() for c in body) and APT_WORD.search(body) \
+                    and runs_install(body, depth + 1):
                 return True
         for i, tok in enumerate(seg):
             if tok.rsplit("/", 1)[-1] in INSTALLERS and _subcommand(seg[i + 1:]) == "install":
@@ -312,10 +310,9 @@ def _wf(job_extra="", step_extra="", run="sudo apt-get update && sudo apt-get in
 
 
 def _scalar(run):
-    """A `run:` value as YAML: a multi-line (or `#`-bearing) script goes in a block scalar."""
-    if "\n" not in run and " #" not in run:
-        return run
-    return "|\n" + "".join("          " + line + "\n" for line in run.split("\n"))
+    """A `run:` value as YAML: a JSON string is a valid double-quoted YAML scalar, so newlines,
+    `#`, `: ` and `:::` in the script survive intact."""
+    return json.dumps(run)
 
 
 def _wf_with(run, timeout=None):
@@ -338,6 +335,18 @@ _VALUE_OPTION_RUNS = [
     ("-t value", "sudo apt-get -t jammy install gcc"),
     ("apt, not apt-get", "sudo apt -o Dpkg::Lock::Timeout=60 install -y gcc"),
     ("after && on one line", "sudo apt-get update && sudo apt-get -o X=1 install gcc"),
+]
+
+# Scripts handed to a command the finder does not model: the install is inside one argument.
+_OPAQUE_RUNS = [
+    ("su -c", "su -c 'apt-get install -y x'"),
+    ("sudo su -c", "sudo su -c 'apt-get -o X=1 install x'"),
+    ("ssh host", "ssh host 'sudo apt-get install -y x'"),
+    ("eval", 'eval "apt-get install -y x"'),
+    ("here-string", 'bash <<< "apt-get install x"'),
+    ("script -qc", "script -qc 'apt-get install -y x' /dev/null"),
+    ("parallel", "parallel ::: 'apt-get install -y x'"),
+    ("assignment value", "CMD='apt-get install -y x'; true"),
 ]
 
 CASES = [
@@ -390,8 +399,12 @@ CASES = [
     ("-- then install", {"bc-tests.yml": _wf_with("sudo apt-get -- install gcc")}, 1),
     ("echo of an install is not an install", {"bc-tests.yml": _wf_with("echo apt-get install -y x")}, 0),
     ("absolute path to apt-get", {"bc-tests.yml": _wf_with("sudo /usr/bin/apt-get install -y x")}, 1),
-] + [(f"unbounded: {n}", {"bc-tests.yml": _wf_with(r)}, 1) for n, r in _VALUE_OPTION_RUNS] + [
-    (f"bounded: {n}", {"bc-tests.yml": _wf_with(r, 10)}, 0) for n, r in _VALUE_OPTION_RUNS]
+    # the nesting limit: three levels is followed, so lowering MAX_DEPTH is visible
+    ("apt install nested three levels", {"bc-tests.yml": _wf_with("bash -c \"bash -c \\\"bash -c 'apt install x'\\\"\"")}, 1),
+    ("install inside the argument of printf", {"bc-tests.yml": _wf_with("printf 'apt-get install %s' x")}, 0),
+    ("install inside a ssh command in a comment", {"bc-tests.yml": _wf_with("ssh host true # ssh host 'apt-get install x'")}, 0),
+] + [(f"unbounded: {n}", {"bc-tests.yml": _wf_with(r)}, 1) for n, r in _VALUE_OPTION_RUNS + _OPAQUE_RUNS] + [
+    (f"bounded: {n}", {"bc-tests.yml": _wf_with(r, 10)}, 0) for n, r in _VALUE_OPTION_RUNS + _OPAQUE_RUNS]
 
 
 def _self_test() -> int:
