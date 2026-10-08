@@ -569,13 +569,15 @@ internal static partial class ProgramSupport
     /// Never walks the covered folders themselves: a <c>.al</c> outside them is either directly
     /// at the root or under a top-level folder that is not one of them. So the cost is two
     /// top-level listings of the root (files, then directories) plus a walk of each
-    /// non-covered, non-hidden sibling — for the common src/-only suite, no walk at all. The
-    /// earlier shape scanned the whole suite and subtracted, re-walking src/ on every call
-    /// (PR #3739 review).
+    /// non-covered sibling — for the common src/-only suite with no sibling holding files, a
+    /// listing and nothing more. The earlier shape scanned the whole suite and subtracted,
+    /// re-walking src/ on every call (PR #3739 review).
     /// </para>
     /// <para>
-    /// Dot-directories (<c>.git</c>, <c>.alpackages</c>, <c>.vscode</c>) are skipped: none is an
-    /// AL source root, and <c>.git</c> can hold tens of thousands of files. A sibling the walk
+    /// Dot-directories are walked like any other (#5440): alc 17.0 compiles a <c>.al</c> under
+    /// every directory of the project folder, <c>.dependencies/</c>, <c>.git/</c> and
+    /// <c>.alpackages/</c> included, and the emitter's root scan does the same, so skipping them
+    /// here left real projects' files out of the compile with nothing said. A sibling the walk
     /// could not read is a "could not tell", never a "no": the suite widens to its root, and the
     /// directory is named once on stdout (the #2206 pattern), because the emitter's own root scan
     /// will skip it just the same and anything under it is not compiled.
@@ -587,7 +589,6 @@ internal static partial class ProgramSupport
             return true;
         foreach (var top in AlRunner.Infrastructure.SafeDirectoryScan.Directories(suite, "*", SearchOption.TopDirectoryOnly))
         {
-            if (Path.GetFileName(top).StartsWith('.')) continue;
             // Path.GetRelativePath compares the way the platform does (case-insensitive on
             // Windows), which is how Directory.Exists/EnumerateDirectories matched `covered`.
             if (covered.Any(d => Path.GetRelativePath(d, top) == ".")) continue;
