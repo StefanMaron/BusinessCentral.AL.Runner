@@ -24,6 +24,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **ci-guard:** apt-install timeout guard sees installs behind value-taking options
 - **tdd:** an unreadable package no longer refuses every missing-codeunit generation
 - **ci:** bound the release pack job and its apt step with timeout-minutes
 - **ms-bucket:** refuse normalize-company without test-data instead of dropping it silently
