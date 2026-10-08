@@ -161,7 +161,8 @@ on:
         description: >-
           Prepare the restored company the way Microsoft prepares its own test company
           (--test-data-normalize-company, #2730). Off by default: every number in this
-          repository was measured without it, so the two are not comparable.
+          repository was measured without it, so the two are not comparable. Needs
+          `test-data` on: the run is refused otherwise (#3454).
         type: boolean
         required: false
         default: false
@@ -227,6 +228,7 @@ on:
           so it matches what Microsoft's own test company has
           (--test-data-normalize-company, #2730). Turn it on to measure the prepared-company
           number; leave it off to stay comparable with every number recorded so far.
+          Needs `test-data` on: the run is refused otherwise (#3454).
         type: boolean
         required: false
         default: false
@@ -260,6 +262,24 @@ jobs:
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v6
+
+      # FIRST, before any provisioning (#3454). `normalize-company` rewrites rows on their way
+      # out of the --test-data backup, so with `test-data: false` there is nothing for it to
+      # act on and the "Run the bucket(s)" step correctly appends nothing. Accepting the
+      # combination anyway produces a run that is labelled as the normalized arm of a
+      # comparison and is not one, with nothing in the artifacts to tell. Refused rather than
+      # warned about: the whole purpose of the input is a number compared against an
+      # un-normalized one. The predicates match the run step's (`= "true"`), so anything it
+      # would treat as "no backup" is refused here too.
+      - name: Refuse a company-normalization request that has no backup to act on (#3454)
+        env:
+          WITH_TEST_DATA: ${{ inputs.test-data }}
+          NORMALIZE_COMPANY: ${{ inputs.normalize-company }}
+        run: |
+          if [ "$NORMALIZE_COMPANY" = "true" ] && [ "$WITH_TEST_DATA" != "true" ]; then
+            echo "::error::normalize-company needs test-data: it rewrites rows read from the backup, and with test-data off nothing is read, so the run would NOT be normalized. Turn test-data on, or turn normalize-company off."
+            exit 1
+          fi
 
       # The provisioning action sets up .NET too; this earlier copy is for the version
       # resolution below, which has to run BEFORE the action can be given a version.

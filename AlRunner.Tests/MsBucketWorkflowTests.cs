@@ -825,6 +825,98 @@ public sealed class MsBucketWorkflowTests
             Read(Path.Combine("workflows", Workflow)), "normalize-company"));
     }
 
+    // ---- normalize-company without test-data (#3454) -----------------------------------
+
+    private const string RefusalStep = "Refuse a company-normalization request that has no backup to act on (#3454)";
+
+    /// <summary>The <c>run: |</c> script of one named step, de-indented, ready for bash.</summary>
+    private static string RunScriptOf(string code, string stepName)
+    {
+        var lines = WorkflowStep.BodyOf(code, stepName).Replace("\r\n", "\n").Split('\n');
+        var at = Array.FindIndex(lines, l => l.Trim() == "run: |");
+        Assert.True(at >= 0, $"step \"{stepName}\" has no `run: |` script");
+        var scriptLines = lines.Skip(at + 1).ToList();
+        var indent = scriptLines.First(l => l.Trim().Length > 0).TakeWhile(c => c == ' ').Count();
+        // BodyOf runs to the next `- name:`, so an unnamed `- uses:` step after this one is in
+        // the slice; the script ends at the first line indented less than its own body.
+        var script = scriptLines.TakeWhile(l => l.Trim().Length == 0 || l.TakeWhile(c => c == ' ').Count() >= indent);
+        return string.Join('\n', script.Select(l => l.Length >= indent ? l[indent..] : l.TrimStart()));
+    }
+
+    private static (int ExitCode, string Output) RunBash(string script, string withTestData, string normalize)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo("bash")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add(script);
+        psi.Environment["WITH_TEST_DATA"] = withTestData;
+        psi.Environment["NORMALIZE_COMPANY"] = normalize;
+        using var proc = System.Diagnostics.Process.Start(psi)!;
+        var stdout = proc.StandardOutput.ReadToEndAsync();
+        var stderr = proc.StandardError.ReadToEndAsync();
+        Assert.True(proc.WaitForExit(30_000), "the guard script did not finish");
+        return (proc.ExitCode, stdout.Result + stderr.Result);
+    }
+
+    /// <summary>
+    /// #3454: <c>normalize-company: true</c> with <c>test-data: false</c> was accepted and the
+    /// normalization silently dropped (the append is nested inside the --test-data block, which
+    /// is correct — with no backup being read there is nothing for it to rewrite). The run then
+    /// reads as the normalized arm of the comparison and is not one. The guard refuses that
+    /// combination once, in its own step before provisioning.
+    ///
+    /// The step's script is EXECUTED here, not pattern-matched: the refusal fires on the one
+    /// impossible combination, and the three valid ones still pass, so the guard cannot be
+    /// satisfied by refusing everything.
+    /// </summary>
+    [Theory]
+    [InlineData("true", "true", 0)]
+    [InlineData("true", "false", 0)]
+    [InlineData("false", "false", 0)]
+    [InlineData("false", "true", 1)]
+    public void MsBucketWorkflow_RefusesNormalizationWithoutTestData_AndOnlyThen(
+        string withTestData, string normalize, int expectedExit)
+    {
+        var code = CodeOnly(Read(Path.Combine("workflows", Workflow)));
+        var step = WorkflowStep.BodyOf(code, RefusalStep);
+        Assert.Contains("WITH_TEST_DATA: ${{ inputs.test-data }}", step, StringComparison.Ordinal);
+        Assert.Contains("NORMALIZE_COMPANY: ${{ inputs.normalize-company }}", step, StringComparison.Ordinal);
+
+        var (exit, output) = RunBash(RunScriptOf(code, RefusalStep), withTestData, normalize);
+
+        Assert.Equal(expectedExit, exit);
+        if (expectedExit == 0)
+            Assert.DoesNotContain("::error::", output, StringComparison.Ordinal);
+        else
+        {
+            Assert.Contains("::error::", output, StringComparison.Ordinal);
+            Assert.Contains("normalize-company", output, StringComparison.Ordinal);
+            Assert.Contains("test-data", output, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// The refusal only protects the run if it comes BEFORE the work it protects: ahead of
+    /// provisioning (minutes) and the "Run the bucket(s)" step (hours). Position is a separate
+    /// claim from behaviour, and a step that refuses correctly after the run has finished
+    /// prevents nothing.
+    /// </summary>
+    [Fact]
+    public void MsBucketWorkflow_RefusesNormalizationWithoutTestData_BeforeProvisioning()
+    {
+        var code = CodeOnly(Read(Path.Combine("workflows", Workflow)));
+        var guard = code.IndexOf("- name: " + RefusalStep, StringComparison.Ordinal);
+        Assert.True(guard >= 0, "the normalize-company/test-data refusal step is gone");
+        Assert.True(guard < code.IndexOf(ProvisionMarker, StringComparison.Ordinal),
+            "the refusal must run before provisioning");
+        Assert.True(guard < code.IndexOf("- name: Run the bucket(s)", StringComparison.Ordinal),
+            "the refusal must run before the bucket run");
+    }
+
     [Fact]
     public void ProvisioningAction_CarriesTheBuildAndBothAppDownloads()
     {

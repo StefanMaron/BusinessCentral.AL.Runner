@@ -87,7 +87,8 @@ on:
           Prepare the restored company the way Microsoft prepares its own, handed down to
           ms-bucket.yml, which puts the switch on the runner's command line (#2730). OFF is
           the surface as every recorded number measured it; ON is the second number the
-          comparison needs. Must match ms-bucket.yml's default.
+          comparison needs. Must match ms-bucket.yml's default. Needs `test-data` on:
+          ms-bucket.yml refuses the run otherwise (#3454).
         type: boolean
         required: false
         default: false
