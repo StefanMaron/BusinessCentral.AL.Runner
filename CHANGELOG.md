@@ -24,6 +24,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **compile:** .al files under a dot-directory beside src/ are compiled, as alc does
 - **selection:** key a changed reportextension to its base report under affectedOnly (#5088, #5076)
 - **selection:** key a changed permission set to the permission tables under affectedOnly
 - **tdd:** refuse a generated codeunit that would shadow an object of an undeclared package
