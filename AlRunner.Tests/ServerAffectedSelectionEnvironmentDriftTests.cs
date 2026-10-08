@@ -195,7 +195,7 @@ public class ServerAffectedSelectionEnvironmentDriftTests
 
     // Rebuilds App.app from App/, at App/app.json's version, replacing the previous build: the
     // second environment.
-    private static void Package(string app, string testApp, string? permissionSetCaption = null, bool report = false)
+    private static void Package(string app, string testApp, string? permissionSetCaption = null, bool report = false, bool reportExtension = true)
     {
         var identity = InProcessAppPackager.ReadIdentity(Path.Combine(app, "app.json"))!;
         var packages = Path.Combine(testApp, ".alpackages");
@@ -220,7 +220,7 @@ public class ServerAffectedSelectionEnvironmentDriftTests
                 },
             } },
             Reports = report ? new object[] { new { Id = 60476, Name = "Drift Report SX", RequestPage = new { Id = 0, Name = "RequestOptionsPage" } } } : Array.Empty<object>(),
-            ReportExtensions = report ? new object[] { new { Id = 60477, Name = "Drift Report Ext SX", Target = "Drift Report SX", RequestPage = new { ControlChanges = Array.Empty<object>() } } } : Array.Empty<object>(),
+            ReportExtensions = report && reportExtension ? new object[] { new { Id = 60477, Name = "Drift Report Ext SX", Target = "Drift Report SX", RequestPage = new { ControlChanges = Array.Empty<object>() } } } : Array.Empty<object>(),
         });
         InProcessAppPackager.EmitAppPackageToFile(app, identity,
             Path.Combine(packages, $"AL Runner_Drift App_{version}.app"), symbols);
@@ -414,6 +414,29 @@ public class ServerAffectedSelectionEnvironmentDriftTests
         Assert.Equal(new[] { "RunsReport" }, drifted.Status.Keys);
         Assert.True(drifted.Status["RunsReport"] == "fail", drifted.Raw);
         Assert.Contains("Drift Ext B", drifted.Raw, StringComparison.Ordinal);
+        var d = drifted.Drift ?? throw new Xunit.Sdk.XunitException("no environmentDrift: " + drifted.Raw);
+        Assert.Equal("diffed", d.GetProperty("mode").GetString());
+        Assert.Equal(new[] { "ReportExtension 60477 Drift Report Ext SX" },
+            d.GetProperty("objects").EnumerateArray().Select(o => o.GetString()));
+    }
+
+    // The removed extension is in the new environment's registry no more, and a dependency's extension
+    // instance is no key of a kind the diff selects on, so only the recording names its base report.
+    [SkippableFact]
+    public async Task ReportExtensionRemoved_SelectsTheTestThatRanItsBaseReport_FromTheRecording()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (app, testApp, cache) = Layout("report-extension-removed", report: true);
+        await RecordBaseline(testApp, cache, tests: 4);
+
+        File.Delete(Path.Combine(app, "src", "ReportExt.ReportExt.al"));
+        Package(app, testApp, report: true, reportExtension: false);
+
+        await using var second = await CliServer.StartAsync(new[] { "--cache", cache });
+        var drifted = await Send(second, testApp);
+        Assert.False(drifted.ForcedFull, drifted.Raw);
+        Assert.Equal(new[] { "RunsReport" }, drifted.Status.Keys);
+        Assert.True(drifted.Status["RunsReport"] == "pass", drifted.Raw);
         var d = drifted.Drift ?? throw new Xunit.Sdk.XunitException("no environmentDrift: " + drifted.Raw);
         Assert.Equal("diffed", d.GetProperty("mode").GetString());
         Assert.Equal(new[] { "ReportExtension 60477 Drift Report Ext SX" },
