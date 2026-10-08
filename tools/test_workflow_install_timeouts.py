@@ -427,6 +427,8 @@ def _self_test() -> int:
         ("apt word, untokenisable: noted, raw scan finds the install",
          "echo 'x\napt-get -y install gcc", (True, True)),
         ("apt word, tokenisable: no note", "apt-get -y install gcc", (True, False)),
+        ("nested past MAX_DEPTH: noted, raw scan still sees apt-get",
+         "bash -c \"bash -c \\\"bash -c 'bash -c \\\\\\\"apt-get install x\\\\\\\"'\\\"\"", (True, True)),
     ]
     for name, script, (want_found, want_note) in paths:
         found, note = step_installs(script)
