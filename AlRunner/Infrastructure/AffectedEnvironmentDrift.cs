@@ -316,12 +316,13 @@ internal static class AffectedEnvironmentDrift
     /// The keys the changed objects select on: a built kind selects the tests that built it or
     /// entered it, a table or tableextension the tests that held its records. What no key can carry
     /// is returned as a reason instead: another kind, an instance built outside any one test, or a
-    /// record held outside one. A pageextension selects through its base page (#5025). Any kind
+    /// record held outside one. A pageextension selects through its base page (#5025), a reportextension through its base report (#5088). Any kind
     /// also selects through the metadata virtual tables that list it (#5084).
     /// </summary>
     internal static EnvironmentDriftKeys SelectionKeys(IReadOnlyList<AffectedObjectId> changed,
         IReadOnlyDictionary<int, List<int>> currentExtensionBases, HashSet<string>? recordedBundleWide,
-        IReadOnlyDictionary<int, List<int>>? currentPageExtensionBases)
+        IReadOnlyDictionary<int, List<int>>? currentPageExtensionBases,
+        IReadOnlyDictionary<int, List<int>>? currentReportExtensionBases = null)
     {
         var coverage = new HashSet<string>(StringComparer.Ordinal);
         var events = new HashSet<string>(StringComparer.Ordinal);
@@ -354,6 +355,13 @@ internal static class AffectedEnvironmentDrift
                 if (r.ForceFullReason != null) unattributed.Add(r.ForceFullReason);
                 continue;
             }
+            if (o.Kind == "ReportExtension")
+            {
+                var r = AffectedEventSelection.ChangedReportExtensionKeys(new[] { (o.Kind, o.Id) }, currentReportExtensionBases, recordedBundleWide);
+                coverage.UnionWith(r.Keys);
+                if (r.ForceFullReason != null) unattributed.Add(r.ForceFullReason);
+                continue;
+            }
             // #5076: read only through the permission tables, which the metadata keys above already select on.
             if (o.Kind is "PermissionSet" or "PermissionSetExtension") continue;
             unattributed.Add($"{Display(o)} changed, and no test recording holds the use of this kind of object ({o.Kind})");
@@ -370,7 +378,8 @@ internal static class AffectedEnvironmentDrift
     internal static EnvironmentDriftResolution Resolve(string recordedKey, string currentKey,
         IEnumerable<string> recordEnvs, BundleEnvironments? recorded, EnvironmentSnapshot? current,
         IReadOnlyDictionary<int, List<int>> currentExtensionBases, HashSet<string>? recordedBundleWide,
-        IReadOnlyDictionary<int, List<int>>? currentPageExtensionBases)
+        IReadOnlyDictionary<int, List<int>>? currentPageExtensionBases,
+        IReadOnlyDictionary<int, List<int>>? currentReportExtensionBases = null)
     {
         var keysByRecord = new Dictionary<string, EnvironmentDriftKeys>(StringComparer.Ordinal);
         var exact = new HashSet<string>(StringComparer.Ordinal);
@@ -382,7 +391,7 @@ internal static class AffectedEnvironmentDrift
         {
             var snapshot = recordEnv.Length > 0 && recorded != null && recorded.Snapshots.TryGetValue(recordEnv, out var s) ? s : null;
             var diff = Diff(snapshot, current);
-            var keys = SelectionKeys(diff.Changed, currentExtensionBases, recordedBundleWide, currentPageExtensionBases);
+            var keys = SelectionKeys(diff.Changed, currentExtensionBases, recordedBundleWide, currentPageExtensionBases, currentReportExtensionBases);
             keysByRecord[recordEnv] = keys;
             if (platform == null && diff.Approximate.Count == 0 && keys.Unattributed.Count == 0) exact.Add(recordEnv);
             changed.AddRange(diff.Changed);

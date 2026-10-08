@@ -146,32 +146,67 @@ internal static class AffectedEventSelection
         IEnumerable<(string Kind, int? Id)> changed,
         IReadOnlyDictionary<int, List<int>>? currentPageBases,
         HashSet<string>? recordedBundleWide)
+        => ChangedExtensionBaseKeys(changed, currentPageBases, recordedBundleWide, PageExtensions);
+
+    /// <summary>In the <see cref="AlEventRaiseTracker.BundleWideKey"/> entry (#5088): reportextension
+    /// <paramref name="extensionId"/> extended report <paramref name="reportId"/> when the baseline was
+    /// recorded, which is all that names the base of an extension removed since.</summary>
+    internal static string ReportExtensionBaseKey(int extensionId, int reportId) => $"rext|{extensionId}|{reportId}";
+
+    /// <summary>
+    /// The coverage keys a changed reportextension selects on (#5088): its base report's, in both the
+    /// request-source and the dependency form, as for a pageextension. Every way a test runs a report
+    /// (<c>Report.Run</c>, <c>RunModal</c>, <c>SaveAs</c>, a <c>Report</c> variable, a request page) builds
+    /// an instance of the base report, which the recording keeps. Rules:
+    /// docs/server-mode.md#affectedonly-and-report-extensions.
+    /// </summary>
+    /// <param name="currentReportBases">Each reportextension id to its base report ids now; null when the
+    /// registry could not be read.</param>
+    internal static Result ChangedReportExtensionKeys(
+        IEnumerable<(string Kind, int? Id)> changed,
+        IReadOnlyDictionary<int, List<int>>? currentReportBases,
+        HashSet<string>? recordedBundleWide)
+        => ChangedExtensionBaseKeys(changed, currentReportBases, recordedBundleWide, ReportExtensions);
+
+    // What differs between the two kinds whose extension is selected through its base object's instance.
+    private sealed record ExtensionBaseShape(string ExtensionKind, string BaseKind, string RecordedPrefix);
+
+    private static readonly ExtensionBaseShape PageExtensions = new("PageExtension", "Page", "pext");
+    private static readonly ExtensionBaseShape ReportExtensions = new("ReportExtension", "Report", "rext");
+
+    private static Result ChangedExtensionBaseKeys(
+        IEnumerable<(string Kind, int? Id)> changed,
+        IReadOnlyDictionary<int, List<int>>? currentBases,
+        HashSet<string>? recordedBundleWide,
+        ExtensionBaseShape shape)
     {
         var keys = new HashSet<string>(StringComparer.Ordinal);
+        var lowerKind = shape.ExtensionKind.ToLowerInvariant();
+        var baseNoun = shape.BaseKind.ToLowerInvariant();
         foreach (var (kind, id) in changed)
         {
-            if (kind != "PageExtension") continue;
+            if (kind != shape.ExtensionKind) continue;
             if (id is not int n)
-                return new(keys, "a changed PageExtension has no object id, so its base page cannot be looked up");
+                return new(keys, $"a changed {shape.ExtensionKind} has no object id, so its base {baseNoun} cannot be looked up");
             if (recordedBundleWide == null)
-                return new(keys, $"PageExtension {n} changed and the coverage baseline has no record of which page each pageextension extends");
-            if (currentPageBases == null)
-                return new(keys, $"PageExtension {n} changed and the page each pageextension extends could not be read (a dependency's page symbols are unreadable)");
+                return new(keys, $"{shape.ExtensionKind} {n} changed and the coverage baseline has no record of which {baseNoun} each {lowerKind} extends");
+            if (currentBases == null)
+                return new(keys, $"{shape.ExtensionKind} {n} changed and the {baseNoun} each {lowerKind} extends could not be read (a dependency's {baseNoun} symbols are unreadable)");
             var bases = new SortedSet<int>();
-            if (currentPageBases.TryGetValue(n, out var now)) bases.UnionWith(now);
-            var recordedPrefix = $"pext|{n}|";
+            if (currentBases.TryGetValue(n, out var now)) bases.UnionWith(now);
+            var recordedPrefix = $"{shape.RecordedPrefix}|{n}|";
             foreach (var k in recordedBundleWide)
                 if (k.StartsWith(recordedPrefix, StringComparison.Ordinal) && int.TryParse(k.AsSpan(recordedPrefix.Length), out var b))
                     bases.Add(b);
             if (bases.Count == 0)
-                return new(keys, $"the base page of pageextension {n} could not be resolved");
+                return new(keys, $"the base {baseNoun} of {lowerKind} {n} could not be resolved");
             foreach (var b in bases)
             {
-                var source = $"Page|id:{b}";
+                var source = $"{shape.BaseKind}|id:{b}";
                 var dependency = AffectedEnvironmentDrift.DependencyKeyPrefix + source;
-                // A test can open a long-lived page without building it, so it carries no key.
+                // A test can use a long-lived instance without building it, so it carries no key.
                 if (recordedBundleWide.Contains(LongLivedObjectKey(source)) || recordedBundleWide.Contains(LongLivedObjectKey(dependency)))
-                    return new(keys, $"pageextension {n} extends Page {b}, an instance of which was built outside any one test "
+                    return new(keys, $"{lowerKind} {n} extends {shape.BaseKind} {b}, an instance of which was built outside any one test "
                         + "(a test codeunit's global, a SingleInstance codeunit, or before the test ran), so the tests using it are not recorded");
                 keys.Add(source);
                 keys.Add(dependency);
@@ -181,20 +216,20 @@ internal static class AffectedEventSelection
     }
 
     // Kinds a change of which some recorded key selects on: an instance built or a scope entered (the
-    // object's own key), a record held (ChangedTableKeys), a base page opened (ChangedPageExtensionKeys).
+    // object's own key), a record held (ChangedTableKeys), a base page or report built (ChangedExtensionBaseKeys).
     // Any kind also keys the metadata virtual tables listing it (AffectedMetadataTables, #5084); a permission
     // set has no other key, because nothing but those tables reads it (#5076).
     // A kind added here without its keys is the silent too-few selection #5083 closed.
     private static readonly HashSet<string> KeyedKinds = new(StringComparer.Ordinal)
     {
         "Codeunit", "Page", "Report", "Query", "XmlPort", "Table", "TableExtension", "PageExtension",
-        "PermissionSet", "PermissionSetExtension",
+        "PermissionSet", "PermissionSetExtension", "ReportExtension",
     };
 
     /// <summary>
     /// Why a changed object forces a full run because no recorded key can select the tests that
     /// reached it (#5083): every kind outside <see cref="KeyedKinds"/>,
-    /// an enum, an enumextension, a reportextension and an interface among them. Null when every changed kind is keyed.
+    /// an enum, an enumextension and an interface among them. Null when every changed kind is keyed.
     /// Rules: docs/server-mode.md#affectedonly-and-object-kinds-no-test-records.
     /// </summary>
     internal static string? UnkeyedKindChange(IEnumerable<AffectedObjectId> changed)
