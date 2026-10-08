@@ -1604,7 +1604,7 @@ qualified test name, never a prefix. Both apply to every bundle in the request.
   value; `ServerTestSelectionFieldTests` sends a request with each field and then one without.
 - **A pattern that selects nothing is exit 6**, as on the CLI (#4055): the summary's `exitCode` is `6` and
   `warnings` carries `test-selection: --test 'PATTERN' selected no test in this run. ...`. A match that
-  `excludeTests` then removed is not a no-match (the count is taken before exclusion, as on the CLI). When the
+  `excludeTests` then removed is not a no-match: the server's count is taken before exclusion (the CLI's, since #5439, is taken after it, so there the same selection is exit 6). When the
   request ends with any other code (a compile or execution failure, or a company initialization abort), the
   zero cannot be attributed to the pattern, so the code stays as it is and the warning says "not judged". The audit judges a `test` the request carried, not a startup `--test`.
 - **Refused with `affectedOnly`.** `test` or `excludeTests` together with `affectedOnly` returns

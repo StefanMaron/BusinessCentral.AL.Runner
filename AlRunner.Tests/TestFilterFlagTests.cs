@@ -288,42 +288,53 @@ public sealed class TestFilterFlagTests : IDisposable
     }
 
     /// <summary>
-    /// #4055: the audit counts what the PATTERN selected, not what ran. `Alpha` selects
-    /// AlphaCheck and --exclude-test then removes it, so 0 tests run — that is an exclusion, not
-    /// a typo, and must stay exit 0 with no "selected no test" line. A count that never
-    /// increments would report this run as exit 6.
+    /// #5439 (it was exit 0 under #4055): `Alpha` selects AlphaCheck and --exclude-test then removes it, so
+    /// nothing is left to run. A caller that selected one test and got "Tests: 0" at exit 0 read that as
+    /// a clean run, so it is exit 6 now. The exclusion that removes only SOME of the selection stays exit 0.
     /// </summary>
     [SkippableFact]
-    public void TestFlag_MatchRemovedByExcludeTest_IsNotANoMatch()
+    public void TestFlag_MatchRemovedByExcludeTest_IsExit6_ButAPartialExclusionIsNot()
     {
         TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner("--test Alpha", "--exclude-test Codeunit62142.AlphaCheck");
 
-        Assert.True(exit == 0, output);
+        Assert.True(exit == 6, output);
         Assert.DoesNotContain("PASS  Codeunit62142.AlphaCheck", output);
         Assert.DoesNotContain("Codeunit62143.BetaCheck", output);
         Assert.Contains("Tests: 0 ", output);
-        Assert.DoesNotContain("selected no test", output);
+        Assert.Contains("--exclude-test names every one of them, so nothing is left to run", output);
+
+        // Control: the pattern also selects Beta ("Check"), only Alpha is excluded, so one test runs.
+        var (partial, partialExit) = RunRunner("--test Check", "--exclude-test Codeunit62142.AlphaCheck");
+        Assert.True(partialExit == 0, partial);
+        Assert.Contains("PASS  Codeunit62143.BetaCheck", partial);
+        Assert.DoesNotContain("selected no test", partial);
     }
 
     /// <summary>
-    /// #4055, the same property under --jobs: each worker's reported count, not its test total,
-    /// is what the parent sums.
+    /// #5439 under --jobs: the parent sums what the workers report AFTER exclusion, so exclusions that empty
+    /// the whole invocation are exit 6, while a shard whose own selection is emptied does not fail a run
+    /// that another shard satisfied.
     /// </summary>
     [SkippableFact]
-    public void Jobs_MatchRemovedByExcludeTest_IsNotANoMatch()
+    public void Jobs_MatchRemovedByExcludeTest_IsExit6_OnlyWhenNoShardHasAnythingLeft()
     {
         TestArtifacts.SkipIfMissing();
         var (alpha, beta) = WriteTwoBundles();
 
         var (output, exit) = RunRunnerOn(new[] { alpha, beta },
             "--jobs 2", "--test Alpha", "--exclude-test Codeunit62146.AlphaOnly");
-
-        Assert.True(exit == 0, output);
+        Assert.True(exit == 6, output);
         Assert.Contains("jobs: 2 bundle(s) across 2 worker process(es)", output);
         Assert.DoesNotContain("PASS  Codeunit62146.AlphaOnly", output);
-        Assert.DoesNotContain("selected no test", output);
+        Assert.Contains("--exclude-test is also in effect", output);
+
+        var (okOutput, okExit) = RunRunnerOn(new[] { alpha, beta },
+            "--jobs 2", "--test Only", "--exclude-test Codeunit62146.AlphaOnly");
+        Assert.True(okExit == 0, okOutput);
+        Assert.Contains("Codeunit62147.BetaOnly", okOutput);
+        Assert.DoesNotContain("selected no test", okOutput);
     }
 
     /// <summary>

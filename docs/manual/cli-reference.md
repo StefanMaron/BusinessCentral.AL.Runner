@@ -16,6 +16,7 @@ al-runner [OPTIONS] <bundle-dir>...
 | Flag | Effect |
 |---|---|
 | `--test PATTERN`, `--filter PATTERN` | Run only tests whose qualified name (`CodeunitNNNN.Method`) contains PATTERN, case-insensitively. |
+| `--test-exact NAME` | Run only the test whose whole qualified name is NAME (`Codeunit78950.GrowPre`), case-insensitively; repeatable. Never a substring, so `GrowPre` does not select `GrowPreTwin`. A codeunit name alone is not a test name. Combined with `--test` it is the intersection. Refused (exit 2) with `--server` and with `--watch --affected`. (#5439) |
 | `--isolation MODE` | `codeunit` (default), `test`, or `disabled`. See [Writing tests](writing-tests.md). |
 | `--test-timeout SECONDS` | Per-test timeout. Default 60. |
 
@@ -65,7 +66,7 @@ al-runner [OPTIONS] <bundle-dir>...
 | `3` | A bundle could not compile. |
 | `4` | A suite's test or app-group count did not match its declared baseline (`--count-baseline`), or a declared suite produced no bucket (`--count-baseline-require-all`). |
 | `5` | An expectations entry matched no test in this run (`--expectations-require-match`). |
-| `6` | `--test PATTERN` selected no test in the whole invocation (#4055). Under `--jobs` the workers' counts are summed; not applied in `--watch` or `--server`. |
+| `6` | `--test PATTERN` or `--test-exact NAME` selected no test in the whole invocation (#4055), or `--exclude-test` removed every test they selected (#5439). Under `--jobs` the workers' counts, taken after exclusion, are summed; not applied in `--watch` or `--server`. |
 
 A run can hold several of these at once, and reports the most fundamental: **`3` > `2` > `4` >
 `6` > `1` > `5`**. `3`, `2`, `4` and `6` all say *the run did not measure what it claims to*, so the

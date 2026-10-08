@@ -32,7 +32,7 @@ internal static class ParallelFanOut
         "--country",
         "--coverage-out", "--define", "--dump-csharp", "--expectations", "--filter",
         "--isolation", "--out", "--output-junit", "--package-cache", "--preprocessor-symbols",
-        "--resolve-version", "--test", "--test-data-company", "--test-isolation",
+        "--resolve-version", "--test", "--test-exact", "--test-data-company", "--test-isolation",
         "--test-timeout", "--jobs", "--seed",
         // Both take a value and both must reach a worker: a shard that lost --exclude-test would
         // walk straight back into the hang the parent already excluded, and one that lost
@@ -583,10 +583,13 @@ internal static class ParallelFanOut
         // #4055: the workers only reported what --test selected; the verdict is the run's.
         // A shard that did not report, or any exit above "tests ran", leaves the zero unattributable.
         var testFilter = LastValueOf(originalArgs, "--test", "--filter");
-        if (testFilter != null && selected == 0 && tests == 0 && !selectionUnreported
+        var testExact = AllValuesOf(originalArgs, "--test-exact");
+        if ((testFilter != null || testExact.Count > 0) && selected == 0 && tests == 0 && !selectionUnreported
             && notRun == 0 && partial == 0 && (worst == 0 || worst == 5))
         {
-            Console.Error.WriteLine("test-selection: " + TestSelectionAudit.Describe(testFilter));
+            Console.Error.WriteLine("test-selection: " + TestSelectionAudit.Describe(
+                testFilter, testExact, excludedAll: false,
+                excludesInEffect: AllValuesOf(originalArgs, "--exclude-test").Count > 0));
             worst = TestSelectionAudit.ExitCode;
         }
 
@@ -648,6 +651,14 @@ internal static class ParallelFanOut
             else if (a == "--no-strict-exit") strict = false;
         }
         return strict;
+    }
+
+    private static List<string> AllValuesOf(IReadOnlyList<string> args, string flag)
+    {
+        var values = new List<string>();
+        for (var i = 0; i + 1 < args.Count; i++)
+            if (args[i] == flag) values.Add(args[++i]);
+        return values;
     }
 
     private static string? LastValueOf(IReadOnlyList<string> args, params string[] flags)
