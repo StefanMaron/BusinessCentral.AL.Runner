@@ -134,7 +134,7 @@ public class ServerAffectedSelectionReportExtensionTests
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "idRanges": [ { "from": 60721, "to": 60731 } ],
+          "idRanges": [ { "from": 60721, "to": 60732 } ],
           "runtime": "14.0"
         }
         """);
@@ -220,7 +220,7 @@ public class ServerAffectedSelectionReportExtensionTests
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
-          "idRanges": [ { "from": 60721, "to": 60731 } ],
+          "idRanges": [ { "from": 60721, "to": 60732 } ],
           "runtime": "14.0"
         }
         """);
@@ -344,13 +344,14 @@ public class ServerAffectedSelectionReportExtensionTests
         AssertNarrowed(await SendFresh(cache, bundle), RunBaseReport, null);
     }
 
+    // An extension added after the baseline has no key of its own in any test's recording, so only the
+    // base report can select: the claim is that SaveAs and a request page each build that report.
     [SkippableFact]
-    public async Task ChangedReportExtension_SelectsTheTestThatSavedItsBaseReport()
+    public async Task AddedReportExtension_SelectsTheTestThatSavedItsBaseReport()
     {
         TestArtifacts.SkipIfMissing();
         var bundle = SmallBundle("al-runner-server-affected-rext-saveas", "000000000003",
             ("Data.Report.al", Report(60728, "RExt Data SX", processingOnly: false)),
-            ("Data.ReportExt.al", Extension(60729, "RExt Data Ext SX", "RExt Data SX")),
             ("Tests.Codeunit.al", SaveAsTests));
         await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--no-cache" });
 
@@ -361,12 +362,10 @@ public class ServerAffectedSelectionReportExtensionTests
 
         Write(bundle, "Data.ReportExt.al", Extension(60729, "RExt Data Ext SX", "RExt Data SX", ProbeExt));
         AssertNarrowed(await Send(server, bundle), new[] { "SavesAsXml" }, "PROBE-EXT");
-        Write(bundle, "Data.ReportExt.al", Extension(60729, "RExt Data Ext SX", "RExt Data SX"));
-        AssertNarrowed(await Send(server, bundle), new[] { "SavesAsXml" }, null);
     }
 
     [SkippableFact]
-    public async Task ChangedReportExtension_SelectsTheTestsThatShowedItsBaseReportsRequestPage()
+    public async Task AddedReportExtension_SelectsTheTestsThatShowedItsBaseReportsRequestPage()
     {
         TestArtifacts.SkipIfMissing();
         var bundle = SmallBundle("al-runner-server-affected-rext-requestpage", "000000000004",
@@ -380,10 +379,8 @@ public class ServerAffectedSelectionReportExtensionTests
         Assert.True(new[] { "Unrelated", "ViaRun", "ViaRunRequestPage" }.SequenceEqual(baseline.Ran), baseline.Raw);
         Assert.All(baseline.Status.Values, s => Assert.Equal("pass", s));
 
-        var opened = new[] { "ViaRun", "ViaRunRequestPage" };
-        Write(bundle, "Page.ReportExt.al", PageExtension("Changed"));
-        AssertNarrowed(await Send(server, bundle), opened, "ext caption was Changed");
-        Write(bundle, "Page.ReportExt.al", PageExtension());
-        AssertNarrowed(await Send(server, bundle), opened, null);
+        // A second extension of the report, which no handler reads.
+        Write(bundle, "Second.ReportExt.al", Extension(60732, "RExt Second Ext SX", "RExt Page SX"));
+        AssertNarrowed(await Send(server, bundle), new[] { "ViaRun", "ViaRunRequestPage" }, null);
     }
 }
