@@ -6,8 +6,11 @@ GitHub's 360-minute default applied; one `apt-get install` hung for 79 minutes w
 held the required `BC test matrix passed` context. The bounds, and the job durations they
 were sized from, are in the PR that added this file.
 
-The population is DERIVED, not listed: every step whose `run:` calls `apt-get install` is
-checked, so a new install step is in scope the day it lands. Two rules:
+The population is DERIVED, not listed: every step whose `run:` calls `apt-get install` (or
+`apt install`) is checked, so a new install step is in scope the day it lands. The command
+line is tokenised like a shell and the subcommand is the first argument that is not an option
+or the value of a value-taking option, so `apt-get -o Dpkg::Lock::Timeout=60 install` is seen
+(#5458). `aptitude` is out of scope (different option table; nothing here uses it). Two rules:
 
   1. each such step carries a step-level `timeout-minutes` of at most STEP_MAX;
   2. the one job named in BOUNDED_JOBS carries a job-level `timeout-minutes` of at most
@@ -27,7 +30,7 @@ Exit: 0 measured and fine, 1 measured and broken, 3 could not measure.
 from __future__ import annotations
 
 import os
-import re
+import shlex
 import sys
 import tempfile
 
@@ -44,7 +47,108 @@ JOB_MAX = 90
 # (workflow file under .github/workflows, job id): jobs that must carry their own bound.
 BOUNDED_JOBS = [("bc-tests.yml", "pack")]
 
-APT_INSTALL = re.compile(r"\bapt-get\s+(?:-\S+\s+)*install\b")
+# Package managers whose `install` is in scope. `aptitude` is not: its option set differs
+# (-F/-w/-S take values), nothing here uses it, and a wrong option table would hide an install.
+INSTALLERS = ("apt-get", "apt")
+# Options that consume a value, so the value is not the subcommand (`apt-get -t install remove`).
+# Short options follow getopt: the rest of the cluster is the value, else the next token.
+VALUE_SHORT = frozenset("octa")
+VALUE_LONG = frozenset({"--option", "--config-file", "--target-release", "--default-release",
+                        "--host-architecture"})
+SEPARATOR_CHARS = frozenset("();&|<>")
+NOT_COMMANDS = ("echo", "printf")
+
+
+class Untokenisable(Exception):
+    """A `run:` script the shell tokeniser refuses; the guard cannot measure it."""
+
+
+def _normalise(script):
+    """One line of shell: unquoted comments dropped, unquoted newlines turned into `;`, and
+    `\\<newline>` continuations joined. Quotes are tracked so a multi-line quoted string stays whole."""
+    out, quote, prev, i = [], None, "\n", 0
+    while i < len(script):
+        ch = script[i]
+        if quote == "'":
+            quote = None if ch == "'" else quote
+        elif quote == '"':
+            if ch == "\\" and i + 1 < len(script):
+                out.append(ch)
+                i, ch = i + 1, script[i + 1]
+            elif ch == '"':
+                quote = None
+        elif ch == "\\" and script[i + 1:i + 2] == "\n":
+            i, ch = i + 1, " "
+        elif ch == "\\" and i + 1 < len(script):
+            out.append(ch)
+            i, ch = i + 1, script[i + 1]
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "#" and prev.isspace():
+            while i < len(script) and script[i] != "\n":
+                i += 1
+            continue
+        elif ch == "\n":
+            out.append(" ; ")
+            prev, i = "\n", i + 1
+            continue
+        out.append(ch)
+        prev = ch
+        i += 1
+    return "".join(out)
+
+
+def _segments(script):
+    """Yields the argv-like token lists of each simple command in a `run:` script."""
+    lex = shlex.shlex(_normalise(script), posix=True, punctuation_chars=True)
+    lex.whitespace_split, lex.commenters = True, ""
+    try:
+        tokens = list(lex)
+    except ValueError as exc:
+        raise Untokenisable(f"{exc}: {script.strip()[:80]!r}") from exc
+    seg = []
+    for tok in tokens:
+        if tok and all(c in SEPARATOR_CHARS for c in tok):
+            if seg:
+                yield seg
+            seg = []
+        else:
+            seg.append(tok)
+    if seg:
+        yield seg
+
+
+def _subcommand(args):
+    """The first non-option argument, skipping the values of value-taking options."""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            return args[i + 1] if i + 1 < len(args) else None
+        if a.startswith("--"):
+            i += 2 if a in VALUE_LONG else 1  # `--opt=value` is not in VALUE_LONG: one token
+            continue
+        if a.startswith("-") and len(a) > 1:
+            step = 1
+            for j in range(1, len(a)):
+                if a[j] in VALUE_SHORT:
+                    step = 2 if j == len(a) - 1 else 1  # attached value, else the next token
+                    break
+            i += step
+            continue
+        return a
+    return None
+
+
+def runs_install(script):
+    """True when any simple command in `script` is `apt-get`/`apt` with subcommand `install`."""
+    for seg in _segments(script):
+        if seg[0] in NOT_COMMANDS:
+            continue
+        for i, tok in enumerate(seg):
+            if tok.rsplit("/", 1)[-1] in INSTALLERS and _subcommand(seg[i + 1:]) == "install":
+                return True
+    return False
 
 
 def _minutes(value):
@@ -76,10 +180,15 @@ def check(root: str):
         for job_id, job in (jobs.items() if isinstance(jobs, dict) else []):
             for i, step in enumerate((job or {}).get("steps") or []):
                 run = step.get("run") if isinstance(step, dict) else None
-                if not isinstance(run, str) or not APT_INSTALL.search(run):
+                if not isinstance(run, str):
                     continue
-                installs += 1
                 label = f"{name} job `{job_id}` step {i + 1} ({step.get('name', 'unnamed')})"
+                try:
+                    if not runs_install(run):
+                        continue
+                except Untokenisable as exc:
+                    return 3, [f"UNMEASURABLE: {label}: `run:` cannot be tokenised ({exc})."]
+                installs += 1
                 got = step.get("timeout-minutes")
                 m = _minutes(got)
                 if got is None:
@@ -89,7 +198,7 @@ def check(root: str):
                                     f"integer <= {STEP_MAX}.")
 
     if installs == 0:
-        return 3, ["UNMEASURABLE: no `apt-get install` step found in any workflow. The "
+        return 3, ["UNMEASURABLE: no `apt-get install` / `apt install` step found in any workflow. The "
                    "population is derived, so zero is a moved directory or a changed "
                    "spelling, not a clean tree."]
 
@@ -109,7 +218,7 @@ def check(root: str):
 
     if failures:
         return 1, ["FAIL:"] + ["  " + f for f in failures]
-    return 0, [f"PASS: {installs} apt-get install step(s) bounded; "
+    return 0, [f"PASS: {installs} package-install step(s) bounded; "
                f"{len(BOUNDED_JOBS)} named job(s) bounded."]
 
 
@@ -131,6 +240,35 @@ def _wf(job_extra="", step_extra="", run="sudo apt-get update && sudo apt-get in
             "        run: " + run + "\n")
 
 
+def _scalar(run):
+    """A `run:` value as YAML: a multi-line (or `#`-bearing) script goes in a block scalar."""
+    if "\n" not in run and " #" not in run:
+        return run
+    return "|\n" + "".join("          " + line + "\n" for line in run.split("\n"))
+
+
+def _wf_with(run, timeout=None):
+    """A bounded plain install step (so the population is never empty), then one step running `run`."""
+    extra = "" if timeout is None else f"        timeout-minutes: {timeout}\n"
+    return ("jobs:\n  pack:\n    runs-on: ubuntu-latest\n    timeout-minutes: 60\n"
+            "    steps:\n      - name: plain\n        timeout-minutes: 20\n"
+            "        run: sudo apt-get install -y gcc\n"
+            "      - name: variant\n" + extra + "        run: " + _scalar(run) + "\n")
+
+
+# #5458: an option BEFORE the subcommand, with and without a value, in every spelling.
+_VALUE_OPTION_RUNS = [
+    ("-o spaced value", "sudo apt-get -o Dpkg::Lock::Timeout=60 install -y gcc"),
+    ("-o then a flag", "sudo apt-get -o Acquire::Retries=3 -y install gcc"),
+    ("-o attached value", "sudo apt-get -oDpkg::Lock::Timeout=60 install gcc"),
+    ("--option spaced value", "sudo apt-get --option Dpkg::Lock::Timeout=60 install gcc"),
+    ("--option=value", "sudo apt-get --option=Dpkg::Lock::Timeout=60 install gcc"),
+    ("clustered -yo", "sudo apt-get -yo Dpkg::Lock::Timeout=60 install gcc"),
+    ("-t value", "sudo apt-get -t jammy install gcc"),
+    ("apt, not apt-get", "sudo apt -o Dpkg::Lock::Timeout=60 install -y gcc"),
+    ("after && on one line", "sudo apt-get update && sudo apt-get -o X=1 install gcc"),
+]
+
 CASES = [
     ("control: both bounded", {"bc-tests.yml": _wf("    timeout-minutes: 60\n", "        timeout-minutes: 20\n")}, 0),
     ("step timeout absent", {"bc-tests.yml": _wf("    timeout-minutes: 60\n")}, 1),
@@ -141,7 +279,19 @@ CASES = [
     ("no install step anywhere", {"bc-tests.yml": _wf("    timeout-minutes: 60\n", run="echo hi")}, 3),
     ("named job missing", {"bc-tests.yml": "jobs:\n  other:\n    steps:\n      - run: sudo apt-get install -y x\n        timeout-minutes: 5\n"}, 3),
     ("workflow unparseable", {"bc-tests.yml": "jobs: [unclosed\n"}, 3),
-]
+    # the install is neither first on the line nor preceded only by bare flags
+    ("value option, install not first non-option, timeout 10 -> ok", {"bc-tests.yml": _wf_with("sudo apt-get -o Dpkg::Lock::Timeout=60 install -y gcc", 10)}, 0),
+    ("value option, timeout at the default", {"bc-tests.yml": _wf_with("sudo apt-get -o Dpkg::Lock::Timeout=60 install -y gcc", 360)}, 1),
+    # the value of a value-taking option is not the subcommand, even when it spells `install`
+    ("a value spelled install, subcommand remove", {"bc-tests.yml": _wf_with("sudo apt-get -t install remove gcc")}, 0),
+    ("non-install subcommand after -o, unbounded", {"bc-tests.yml": _wf_with("sudo apt-get -o x=y update")}, 0),
+    ("install only inside a quoted string", {"bc-tests.yml": _wf_with("echo 'run apt-get install later'")}, 0),
+    ("install only in a trailing comment", {"bc-tests.yml": _wf_with("echo hi # apt-get install gcc")}, 0),
+    ("install on a continued line", {"bc-tests.yml": _wf_with("sudo apt-get -o X=1 \\\n  install gcc")}, 1),
+    ("install on the third line, after an apostrophe in a comment", {"bc-tests.yml": _wf_with("# don't skip this\nset -e\nsudo apt-get -y install gcc")}, 1),
+    ("shell the guard cannot tokenise", {"bc-tests.yml": _wf_with("echo 'unterminated")}, 3),
+] + [(f"unbounded: {n}", {"bc-tests.yml": _wf_with(r)}, 1) for n, r in _VALUE_OPTION_RUNS] + [
+    (f"bounded: {n}", {"bc-tests.yml": _wf_with(r, 10)}, 0) for n, r in _VALUE_OPTION_RUNS]
 
 
 def _self_test() -> int:
