@@ -27,6 +27,9 @@ public class AffectedMetadataTablesTests
         Row("Report", 2000000234, 2000000139, 2000000203),
         Row("Enum"),
         Row("Interface"),
+        // #5076: a permission set is read through the permission tables, and through nothing else.
+        Row("PermissionSet", 2000000004, 2000000005, 2000000167, 2000000250, 2000000251, 2000000254),
+        Row("PermissionSetExtension", 2000000004, 2000000005, 2000000167, 2000000250, 2000000251, 2000000254),
     };
 
     // Every kind is listed by AllObj, AllObjWithCaption and Event Subscription.
@@ -90,6 +93,26 @@ public class AffectedMetadataTablesTests
         // A table of another kind that nothing lists the codeunit in is no reason to run everything.
         var other = Keys(new[] { new AffectedObjectId("Codeunit", 70000, "X") }, Recorded("tbl|Table|2000000136"));
         Assert.Null(other.ForceFullReason);
+    }
+
+    // #5076: a dependency's changed permission set selects through the permission tables and is no
+    // unattributable kind, so a minor BC bump that changes one still diffs exactly.
+    [Theory]
+    [InlineData("PermissionSet")]
+    [InlineData("PermissionSetExtension")]
+    public void DependencyChangedPermissionSet_KeysThePermissionTables_AndIsAttributed(string kind)
+    {
+        var keys = AffectedEnvironmentDrift.SelectionKeys(new[] { new AffectedObjectId(kind, 9000, "D365 BASIC") },
+            new Dictionary<int, List<int>>(), Recorded(), new Dictionary<int, List<int>>());
+        Assert.Empty(keys.Unattributed);
+        foreach (var t in new[] { 2000000004, 2000000005, 2000000167, 2000000250, 2000000251, 2000000254 })
+            Assert.Contains($"tbl|Table|{t}", keys.EventKeys);
+
+        // Held outside any one test: the same refusal as for every other metadata table.
+        var held = AffectedEnvironmentDrift.SelectionKeys(new[] { new AffectedObjectId(kind, 9000, "D365 BASIC") },
+            new Dictionary<int, List<int>>(), Recorded("tbl|Table|2000000250"), new Dictionary<int, List<int>>());
+        Assert.Contains("a record of metadata table 2000000250 was held outside any one test", Assert.Single(held.Unattributed),
+            StringComparison.Ordinal);
     }
 
     // The environment diff keys a dependency's changed object the same way (AffectedEnvironmentDrift.SelectionKeys).

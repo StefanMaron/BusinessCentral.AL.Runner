@@ -27,6 +27,7 @@ internal static class AffectedMetadataTables
 
     private static readonly string[] TableKinds = { "Table", "TableExtension" };
     private static readonly string[] PageKinds = { "Page", "PageExtension" };
+    private static readonly string[] PermissionKinds = { "PermissionSet", "PermissionSetExtension" };
 
     /// <summary>
     /// EVERY table <c>GetDataAccessForTableCore</c> serves from a branch of its own, classified. A new
@@ -51,10 +52,10 @@ internal static class AffectedMetadataTables
         new("ReportLayoutListVirtualTable", new[] { 2000000234 }, Source.ObjectListing, new[] { "Report" }, "the layouts each report declares"),
         new("ReportMetadataVirtualTable", new[] { 2000000139 }, Source.ObjectListing, new[] { "Report" }, "one row per report"),
         new("ReportDataItemsVirtualTable", new[] { 2000000203 }, Source.ObjectListing, new[] { "Report" }, "one row per data item of each report"),
-        new("MetadataPermissionSetVirtualTable", new[] { 2000000250 }, Source.UnkeyedKind, new[] { "PermissionSet", "PermissionSetExtension" }, "the permission sets the apps declare"),
-        new("PermissionSetSystemTable", new[] { 2000000004 }, Source.UnkeyedKind, new[] { "PermissionSet", "PermissionSetExtension" }, "the assignable permission sets the apps declare"),
-        new("PermissionFamilyTable", new[] { 2000000005, 2000000251, 2000000254 }, Source.UnkeyedKind, new[] { "PermissionSet", "PermissionSetExtension" }, "the permissions of the declared permission sets"),
-        new("AggregatePermissionSetVirtualTable", new[] { 2000000167 }, Source.UnkeyedKind, new[] { "PermissionSet", "PermissionSetExtension" }, "the union of the system and tenant permission sets"),
+        new("MetadataPermissionSetVirtualTable", new[] { 2000000250 }, Source.ObjectListing, PermissionKinds, "the permission sets the apps declare"),
+        new("PermissionSetSystemTable", new[] { 2000000004 }, Source.ObjectListing, PermissionKinds, "the assignable permission sets the apps declare"),
+        new("PermissionFamilyTable", new[] { 2000000005, 2000000251, 2000000254 }, Source.ObjectListing, PermissionKinds, "the permissions of the declared permission sets"),
+        new("AggregatePermissionSetVirtualTable", new[] { 2000000167 }, Source.ObjectListing, PermissionKinds, "the union of the system and tenant permission sets"),
         new("TableMetadataVirtualTable", new[] { 2000000136 }, Source.ObjectListing, new[] { "Table" }, "one row per table"),
         new("PageMetadataVirtualTable", new[] { 2000000138 }, Source.ObjectListing, new[] { "Page" }, "one row per page"),
         new("TimeZoneVirtualTable", new[] { 2000000164 }, Source.NotObjectDerived, null, "the host's time zones"),

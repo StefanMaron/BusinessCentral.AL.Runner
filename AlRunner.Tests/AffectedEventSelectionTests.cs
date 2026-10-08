@@ -207,7 +207,9 @@ public class AffectedEventSelectionTests
         Assert.Null(Reason());
         Assert.Null(Reason(
             O("Codeunit", 1, "C"), O("Page", 2, "P"), O("Report", 3, "R"), O("Query", 4, "Q"),
-            O("XmlPort", 5, "X"), O("Table", 6, "T"), O("TableExtension", 7, "TE"), O("PageExtension", 8, "PE")));
+            O("XmlPort", 5, "X"), O("Table", 6, "T"), O("TableExtension", 7, "TE"), O("PageExtension", 8, "PE"),
+            // #5076: keyed through the permission tables (AffectedMetadataTables).
+            O("PermissionSet", 9, "PS"), O("PermissionSetExtension", 12, "PSE")));
 
         Assert.Equal("Enum 60741 changed, and which tests read an enum's values, captions or implementations is not recorded",
             Reason(O("Codeunit", 1, "C"), O("Enum", 60741, "E")));
