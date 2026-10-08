@@ -724,7 +724,12 @@ variant (`variants/<build>/`) whose own `al-runner.runtimeconfig.json` names net
 existing re-exec (`NclShadowRuntime`), which runs `dotnet exec` on that variant, so it runs under .NET 10.
 
 **What this means on a machine.** A BC 29 run needs a .NET 10 runtime installed beside the .NET 8 one the
-tool itself needs. `EngineVariants.ChooseDefault` leaves out a variant whose runtime is missing, so a default
+tool itself needs. That .NET 8 runtime is not optional and a 9 or 10 SDK does not bring it: the published
+`MSDyn365BC.AL.Runner` 2.12.0, installed with `dotnet tool install` under an SDK 10 and a root holding only the
+.NET 10 runtime, installed cleanly and then exited 150 on Linux on `al-runner --help` with `Framework:
+'Microsoft.NETCore.App', version '8.0.0'` (#5444); its `al-runner.runtimeconfig.json` carries no `rollForward`.
+Setting `DOTNET_ROLL_FORWARD=Major` made `--help` start; no BC 27 or 28 run was tried that way, and the
+supported answer is to install the .NET 8 runtime. `EngineVariants.ChooseDefault` leaves out a variant whose runtime is missing, so a default
 run on a .NET-8-only machine still picks BC 28 (and prints one `[bc] skipping BC 29.0` line);
 an explicit `--bc-version 29.x` there exits 2 and names the runtime to install
 (`AlRunner.Tests/EngineVariantRuntimeTests.cs`). The installed runtimes are read from the muxer's
