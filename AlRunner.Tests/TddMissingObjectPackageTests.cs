@@ -18,7 +18,7 @@ public sealed class TddMissingObjectPackageTests : IDisposable
     private const string PackageAppId = "7a1f4c93-2d68-4b05-9e37-c8d15a6b0e42";
     private const string PackageName = "Tdd Package Only";
 
-    private const string PackageRefusal = $"the package {PackageName} 1.0.0.0 (AL_Runner_Fixtures_Tdd_Package_Only_1.0.0.0.app) declares it - add the dependency on it to app.json; an empty codeunit would shadow it";
+    private const string PackageRefusal = $"the package {PackageName} 1.0.0.0 (AL_Runner_Fixtures_Tdd_Package_Only_1.0.0.0.app) declares it - if the test means that codeunit, add the dependency on it to app.json; if it means a new one, give it another name; an empty codeunit would shadow it";
 
     private readonly string _scratch;
 
@@ -35,17 +35,19 @@ public sealed class TddMissingObjectPackageTests : IDisposable
 
     /// <summary>A symbols-only package declaring codeunit 65400 "Package Only Points", in the shape the compiler's
     /// package scanner reads (the NAVX header of <c>TddPrecompiledTests</c>).</summary>
-    internal static byte[] BuildPackage(string codeunitSymbols, string? source = null)
+    internal static byte[] BuildPackage(string codeunitSymbols, string? source = null, string? appId = null, string? name = null)
     {
+        appId ??= PackageAppId;
+        name ??= PackageName;
         var manifest = $"""
             <?xml version="1.0" encoding="utf-8"?>
             <Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
-              <App Id="{PackageAppId}" Name="{PackageName}" Publisher="AL Runner Fixtures" Version="1.0.0.0" Target="Cloud" ShowMyCode="true" PropagateDependencies="false" />
+              <App Id="{appId}" Name="{name}" Publisher="AL Runner Fixtures" Version="1.0.0.0" Target="Cloud" ShowMyCode="true" PropagateDependencies="false" />
               <IdRanges><IdRange MinObjectId="65400" MaxObjectId="65419" /></IdRanges>
               <Dependencies />
             </Package>
             """;
-        var symbols = "{" + codeunitSymbols + $",\"AppId\":\"{PackageAppId}\",\"Name\":\"{PackageName}\",\"Publisher\":\"AL Runner Fixtures\",\"Version\":\"1.0.0.0\"}}";
+        var symbols = "{" + codeunitSymbols + $",\"AppId\":\"{appId}\",\"Name\":\"{name}\",\"Publisher\":\"AL Runner Fixtures\",\"Version\":\"1.0.0.0\"}}";
         using var zipBuffer = new MemoryStream();
         using (var zip = new ZipArchive(zipBuffer, ZipArchiveMode.Create, leaveOpen: true))
         {
@@ -66,7 +68,7 @@ public sealed class TddMissingObjectPackageTests : IDisposable
         bw.Write(Encoding.ASCII.GetBytes("NAVX"));
         bw.Write(40);
         bw.Write(2);
-        bw.Write(Guid.Parse(PackageAppId).ToByteArray());
+        bw.Write(Guid.Parse(appId).ToByteArray());
         bw.Write((long)payload.Length);
         bw.Write(Encoding.ASCII.GetBytes("NAVX"));
         bw.Write(payload);
@@ -99,6 +101,14 @@ public sealed class TddMissingObjectPackageTests : IDisposable
         Directory.CreateDirectory(Path.Combine(dir, ".alpackages"));
         File.WriteAllBytes(Path.Combine(dir, ".alpackages", "AL_Runner_Fixtures_Tdd_Package_Only_1.0.0.0.app"), BuildPackage(PointsSymbols, PointsSource));
         return dir;
+    }
+
+    /// <summary>A second, unrelated package in the folder's .alpackages: its own identity and a valid manifest, with
+    /// whatever <paramref name="symbols"/> text the test wants (malformed, for the unreadable cases).</summary>
+    private static void AddUnrelatedPackage(string dir, string symbols)
+    {
+        File.WriteAllBytes(Path.Combine(dir, ".alpackages", "Broken_Unrelated_1.0.0.0.app"),
+            BuildPackage(symbols, appId: "c3b8e1d2-5a47-4f90-8d16-0e2a7b9f4c55", name: "Broken Unrelated"));
     }
 
     private (string StdOut, string StdErr, int Exit) RunTdd(string app, params string[] extra) =>
@@ -185,5 +195,69 @@ public sealed class TddMissingObjectPackageTests : IDisposable
         Assert.Empty(TddMissingObjectTests.StubsOf(t));
         Assert.DoesNotContain("--tdd: generated codeunit", stderr);
         Assert.DoesNotContain("not generated", stderr);
+    }
+
+    /// <summary>#5450, the shape the review measured: BC's compile tolerates an unrelated package whose symbols are
+    /// malformed (a valid manifest), so the missing codeunit no package declares is still generated, with a note
+    /// that names the skipped file. Before: the refusal did not depend on the name and turned the feature off.</summary>
+    [SkippableFact]
+    public void AnUnreadablePackageThatNeverMentionsTheName_DoesNotRefuseTheGeneration()
+    {
+        TestArtifacts.SkipIfMissing();
+        var app = MakeTestFolder("control");
+        AddUnrelatedPackage(app, "\"Codeunits\":[");
+
+        var (stdout, stderr, exit) = RunTdd(app);
+
+        Assert.True(exit == 0, $"exit {exit}\n{stderr}");
+        using var doc = JsonDocument.Parse(stdout.Trim());
+        var t = Assert.Single(doc.RootElement.GetProperty("tests").EnumerateArray().ToList());
+        Assert.Equal("pass", t.GetProperty("status").GetString());
+        Assert.Equal(new[]
+        {
+            "Nowhere Declared Points: codeunit 65381",
+            "Nowhere Declared Points: procedure \"CalcPoints\"(Arg1: Integer): Integer",
+        }, TddMissingObjectTests.StubsOf(t));
+        Assert.Contains("--tdd: generated codeunit \"Nowhere Declared Points\" (id 65381)", stderr);
+        Assert.Contains("--tdd: the package Broken Unrelated 1.0.0.0 (Broken_Unrelated_1.0.0.0.app) could not be read", stderr);
+        Assert.Contains("never mentions \"Nowhere Declared Points\"", stderr);
+        Assert.DoesNotContain("not generated", stderr);
+    }
+
+    /// <summary>The same unreadable package, but its (truncated) symbols text does mention the name: it may be the
+    /// object's home, so the run refuses, names the file and says how to clear it.</summary>
+    [SkippableFact]
+    public void AnUnreadablePackageThatMentionsTheName_StillRefusesAndSaysHowToClearIt()
+    {
+        TestArtifacts.SkipIfMissing();
+        var app = MakeTestFolder("control");
+        AddUnrelatedPackage(app, "\"Codeunits\":[{\"Id\":65410,\"Name\":\"nowhere DECLARED points\",\"Methods\":[");
+
+        var (stdout, stderr, exit) = RunTdd(app);
+
+        Assert.True(exit == 1, $"exit {exit}\n{stderr}");
+        using var doc = JsonDocument.Parse(stdout.Trim());
+        var t = Assert.Single(doc.RootElement.GetProperty("tests").EnumerateArray().ToList());
+        Assert.Equal("fail", t.GetProperty("status").GetString());
+        Assert.Empty(TddMissingObjectTests.StubsOf(t));
+        Assert.Contains("--tdd: codeunit \"Nowhere Declared Points\" not generated - the package Broken Unrelated 1.0.0.0 (Broken_Unrelated_1.0.0.0.app) could not be read (", stderr);
+        Assert.Contains("remove or replace that file", stderr);
+        Assert.DoesNotContain("--tdd: generated codeunit", stderr);
+    }
+
+    /// <summary>A name the package refuses must not use up an id: "Package Only Points" sorts before "Zulu Nowhere
+    /// Points", is refused, and the codeunit generated after it still takes the FIRST free id, 65381 (the fixture's own
+    /// codeunit is 65380). #5449 said "a refusal reserves nothing"; moving the package check after the id is reserved
+    /// left every test green.</summary>
+    [SkippableFact]
+    public void ARefusedNameDoesNotUseUpAnId()
+    {
+        TestArtifacts.SkipIfMissing();
+        var app = MakeTestFolder("reserve");
+
+        var (_, stderr, _) = RunTdd(app);
+
+        Assert.Contains($"--tdd: codeunit \"Package Only Points\" not generated - {PackageRefusal}", stderr);
+        Assert.Contains("--tdd: generated codeunit \"Zulu Nowhere Points\" (id 65381)", stderr);
     }
 }
