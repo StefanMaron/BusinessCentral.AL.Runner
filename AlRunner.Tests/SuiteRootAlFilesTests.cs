@@ -231,15 +231,49 @@ public sealed class SuiteRootAlFilesTests : IDisposable
     }
 
     /// <summary>
-    /// A dot-directory is never an AL source root and can be huge (.git). AL under one does not
-    /// widen the suite; the predicate does not even walk it.
+    /// #5440: alc 17.0 compiles a .al file under ANY directory of the project folder - measured
+    /// per directory, all compiled: .dependencies, .git, .vscode, .alpackages, .snapshots,
+    /// .altestrunner, a nested .hidden/sub, and the non-dot obj/ bin/ node_modules/ - so a dot-directory
+    /// beside src/ widens the suite to its root exactly as ControlAddin/ does. Skipping it left
+    /// the file out of the compile with nothing said: exit 0 where alc fails.
     /// </summary>
-    [Fact]
-    public void AlUnderADotDirectory_DoesNotWidenThePaths()
+    [Theory]
+    [InlineData(".dependencies")]
+    [InlineData(".git")]
+    [InlineData(".vscode")]
+    [InlineData(".alpackages")]
+    [InlineData(".snapshots")]
+    [InlineData(".altestrunner")]
+    [InlineData(".hidden/sub")]
+    public void AlUnderADotDirectory_WidensThePathsToTheRoot(string dotDir)
     {
         Touch(Path.Combine(_root, "app.json"), "{}");
         Touch(Path.Combine(_root, "src", "A.al"));
-        Touch(Path.Combine(_root, ".git", "stray.al"));
+        Touch(Path.Combine(_root, dotDir.Replace('/', Path.DirectorySeparatorChar), "stray.al"));
+
+        var paths = ProgramSupport.CollectSuitePaths(_root);
+
+        Assert.Equal(new[] { _root }, paths);
+        // The registration loops ask the same function (#3735): a table in .dependencies/ must
+        // reach the in-memory provider too, not only the compile.
+        Assert.Equal(paths, ProgramSupport.SuiteRegistrationDirs(_root));
+        AssertEveryAlFileCovered(_root, paths);
+    }
+
+    /// <summary>
+    /// The other direction of #5440: a dot-directory holding no .al (the shape every real bundle
+    /// has - .alpackages of .app files, .vscode of json, a .git) must not widen the suite,
+    /// or every src/ project would churn to a root scan.
+    /// </summary>
+    [Fact]
+    public void DotDirectoriesWithoutAl_DoNotWidenThePaths()
+    {
+        Touch(Path.Combine(_root, "app.json"), "{}");
+        Touch(Path.Combine(_root, "src", "A.al"));
+        Touch(Path.Combine(_root, ".alpackages", "Microsoft_Base.app"), "x");
+        Touch(Path.Combine(_root, ".vscode", "launch.json"), "{}");
+        Touch(Path.Combine(_root, ".git", "objects", "ab", "cdef"), "x");
+        Touch(Path.Combine(_root, ".snapshots", "App_1.0.0.0.app"), "x");
 
         var paths = ProgramSupport.CollectSuitePaths(_root);
 
@@ -347,10 +381,11 @@ public sealed class SuiteRootAlFilesTests : IDisposable
         }
         """;
 
-    private (string output, int exit) RunRunner(string target)
+    private (string output, int exit) RunRunner(string target, string? cacheDir = null)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
+        if (cacheDir != null) args.Append($" --cache \"{cacheDir}\"");
         args.Append($" \"{target}\"");
         var psi = new ProcessStartInfo
         {
@@ -449,6 +484,96 @@ public sealed class SuiteRootAlFilesTests : IDisposable
 
         Assert.Contains("Broken.Codeunit.al", output);
         Assert.Equal(3, exit);
+    }
+
+    /// <summary>
+    /// #5440 - the silent one. The bundle keeps part of the app under .dependencies/ beside src/
+    /// (two real projects keep 137 and 650 files there; alc compiles them into the app). The
+    /// file is deliberately broken. Before: it was never read, the bundle compiled clean and
+    /// exited 0, "Tests: 1 passed". After: the compile fails naming the file, like alc (AL0224).
+    /// </summary>
+    [SkippableFact]
+    public void BrokenAlInDotDirectoryBesideSrc_FailsTheCompileNamingTheFile()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        WriteManifest(_root, "5a3f0b11-5440-4a05-8005-000000005440", 63380, "SRAF Dot Broken");
+        Touch(Path.Combine(_root, "src", "Helper.Codeunit.al"), HelperCodeunit(63380, "DotBroken"));
+        Touch(Path.Combine(_root, "src", "Tests.Codeunit.al"), TestCodeunit(63381, "DotBroken"));
+        Touch(Path.Combine(_root, ".dependencies", "Broken.Codeunit.al"),
+            "codeunit 63382 \"SRAF Broken Dot\" { this is not AL }");
+
+        var (output, exit) = RunRunner(_root);
+
+        Assert.Contains("Broken.Codeunit.al", output);
+        Assert.Equal(3, exit);
+    }
+
+    /// <summary>
+    /// #5440, the positive half: a helper that ONLY exists under .dependencies/ is compiled and
+    /// callable from the src/ test. 42 is not a default, so a helper that never compiled cannot
+    /// satisfy it (it would be AL0185, a loud failure rather than a false pass).
+    /// </summary>
+    [SkippableFact]
+    public void HelperInDotDirectory_TestInSrc_RunsTheTest()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        WriteManifest(_root, "5a3f0b11-5440-4a06-8006-000000005440", 63390, "SRAF Dot Helper");
+        Touch(Path.Combine(_root, ".dependencies", "Helper.Codeunit.al"), HelperCodeunit(63390, "DotHelper"));
+        Touch(Path.Combine(_root, "src", "Tests.Codeunit.al"), TestCodeunit(63391, "DotHelper"));
+
+        var (output, exit) = RunRunner(_root);
+
+        Assert.DoesNotContain("AL0185", output);
+        Assert.Equal(1, TestCount(output));
+        AssertPassed(output, "HelperAnswersDotHelper");
+        Assert.Equal(0, exit);
+    }
+
+    /// <summary>
+    /// #5440 behind the AL-output cache, run against ONE cache root. The AL-output cache key
+    /// hashes the .al files of the folders the compile reads, so a file newly entering the
+    /// compile must change the key; a stale entry compiled WITHOUT the file would replay the
+    /// false green. Run 1 caches a clean src/ bundle (passes). Then <c>.dependencies/Broken</c>
+    /// appears: run 2 must MISS and fail, not replay run 1's green. Run 3 (unchanged tree) is
+    /// the warm run of the broken layout and must fail the same way; run 4 removes the file and
+    /// must pass again.
+    /// </summary>
+    [SkippableFact]
+    public void DotDirectoryFileAppearing_InvalidatesTheWarmCacheEntry()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        WriteManifest(_root, "5a3f0b11-5440-4a07-8007-000000005440", 63400, "SRAF Dot Cache");
+        Touch(Path.Combine(_root, "src", "Helper.Codeunit.al"), HelperCodeunit(63400, "DotCache"));
+        Touch(Path.Combine(_root, "src", "Tests.Codeunit.al"), TestCodeunit(63401, "DotCache"));
+        var cache = Path.GetFullPath(Path.Combine(_root, "..", Path.GetFileName(_root) + "-cache"));
+        try
+        {
+            var (out1, exit1) = RunRunner(_root, cache);
+            Assert.Equal(1, TestCount(out1));
+            Assert.Equal(0, exit1);
+
+            var broken = Path.Combine(_root, ".dependencies", "Broken.Codeunit.al");
+            Touch(broken, "codeunit 63402 \"SRAF Broken DotCache\" { this is not AL }");
+            var (out2, exit2) = RunRunner(_root, cache);
+            Assert.Contains("Broken.Codeunit.al", out2);
+            Assert.Equal(3, exit2);
+
+            var (out3, exit3) = RunRunner(_root, cache);
+            Assert.Contains("Broken.Codeunit.al", out3);
+            Assert.Equal(3, exit3);
+
+            File.Delete(broken);
+            var (out4, exit4) = RunRunner(_root, cache);
+            Assert.Equal(1, TestCount(out4));
+            Assert.Equal(0, exit4);
+        }
+        finally
+        {
+            try { Directory.Delete(cache, recursive: true); } catch { }
+        }
     }
 
     /// <summary>
