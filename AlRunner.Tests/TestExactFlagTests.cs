@@ -29,6 +29,7 @@ public sealed class TestExactFlagTests : IDisposable
     private const string SameB = "Codeunit62153.Same";
 
     private readonly string _root;
+    private string? _jobsRoot;
 
     public TestExactFlagTests()
     {
@@ -90,14 +91,18 @@ public sealed class TestExactFlagTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch { }
+        if (_jobsRoot != null) try { Directory.Delete(_jobsRoot, recursive: true); } catch { }
     }
 
     private (string output, int exit) RunRunner(params string[] extraArgs)
+        => RunRunnerOn(new[] { _root }, extraArgs);
+
+    private (string output, int exit) RunRunnerOn(string[] bundles, params string[] extraArgs)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
         args.Append(" --strict");
-        args.Append($" \"{_root}\"");
+        foreach (var b in bundles) args.Append($" \"{b}\"");
         foreach (var a in extraArgs) args.Append($" {a}");
         var psi = new ProcessStartInfo
         {
@@ -246,5 +251,103 @@ public sealed class TestExactFlagTests : IDisposable
 
         Assert.True(exit == 2, output);
         Assert.Contains("--test-exact is not supported with --server", output);
+    }
+
+    /// <summary>
+    /// `--test` and `--test-exact` together are the INTERSECTION. Exit-6 half: the substring selects only
+    /// GrowPreTwin and the exact name only GrowPre, so nothing is in both (a run that dropped `--test` would
+    /// run GrowPre). Positive half: a substring that does contain the exact name leaves that one test, not its sibling.
+    /// </summary>
+    [SkippableFact]
+    public void TestAndTestExact_Together_AreTheIntersection()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var (disjoint, disjointExit) = RunRunner("--test GrowPreTwin", "--test-exact Codeunit62152.GrowPre");
+        Assert.True(disjointExit == 6, disjoint);
+        Assert.Contains("--test 'GrowPreTwin' with --test-exact 'Codeunit62152.GrowPre' selected no test in this run", disjoint);
+        Assert.False(Ran(disjoint, GrowPre) || Ran(disjoint, GrowPreTwin), disjoint);
+
+        var (both, bothExit) = RunRunner("--test GrowPre", "--test-exact Codeunit62152.GrowPre");
+        Assert.True(bothExit == 0, both);
+        Assert.True(Ran(both, GrowPre), both);
+        Assert.False(Ran(both, GrowPreTwin), both);
+        Assert.Contains("Tests: 1 ", both);
+    }
+
+    private (string a, string b) WriteJobsBundles()
+    {
+        // Outside _root: _root is itself a bundle, and nesting these would add them to it.
+        _jobsRoot = TestScratch.Dir("al-runner-test-exact-jobs");
+        var a = Path.Combine(_jobsRoot, "a");
+        var b = Path.Combine(_jobsRoot, "b");
+        foreach (var (dir, id, guid, name, method) in new[]
+                 {
+                     (a, 62156, "b2c3d4e5-f6a7-8901-2345-67890abcdf56", "TE Jobs A", "OnlyA"),
+                     (b, 62157, "b2c3d4e5-f6a7-8901-2345-67890abcdf57", "TE Jobs B", "OnlyB"),
+                 })
+        {
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
+            {
+              "id": "{{guid}}",
+              "name": "{{name}}",
+              "publisher": "AL Runner",
+              "version": "1.0.0.0",
+              "dependencies": [],
+              "idRanges": [ { "from": 62150, "to": 62159 } ],
+              "runtime": "14.0"
+            }
+            """);
+            File.WriteAllText(Path.Combine(dir, "Test.Codeunit.al"), $$"""
+            codeunit {{id}} "{{name}}"
+            {
+                Subtype = Test;
+
+                [Test]
+                procedure {{method}}()
+                begin
+                    if 1 + 1 <> 2 then
+                        Error('sanity');
+                end;
+            }
+            """);
+        }
+        return (a, b);
+    }
+
+    /// <summary>
+    /// `--jobs`: the flag reaches the workers and the PARENT judges the zero for the whole invocation. An
+    /// exact name living in one shard only is exit 0 with exactly that test run (a worker judging its own
+    /// shard would exit 6 for the other); a name in no shard is exit 6 naming `--test-exact`.
+    /// </summary>
+    [SkippableFact]
+    public void Jobs_TestExact_InOneShardOnly_Passes_AndInNoShard_IsExit6()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (a, b) = WriteJobsBundles();
+
+        var (ok, okExit) = RunRunnerOn(new[] { a, b }, "--jobs 2", "--test-exact Codeunit62157.OnlyB");
+        Assert.True(okExit == 0, ok);
+        Assert.Contains("jobs: 2 bundle(s) across 2 worker process(es)", ok);
+        Assert.True(Ran(ok, "Codeunit62157.OnlyB"), ok);
+        Assert.False(Ran(ok, "Codeunit62156.OnlyA"), ok);
+        Assert.Contains("Tests: 1 ", ok);
+
+        var (none, noneExit) = RunRunnerOn(new[] { a, b }, "--jobs 2", "--test-exact Codeunit62157.NoSuch");
+        Assert.True(noneExit == 6, none);
+        Assert.Contains("--test-exact 'Codeunit62157.NoSuch' selected no test in this run", none);
+    }
+
+    /// <summary>`--watch --affected` selects its own tests, so an explicit selection is refused (exit 2) before any watch loop starts.</summary>
+    [SkippableFact]
+    public void TestExact_WithWatchAffected_IsRefused()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var (output, exit) = RunRunner("--watch", "--affected", "--test-exact Codeunit62152.GrowPre");
+
+        Assert.True(exit == 2, output);
+        Assert.Contains("--affected cannot be combined with --test/--filter/--test-exact", output);
     }
 }

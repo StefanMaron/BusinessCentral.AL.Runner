@@ -16,7 +16,7 @@ al-runner [OPTIONS] <bundle-dir>...
 | Flag | Effect |
 |---|---|
 | `--test PATTERN`, `--filter PATTERN` | Run only tests whose qualified name (`CodeunitNNNN.Method`) contains PATTERN, case-insensitively. |
-| `--test-exact NAME` | Run only the test whose whole qualified name is NAME (`Codeunit78950.GrowPre`), case-insensitively; repeatable. Never a substring, so `GrowPre` does not select `GrowPreTwin`. A codeunit name alone is not a test name. Combined with `--test` it is the intersection. Refused with `--server`. (#5439) |
+| `--test-exact NAME` | Run only the test whose whole qualified name is NAME (`Codeunit78950.GrowPre`), case-insensitively; repeatable. Never a substring, so `GrowPre` does not select `GrowPreTwin`. A codeunit name alone is not a test name. Combined with `--test` it is the intersection. Refused (exit 2) with `--server` and with `--watch --affected`. (#5439) |
 | `--isolation MODE` | `codeunit` (default), `test`, or `disabled`. See [Writing tests](writing-tests.md). |
 | `--test-timeout SECONDS` | Per-test timeout. Default 60. |
 
