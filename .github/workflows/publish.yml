@@ -213,6 +213,7 @@ jobs:
         run: dotnet --list-sdks && dotnet --version
 
       - name: Install the aarch64 cross-compiler (#1672)
+        timeout-minutes: 20
         run: |
           # This runner is linux-x64; AlRunner.csproj's BuildWin32PrebuiltStubs target
           # uses the native `cc` for linux-x64 (always present) and this cross

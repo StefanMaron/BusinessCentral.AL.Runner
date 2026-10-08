@@ -1528,6 +1528,9 @@ jobs:
     # for push / pull request / release.
     if: inputs.bc-version-filter == ''
     runs-on: ubuntu-latest
+    # #5441: unset, GitHub's 360 applies, and a hung apt-get held the required matrix context
+    # for 79 minutes. tools/test_workflow_install_timeouts.py pins a ceiling; sizing: PR body.
+    timeout-minutes: 60
     steps:
       # No corpus here: this job builds and packs the runner and names no corpus
       # path (#3737).
@@ -1553,6 +1556,7 @@ jobs:
         run: dotnet --list-sdks && dotnet --version
 
       - name: Install the aarch64 cross-compiler (#1672)
+        timeout-minutes: 20
         run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: Build each BC-minor engine variant (#2024 item 3 / #2027)
