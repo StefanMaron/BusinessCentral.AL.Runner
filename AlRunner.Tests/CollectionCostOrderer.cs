@@ -131,6 +131,8 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             ["TddPrecompiledTests"] = 51,
             // #5450: PR #5459, CI run 37790399712 (head 633d2bc6): 87.6s (BC 27.5), 90.3s (29.0), 63.0s (28.5), lowest leg rounded down.
             ["TddMissingObjectPackageTests"] = 63,
+            // #5439: PR #5462, CI run 37834611488 (head 82ff67de): 74.8s (BC 27.5), 89.4s (29.0), under the 60s report band (28.5), lowest bound rounded to 60.
+            ["TestExactFlagTests"] = 60,
             // #3262: 8 tests, most spawning a real runner subprocess, several of them twice
             // (a cold write then a warm read from a fresh server process, so the in-process
             // module cache cannot answer instead of the disk). Absent from this table on its
