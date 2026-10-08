@@ -26,7 +26,8 @@ public static partial class TddGeneration
     /// any object of the app.
     /// Refused, with the reason on stderr and the tests failing as before: a name some module or namespace
     /// declares (the object exists, so an empty one would shadow it), a name another source bundle of the run
-    /// declares, a name that is an id or carries a namespace, and no free id.
+    /// declares, a name any package of the package folders declares (the dependency app.json leaves out, #5446), a name that
+    /// is an id or carries a namespace, and no free id.
     /// Nothing follows the order the compile reported the diagnostics in: sites go in file then position order,
     /// names and ids in name order.
     /// </summary>
@@ -132,6 +133,7 @@ public static partial class TddGeneration
             var label = $"the package {e.Name} {e.Version} ({Path.GetFileName(e.Path)})";
             try
             {
+                // Vanished or unreadable: refuses below, naming the package (DependencyAppSymbolWalkSourceGuardTests).
                 if (Patches.BcAppSymbolCache.Get(e.Path).Objects.Any(o =>
                         o.Kind == "Codeunit" && string.Equals(o.Name, name, StringComparison.OrdinalIgnoreCase)))
                     return $"{label} declares it - add the dependency on it to app.json; an empty codeunit would shadow it";

@@ -21,7 +21,7 @@ procedure from the call site as it does for any object of the source it compiles
 and no existing object is touched.
 
 ```
---tdd: generated codeunit "No Such Codeunit" (id 65326) in A1ObjectTests.Codeunit.al: no app of the run declares it
+--tdd: generated codeunit "No Such Codeunit" (id 65326) in A1ObjectTests.Codeunit.al: no app of the run and no package it can read declares it
 ```
 
 Each test that reaches the object is annotated like any generated member (`generatedStubs`, the
@@ -37,8 +37,28 @@ An empty codeunit is wrong whenever the real one exists but is out of reach, bec
 against nothing. Refused: a codeunit of that name some module or namespace declares
 (`Compilation.GetApplicationObjectTypeSymbolsByNameAcrossModulesAndNamespaces`); a name another bundle of the
 run declares (`TddCrossBundle.RunDeclaresCodeunit`, a text probe of every bundle: this is the app that forgot to
-declare its dependency on a sibling folder); a name written as an id or with a namespace; no free id in
+declare its dependency on a sibling folder); a name any package of the run's package folders declares, the
+dependency the compile leaves out because `app.json` does not list it (#5446, below); a name written as an id or with a namespace; no free id in
 `idRanges` (no manifest, or the range is full). The test is FAILED with the AL0185 as before.
+
+### A package the app does not depend on (#5446)
+
+The compile resolves only the packages the app declares (`BcCompiler.NarrowToDeclaredReferences`), so a codeunit
+of a package in `.alpackages` or the package cache that `app.json` leaves out is AL0185 exactly like one nobody
+declares, and `GetApplicationObjectTypeSymbolsByNameAcrossModulesAndNamespaces` cannot see it. An empty codeunit
+added for it would shadow the real one: a test whose calls can be generated passes against nothing. So the
+generation asks the packages the latest scan found (`BcCompiler.ScannedPackagesForTdd`, every .app with symbols,
+declared or not, minus the app being compiled), through `BcAppSymbolCache.Get` (the symbol cache the virtual
+tables read), whether any declares a codeunit of the name, in any namespace and any case:
+
+```
+--tdd: codeunit "Package Only Points" not generated - the package Tdd Package Only 1.0.0.0 (Tdd_Package_Only_1.0.0.0.app) declares it - add the dependency on it to app.json; an empty codeunit would shadow it
+```
+
+The test stays FAILED with the AL0185. The package named is the first in name, version, path order, never the first
+scanned. A package that cannot be read refuses too, naming it (`could not be read (...), so it cannot be ruled out`):
+it may be the object's home, and "unreadable" is not "absent". Trap: this reads every package of the folders on a
+cold symbol cache, so it runs only for a name that is AL0185 and survived the cheaper checks above.
 
 Measured: a codeunit in another namespace is NOT AL0185 for a file in the global namespace (it resolves), so the
 namespace case needs a file with its own `namespace` line (the fixture's); a sibling bundle without a declared
@@ -68,9 +88,3 @@ dependency is AL0185.
 
 A table, page, enum, report, query or xmlport that no app declares; a codeunit named only by `Codeunit::"X"`
 with no variable of that type. The other kinds are #5445.
-
-**An object of a package the app does not declare as a dependency is NOT detected, and is shadowed.** Measured
-(a package in `.alpackages` carrying `Precompiled Points`, the test app declaring no dependency on it): AL0185,
-an empty codeunit of that name is generated, so a test whose calls can be generated would run against it. It is
-annotated (`generatedStubs`), but "no app of the run declares it" is false there. Nothing is read of the packages
-that the app's declarations leave out, so the generation cannot tell; #5446.
