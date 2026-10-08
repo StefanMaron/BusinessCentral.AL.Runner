@@ -260,8 +260,12 @@ public class ServerAffectedSelectionObjectKindTests
         Assert.True(reportExtension.ForcedFull, reportExtension.Raw);
         Assert.Equal(All, reportExtension.Ran);
 
+        // #5076: a permission set is keyed through the permission tables (ServerAffectedSelectionMetadataTableTests),
+        // so an edit no test's tables list selects nothing, instead of running everything.
         Write(bundle, "Kind.PermissionSet.al", PermissionSet(",\n        codeunit \"Kind Impl B SX\" = X"));
-        AssertForcedFull(await Send(server, bundle), "PermissionSet 60767 changed, and no test recording holds the use of this kind of object (PermissionSet)");
+        var permissionSet = await Send(server, bundle);
+        Assert.False(permissionSet.ForcedFull, permissionSet.Raw);
+        Assert.Empty(permissionSet.Ran);
 
         // An interface is unkeyed too: even a comment-only edit runs everything.
         Write(bundle, "Greeter.Interface.al", InterfaceCommented);

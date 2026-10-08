@@ -46,6 +46,35 @@ public class ServerAffectedSelectionEnvironmentDriftTests
         }
         """;
 
+    // #5076: a permission set of the dependency, and a test that reads it through Aggregate Permission Set.
+    private static string PermissionSetSource(string caption) => $$"""
+        permissionset 60474 "Drift Perm SX"
+        {
+            Assignable = true;
+            Caption = '{{caption}}';
+            Permissions = codeunit "Drift Helper SX" = X;
+        }
+        """;
+
+    private const string PermTestsSource = """
+        codeunit 60481 "Drift Perm Tests SX"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure ReadsPermissionSet()
+            var
+                A: Record "Aggregate Permission Set";
+            begin
+                A.SetRange("Role ID", 'Drift Perm SX');
+                if not A.FindFirst() then
+                    Error('ReadsPermissionSet: the permission set was not found');
+                if A.Name <> 'Drift Perm A' then
+                    Error('ReadsPermissionSet: the caption was %1', A.Name);
+            end;
+        }
+        """;
+
     private const string TestsSource = """
         codeunit 60480 "Drift Tests SX"
         {
@@ -99,7 +128,7 @@ public class ServerAffectedSelectionEnvironmentDriftTests
         }));
     }
 
-    private static (string App, string TestApp, string Cache) Layout(string name)
+    private static (string App, string TestApp, string Cache) Layout(string name, bool permissionSet = false)
     {
         var root = TestScratch.Dir("al-runner-server-affected-drift-" + name);
         var app = Path.Combine(root, "App");
@@ -110,13 +139,18 @@ public class ServerAffectedSelectionEnvironmentDriftTests
         File.WriteAllText(Path.Combine(app, "src", "Other.Codeunit.al"), OtherSource(2));
         WriteManifest(testApp, TestAppId, "Drift App Test", dependsOnApp: true);
         File.WriteAllText(Path.Combine(testApp, "Tests.Codeunit.al"), TestsSource);
-        Package(app, testApp);
+        if (permissionSet)
+        {
+            File.WriteAllText(Path.Combine(app, "src", "Perm.PermissionSet.al"), PermissionSetSource("Drift Perm A"));
+            File.WriteAllText(Path.Combine(testApp, "PermTests.Codeunit.al"), PermTestsSource);
+        }
+        Package(app, testApp, permissionSet ? "Drift Perm A" : null);
         return (app, testApp, Path.Combine(root, "cache"));
     }
 
     // Rebuilds App.app from App/, at App/app.json's version, replacing the previous build: the
     // second environment.
-    private static void Package(string app, string testApp)
+    private static void Package(string app, string testApp, string? permissionSetCaption = null)
     {
         var identity = InProcessAppPackager.ReadIdentity(Path.Combine(app, "app.json"))!;
         var packages = Path.Combine(testApp, ".alpackages");
@@ -134,6 +168,12 @@ public class ServerAffectedSelectionEnvironmentDriftTests
         {
             AppId, Name = "Drift App", Publisher = "AL Runner", Version = version, RuntimeVersion = "14.0",
             Codeunits = new[] { Codeunit(60471, "Drift Helper SX"), Codeunit(60472, "Drift Other SX") },
+            PermissionSets = permissionSetCaption == null ? Array.Empty<object>() : new object[] { new {
+                Id = 60474, Name = "Drift Perm SX",
+                Properties = new[] {
+                    new { Name = "Assignable", Value = "true" }, new { Name = "Caption", Value = permissionSetCaption },
+                },
+            } },
         });
         InProcessAppPackager.EmitAppPackageToFile(app, identity,
             Path.Combine(packages, $"AL Runner_Drift App_{version}.app"), symbols);
@@ -174,11 +214,11 @@ public class ServerAffectedSelectionEnvironmentDriftTests
             selection.TryGetProperty("environmentDrift", out var drift) ? drift.Clone() : null, raw);
     }
 
-    private static async Task RecordBaseline(string testApp, string cache)
+    private static async Task RecordBaseline(string testApp, string cache, int tests = 3)
     {
         await using var first = await CliServer.StartAsync(new[] { "--cache", cache });
         var baseline = await Send(first, testApp);
-        Assert.True(baseline.Status.Count == 3 && baseline.Status.Values.All(s => s == "pass"), baseline.Raw);
+        Assert.True(baseline.Status.Count == tests && baseline.Status.Values.All(s => s == "pass"), baseline.Raw);
     }
 
     [SkippableFact]
@@ -283,6 +323,30 @@ public class ServerAffectedSelectionEnvironmentDriftTests
         Assert.Equal(new[] { "CallsHelper" }, drifted.Status.Keys);
         Assert.Contains("the app returned 63", drifted.Raw, StringComparison.Ordinal);
         Assert.Equal("diffed", (drifted.Drift ?? throw new Xunit.Sdk.XunitException(drifted.Raw)).GetProperty("mode").GetString());
+    }
+
+    // #5076: a dependency's changed permission set is attributed to the tests that read the permission
+    // tables, so the diff stays exact (a minor BC bump changes some), and only those tests run.
+    [SkippableFact]
+    public async Task PermissionSetDiffers_SelectsTheTestThatReadsPermissionTables_AndTheDiffStaysExact()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (app, testApp, cache) = Layout("permission-set", permissionSet: true);
+        await RecordBaseline(testApp, cache, tests: 4);
+
+        File.WriteAllText(Path.Combine(app, "src", "Perm.PermissionSet.al"), PermissionSetSource("Drift Perm B"));
+        Package(app, testApp, "Drift Perm B");
+
+        await using var second = await CliServer.StartAsync(new[] { "--cache", cache });
+        var drifted = await Send(second, testApp);
+        Assert.False(drifted.ForcedFull, drifted.Raw);
+        Assert.Equal(new[] { "ReadsPermissionSet" }, drifted.Status.Keys);
+        Assert.True(drifted.Status["ReadsPermissionSet"] == "fail", drifted.Raw);
+        Assert.Contains("the caption was Drift Perm B", drifted.Raw, StringComparison.Ordinal);
+        var d = drifted.Drift ?? throw new Xunit.Sdk.XunitException("no environmentDrift: " + drifted.Raw);
+        Assert.Equal("diffed", d.GetProperty("mode").GetString());
+        Assert.Equal(new[] { "PermissionSet 60474 Drift Perm SX" },
+            d.GetProperty("objects").EnumerateArray().Select(o => o.GetString()));
     }
 
     [SkippableFact]

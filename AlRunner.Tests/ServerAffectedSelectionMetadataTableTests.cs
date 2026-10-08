@@ -56,6 +56,11 @@ public class ServerAffectedSelectionMetadataTableTests
         }
         """;
 
+    // #5076: the permission tables list the permission sets the apps declare. Role ID is the set's name.
+    private static string PermissionSet(string extra = "")
+        => "permissionset 60799 \"MetaSel Perm SX\"\n{\n    Assignable = true;\n    Caption = 'MetaSel Perm';\n"
+           + "    Permissions = codeunit \"MetaSel Unrelated SX\" = X" + extra + ";\n}\n";
+
     private const string NewCodeunit = "codeunit 60797 \"MetaSel New SX\"\n{\n}\n";
 
     private static string Unrelated(string body = "exit(7);")
@@ -115,6 +120,26 @@ public class ServerAffectedSelectionMetadataTableTests
             end;
 
             [Test]
+            procedure ReadsAggregatePermissionSet()
+            var
+                A: Record "Aggregate Permission Set";
+                ThisModule: ModuleInfo;
+            begin
+                NavApp.GetCurrentModuleInfo(ThisModule);
+                if A.Get(A.Scope::System, ThisModule.Id(), 'MetaSel Perm SX') then
+                    Error('PROBE-AGGPERM %1', A.Name);
+            end;
+
+            [Test]
+            procedure ReadsPermissionSetTable()
+            var
+                P: Record "Permission Set";
+            begin
+                if P.Get('MetaSel Perm SX') then
+                    Error('PROBE-PERMSET %1', P.Name);
+            end;
+
+            [Test]
             procedure Unrelated()
             var
                 U: Codeunit "MetaSel Unrelated SX";
@@ -145,7 +170,8 @@ public class ServerAffectedSelectionMetadataTableTests
 
     private static readonly string[] All =
     {
-        "ReadsAllObj", "ReadsAllObjWithCaption", "ReadsCodeunitMetadata", "ReadsPageControlField", "ReadsTableMetadata", "Unrelated",
+        "ReadsAggregatePermissionSet", "ReadsAllObj", "ReadsAllObjWithCaption", "ReadsCodeunitMetadata", "ReadsPageControlField",
+        "ReadsPermissionSetTable", "ReadsTableMetadata", "Unrelated",
     };
 
     private static string Bundle(string prefix)
@@ -262,6 +288,21 @@ public class ServerAffectedSelectionMetadataTableTests
         File.Delete(Path.Combine(bundle, "Ext.PageExt.al"));
         AssertSelected(await Send(server, bundle), new[] { "ReadsAllObj", "ReadsAllObjWithCaption", "ReadsPageControlField" });
 
+        // #5076: a permission set is a row of Permission Set and Aggregate Permission Set (and of AllObj
+        // and AllObjWithCaption, which list every kind), and of no other table read here.
+        var permissionReaders = new[] { "ReadsAggregatePermissionSet", "ReadsAllObj", "ReadsAllObjWithCaption", "ReadsPermissionSetTable" };
+        Write(bundle, "Perm.PermissionSet.al", PermissionSet());
+        AssertSelected(await Send(server, bundle), permissionReaders,
+            ("ReadsAggregatePermissionSet", "PROBE-AGGPERM"), ("ReadsPermissionSetTable", "PROBE-PERMSET"));
+
+        // An edit of the declared set (a Permission line added) changes the rows the readers see.
+        Write(bundle, "Perm.PermissionSet.al", PermissionSet(",\n        table \"MetaSel Tab SX\" = X"));
+        AssertSelected(await Send(server, bundle), permissionReaders,
+            ("ReadsAggregatePermissionSet", "PROBE-AGGPERM"), ("ReadsPermissionSetTable", "PROBE-PERMSET"));
+
+        File.Delete(Path.Combine(bundle, "Perm.PermissionSet.al"));
+        AssertSelected(await Send(server, bundle), permissionReaders);
+
         // A change inside one procedure moves no row of any metadata table: only its callers run.
         Write(bundle, "Unrelated.Codeunit.al", Unrelated("exit(7 + 0);"));
         AssertSelected(await Send(server, bundle), new[] { "Unrelated" });
@@ -279,5 +320,35 @@ public class ServerAffectedSelectionMetadataTableTests
             Assert.True(held.Status[t] == "fail", $"{t}: {held.Raw}");
             Assert.Contains(probe, held.Line[t], StringComparison.Ordinal);
         }
+    }
+    // #5076 on #5007's path: the permission set changes while no server runs, so the persisted baseline's
+    // diff names it, and a third server on the same cache root (warm) finds nothing left to run.
+    [SkippableFact]
+    public async Task NextServer_ChangedPermissionSet_SelectsTheTestsReadingThePermissionTables()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = Bundle("al-runner-server-affected-metasel-persist");
+        var cache = TestScratch.Dir("al-runner-server-affected-metasel-persist-cache");
+        Write(bundle, "Perm.PermissionSet.al", PermissionSet());
+
+        async Task<Observed> Fresh()
+        {
+            await using var server = await CliServer.StartAsync(new[] { "--isolation", "test", "--cache", cache });
+            return await Send(server, bundle);
+        }
+
+        var baseline = await Fresh();
+        Assert.True(baseline.ForcedFull, baseline.Raw);
+        Assert.Equal(All, baseline.Ran);
+        Assert.True(baseline.Status["ReadsAggregatePermissionSet"] == "fail", baseline.Raw);
+        Assert.True(baseline.Status["ReadsPermissionSetTable"] == "fail", baseline.Raw);
+
+        Write(bundle, "Perm.PermissionSet.al", PermissionSet(",\n        table \"MetaSel Tab SX\" = X"));
+        AssertSelected(await Fresh(), new[] { "ReadsAggregatePermissionSet", "ReadsAllObj", "ReadsAllObjWithCaption", "ReadsPermissionSetTable" },
+            ("ReadsAggregatePermissionSet", "PROBE-AGGPERM"), ("ReadsPermissionSetTable", "PROBE-PERMSET"));
+
+        var warm = await Fresh();
+        Assert.False(warm.ForcedFull, warm.Raw);
+        Assert.Empty(warm.Ran);
     }
 }

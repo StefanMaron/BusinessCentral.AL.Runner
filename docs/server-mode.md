@@ -1066,8 +1066,14 @@ its kind. `AffectedMetadataTables.Population` classifies **every** table
   tableextensions), `Page Action` and `Page Control Field` (pages and pageextensions),
   `Event Subscription` (every kind: any object can declare a subscriber), the report,
   query, xmlport, codeunit, table and page metadata tables for their own kind;
-- rows from kinds that already force a full run (a profile or permission set, "affectedOnly
-  and object kinds no test records"), so nothing is keyed;
+- rows that list permission sets (`PermissionSet`, `PermissionSetExtension`): `Permission Set`,
+  `Permission`, `Metadata Permission Set`, `Aggregate Permission Set` and the related
+  permission tables (their ids are in `AffectedMetadataTables.Population`). A declared permission set reaches a test only through
+  these tables: the runner answers every permission check as SUPER whatever the sets declare
+  (#5076; `RecordPatches.EffectivePermissionForObject.cs` has the list of rewrites), so a
+  permission set is keyed here and nowhere else;
+- rows from kinds that still force a full run (a profile, "affectedOnly and object kinds no
+  test records"), so nothing is keyed;
 - rows not derived from AL objects (host time zones and cultures, the session, a fixed
   BC list, the code coverage log, ...), so nothing is keyed.
 
@@ -1100,8 +1106,11 @@ selects nothing while a full run would fail a test. This covers:
   implementations. A caption, a value's name, an added value or an `Implementation`
   change keeps every ordinal and changes no other object, yet changes what
   `Format`, `Ordinals()` or an interface call on the enum answers;
-- a `ReportExtension`, a `PermissionSet` or `PermissionSetExtension`, a `Profile`,
-  `PageCustomization`, `ControlAddIn`, `Entitlement`, and any kind not listed above.
+- a `ReportExtension`, a `Profile`, `PageCustomization`, `ControlAddIn`, `Entitlement`, and any kind not listed above.
+
+A `PermissionSet` or `PermissionSetExtension` is not one of them (#5076): the permission
+tables are the only thing that reads a declared set, so it selects the tests that read those
+tables, as in "affectedOnly and metadata virtual tables".
 
 An `Interface` is one of them: adding or removing an `extends` changes what `is` and
 `as` answer for every implementer, while no implementer or caller changes. The same
@@ -1351,7 +1360,7 @@ full run.
   record of its environment (written by a runner before #5028), the current closure
   could not be read, a changed package has no AL source and does carry compiled code, a
   changed file declares no object, a changed object is of a kind no recording holds
-  (an enum, a permission set, a report extension, …; see "affectedOnly and object
+  (an enum, a report extension, …; see "affectedOnly and object
   kinds no test records"), a changed object's
   instance or record was held outside any one test, or the BC build changed. What the
   diff did resolve still selects its tests. Tests that reached only what could not be

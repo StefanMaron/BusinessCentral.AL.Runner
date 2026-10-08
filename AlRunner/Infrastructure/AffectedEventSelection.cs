@@ -182,11 +182,13 @@ internal static class AffectedEventSelection
 
     // Kinds a change of which some recorded key selects on: an instance built or a scope entered (the
     // object's own key), a record held (ChangedTableKeys), a base page opened (ChangedPageExtensionKeys).
-    // Any kind also keys the metadata virtual tables listing it (AffectedMetadataTables, #5084).
+    // Any kind also keys the metadata virtual tables listing it (AffectedMetadataTables, #5084); a permission
+    // set has no other key, because nothing but those tables reads it (#5076).
     // A kind added here without its keys is the silent too-few selection #5083 closed.
     private static readonly HashSet<string> KeyedKinds = new(StringComparer.Ordinal)
     {
         "Codeunit", "Page", "Report", "Query", "XmlPort", "Table", "TableExtension", "PageExtension",
+        "PermissionSet", "PermissionSetExtension",
     };
 
     /// <summary>
