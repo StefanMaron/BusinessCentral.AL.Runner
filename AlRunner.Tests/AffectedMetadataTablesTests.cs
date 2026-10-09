@@ -247,7 +247,8 @@ public class AffectedMetadataTablesTests
             "Enum", "EnumExtension", "Interface", "PermissionSet", "PermissionSetExtension", "Profile" };
         foreach (var e in AffectedMetadataTables.Population.Where(e => e.Kinds != null))
             Assert.All(e.Kinds!, k => Assert.Contains(k, kinds));
-        Assert.All(AffectedMetadataTables.Population.Where(e => e.Source == AffectedMetadataTables.Source.UnkeyedKind),
-            e => Assert.All(e.Kinds!, k => Assert.NotNull(AffectedEventSelection.UnkeyedKindChange(new[] { new AffectedObjectId(k, 1, "x") }))));
+        // A kind an entry lists selects through that entry, so it must not also force a full run.
+        Assert.All(AffectedMetadataTables.Population.Where(e => e.Kinds != null),
+            e => Assert.All(e.Kinds!, k => Assert.Null(AffectedEventSelection.UnkeyedKindChange(new[] { new AffectedObjectId(k, 1, "x") }))));
     }
 }

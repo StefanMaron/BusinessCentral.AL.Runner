@@ -14,8 +14,6 @@ internal static class AffectedMetadataTables
     {
         /// <summary>Rows list the objects of <see cref="Entry.Kinds"/> (every kind when null): a whole-object change of one keys the table.</summary>
         ObjectListing,
-        /// <summary>Rows come from kinds that <see cref="AffectedEventSelection.UnkeyedKindChange"/> already turns into a full run.</summary>
-        UnkeyedKind,
         /// <summary>Rows come from the host, the session, a fixed BC list or the runtime, not from AL objects.</summary>
         NotObjectDerived,
     }

@@ -381,10 +381,11 @@ public class ServerAffectedSelectionMetadataTableTests
             Assert.Contains(probe, held.Line[t], StringComparison.Ordinal);
         }
     }
-    // #5076 on #5007's path: the permission set changes while no server runs, so the persisted baseline's
-    // diff names it, and a third server on the same cache root (warm) finds nothing left to run.
+    // #5076, #5452 on #5007's path: the permission set changes and a profile appears while no server runs, so
+    // the persisted baseline's diff names them, and a third server on the same cache root (warm) finds nothing
+    // left to run.
     [SkippableFact]
-    public async Task NextServer_ChangedPermissionSet_SelectsTheTestsReadingThePermissionTables()
+    public async Task NextServer_ChangedPermissionSetAndProfile_SelectTheTestsReadingTheirTables()
     {
         TestArtifacts.SkipIfMissing();
         var bundle = Bundle("al-runner-server-affected-metasel-persist");
@@ -403,23 +404,15 @@ public class ServerAffectedSelectionMetadataTableTests
         Assert.True(baseline.Status["ReadsAggregatePermissionSet"] == "fail", baseline.Raw);
         Assert.True(baseline.Status["ReadsPermissionSetTable"] == "fail", baseline.Raw);
 
+        // #5452: a profile is added in the same step, so the one warm run below also proves it was recorded.
         Write(bundle, "Perm.PermissionSet.al", PermissionSet(",\n        table \"MetaSel Tab SX\" = X"));
-        AssertSelected(await Fresh(), new[] { "ReadsAggregatePermissionSet", "ReadsAllObj", "ReadsAllObjWithCaption", "ReadsPermissionSetTable" },
-            ("ReadsAggregatePermissionSet", "PROBE-AGGPERM"), ("ReadsPermissionSetTable", "PROBE-PERMSET"));
+        Write(bundle, "Prof.Profile.al", Profile("MetaSel Profile A"));
+        AssertSelected(await Fresh(), ProfileReaders.Concat(new[] { "ReadsAggregatePermissionSet", "ReadsPermissionSetTable" }).ToArray(),
+            ("ReadsAggregatePermissionSet", "PROBE-AGGPERM"), ("ReadsPermissionSetTable", "PROBE-PERMSET"),
+            ("ReadsAllProfile", "PROBE-PROFILE MetaSel Profile A 60794"), ("ReadsAllProfileViaRecordRef", "PROBE-PROFILEREF"));
 
         var warm = await Fresh();
         Assert.False(warm.ForcedFull, warm.Raw);
         Assert.Empty(warm.Ran);
-
-        // #5452 on the same path: a profile added while no server runs, then the warm server finds nothing left.
-        Write(bundle, "Prof.Profile.al", Profile("MetaSel Profile A"));
-        // The permission set is still there, so ReadsPermissionSetTable fails like the profile readers and
-        // writes the last error with them: session state selects it too (not a table it reads).
-        AssertSelected(await Fresh(), ProfileReaders.Append("ReadsPermissionSetTable").ToArray(),
-            ("ReadsAllProfile", "PROBE-PROFILE MetaSel Profile A 60794"), ("ReadsAllProfileViaRecordRef", "PROBE-PROFILEREF"),
-            ("ReadsPermissionSetTable", "PROBE-PERMSET"));
-        var warmProfile = await Fresh();
-        Assert.False(warmProfile.ForcedFull, warmProfile.Raw);
-        Assert.Empty(warmProfile.Ran);
     }
 }

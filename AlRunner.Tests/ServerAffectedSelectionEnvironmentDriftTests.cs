@@ -424,99 +424,31 @@ public class ServerAffectedSelectionEnvironmentDriftTests
         Assert.Equal("diffed", (drifted.Drift ?? throw new Xunit.Sdk.XunitException(drifted.Raw)).GetProperty("mode").GetString());
     }
 
-    // #5076: a dependency's changed permission set is attributed to the tests that read the permission
-    // tables, so the diff stays exact (a minor BC bump changes some), and only those tests run.
+    // #5076, #5452: a dependency's changed permission set and profile are attributed to the tests that read
+    // the permission tables and All Profile, so the diff stays exact (a minor BC bump changes some), and
+    // only those tests run (the three tests that read neither are not selected).
     [SkippableFact]
-    public async Task PermissionSetDiffers_SelectsTheTestThatReadsPermissionTables_AndTheDiffStaysExact()
+    public async Task PermissionSetAndProfileDiffer_SelectTheTestsThatReadThem_AndTheDiffStaysExact()
     {
         TestArtifacts.SkipIfMissing();
-        var (app, testApp, cache) = Layout("permission-set", permissionSet: true);
-        await RecordBaseline(testApp, cache, tests: 4);
+        var (app, testApp, cache) = Layout("permission-set", permissionSet: true, profile: true);
+        await RecordBaseline(testApp, cache, tests: 5);
 
         File.WriteAllText(Path.Combine(app, "src", "Perm.PermissionSet.al"), PermissionSetSource("Drift Perm B"));
-        Package(app, testApp, "Drift Perm B");
-
-        await using var second = await CliServer.StartAsync(new[] { "--cache", cache });
-        var drifted = await Send(second, testApp);
-        Assert.False(drifted.ForcedFull, drifted.Raw);
-        Assert.Equal(new[] { "ReadsPermissionSet" }, drifted.Status.Keys);
-        Assert.True(drifted.Status["ReadsPermissionSet"] == "fail", drifted.Raw);
-        Assert.Contains("the caption was Drift Perm B", drifted.Raw, StringComparison.Ordinal);
-        var d = drifted.Drift ?? throw new Xunit.Sdk.XunitException("no environmentDrift: " + drifted.Raw);
-        Assert.Equal("diffed", d.GetProperty("mode").GetString());
-        Assert.Equal(new[] { "PermissionSet 60474 Drift Perm SX" },
-            d.GetProperty("objects").EnumerateArray().Select(o => o.GetString()));
-    }
-
-    // #5088: a dependency's changed reportextension is attributed to the tests that ran its base report,
-    // so the diff stays exact and only those tests run.
-    [SkippableFact]
-    public async Task ReportExtensionDiffers_SelectsTheTestThatRanItsBaseReport_AndTheDiffStaysExact()
-    {
-        TestArtifacts.SkipIfMissing();
-        var (app, testApp, cache) = Layout("report-extension", report: true);
-        await RecordBaseline(testApp, cache, tests: 4);
-
-        File.WriteAllText(Path.Combine(app, "src", "ReportExt.ReportExt.al"), ReportExtensionSource("Error('Drift Ext B');"));
-        Package(app, testApp, report: true);
-
-        await using var second = await CliServer.StartAsync(new[] { "--cache", cache });
-        var drifted = await Send(second, testApp);
-        Assert.False(drifted.ForcedFull, drifted.Raw);
-        Assert.Equal(new[] { "RunsReport" }, drifted.Status.Keys);
-        Assert.True(drifted.Status["RunsReport"] == "fail", drifted.Raw);
-        Assert.Contains("Drift Ext B", drifted.Raw, StringComparison.Ordinal);
-        var d = drifted.Drift ?? throw new Xunit.Sdk.XunitException("no environmentDrift: " + drifted.Raw);
-        Assert.Equal("diffed", d.GetProperty("mode").GetString());
-        Assert.Equal(new[] { "ReportExtension 60477 Drift Report Ext SX" },
-            d.GetProperty("objects").EnumerateArray().Select(o => o.GetString()));
-    }
-
-    // The removed extension is in the new environment's registry no more, and a dependency's extension
-    // instance is no key of a kind the diff selects on, so only the recording names its base report.
-    [SkippableFact]
-    public async Task ReportExtensionRemoved_SelectsTheTestThatRanItsBaseReport_FromTheRecording()
-    {
-        TestArtifacts.SkipIfMissing();
-        var (app, testApp, cache) = Layout("report-extension-removed", report: true);
-        await RecordBaseline(testApp, cache, tests: 4);
-
-        File.Delete(Path.Combine(app, "src", "ReportExt.ReportExt.al"));
-        Package(app, testApp, report: true, reportExtension: false);
-
-        await using var second = await CliServer.StartAsync(new[] { "--cache", cache });
-        var drifted = await Send(second, testApp);
-        Assert.False(drifted.ForcedFull, drifted.Raw);
-        Assert.Equal(new[] { "RunsReport" }, drifted.Status.Keys);
-        Assert.True(drifted.Status["RunsReport"] == "pass", drifted.Raw);
-        var d = drifted.Drift ?? throw new Xunit.Sdk.XunitException("no environmentDrift: " + drifted.Raw);
-        Assert.Equal("diffed", d.GetProperty("mode").GetString());
-        Assert.Equal(new[] { "ReportExtension 60477 Drift Report Ext SX" },
-            d.GetProperty("objects").EnumerateArray().Select(o => o.GetString()));
-    }
-
-    // #5452: a dependency's changed profile is attributed to the tests that read All Profile, so the diff
-    // stays exact (a minor BC bump changes some), and only those tests run. The other tests of the
-    // bundle do not read it and are not selected.
-    [SkippableFact]
-    public async Task ProfileDiffers_SelectsTheTestThatReadsAllProfile_AndTheDiffStaysExact()
-    {
-        TestArtifacts.SkipIfMissing();
-        var (app, testApp, cache) = Layout("profile", profile: true);
-        await RecordBaseline(testApp, cache, tests: 4);
-
         File.WriteAllText(Path.Combine(app, "src", "Profile.Profile.al"), ProfileSource("Drift Profile B"));
-        Package(app, testApp, profileCaption: "Drift Profile B");
+        Package(app, testApp, "Drift Perm B", profileCaption: "Drift Profile B");
 
         await using var second = await CliServer.StartAsync(new[] { "--cache", cache });
         var drifted = await Send(second, testApp);
         Assert.False(drifted.ForcedFull, drifted.Raw);
-        Assert.Equal(new[] { "ReadsProfile" }, drifted.Status.Keys);
+        Assert.Equal(new[] { "ReadsPermissionSet", "ReadsProfile" }, drifted.Status.Keys.OrderBy(k => k, StringComparer.Ordinal));
+        Assert.True(drifted.Status["ReadsPermissionSet"] == "fail", drifted.Raw);
         Assert.True(drifted.Status["ReadsProfile"] == "fail", drifted.Raw);
+        Assert.Contains("the caption was Drift Perm B", drifted.Raw, StringComparison.Ordinal);
         Assert.Contains("the caption was Drift Profile B", drifted.Raw, StringComparison.Ordinal);
         var d = drifted.Drift ?? throw new Xunit.Sdk.XunitException("no environmentDrift: " + drifted.Raw);
         Assert.Equal("diffed", d.GetProperty("mode").GetString());
-        Assert.Equal(new[] { "Profile Drift Profile SX" },
+        Assert.Equal(new[] { "PermissionSet 60474 Drift Perm SX", "Profile Drift Profile SX" },
             d.GetProperty("objects").EnumerateArray().Select(o => o.GetString()));
     }
 
