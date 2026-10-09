@@ -25,6 +25,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **tests:** key DotNetForwarderCycleTests exact set by what the loop depends on
 - **server:** incremental emit of a reportextension column on a System-table data item
 - **ci-guard:** apt-install timeout guard sees installs behind value-taking options
 - **tdd:** an unreadable package no longer refuses every missing-codeunit generation
