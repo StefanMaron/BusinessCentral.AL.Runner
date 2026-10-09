@@ -205,20 +205,39 @@ public sealed class DotNetForwarderCycleTests : IDisposable
         return members;
     }
 
-    // Measured expectations, by the major of the runtime the walk ran on (the tier family follows it:
-    // net8.0 for BC 27/28, net10.0 for BC 29). A family not listed has no exact-set assertion and
-    // that test skips by name; the property test above still gates it.
-    private static readonly Dictionary<int, string[]> ExpectedLoopFilesByRuntimeMajor = new()
+    // Measured expectations, by the BC MAJOR of the service tier under test (#5448). The loop set is a
+    // property of the tier's netstandard-era copies, not of the runtime the test host runs on: a 28.5
+    // tier hides the same five files on runtimes 8, 9 and 10. A tier major not listed has no
+    // exact-set assertion and that test skips by name; the property test above still gates it.
+    // BC 29 was measured on runtime 10 only, the one runtime a net10.0 build (BC 29+) runs on.
+    private static readonly string[] LoopFilesOfBc27And28 =
     {
-        [8] = new[]
-        {
-            "Microsoft.Win32.Registry.dll", "System.ComponentModel.Annotations.dll",
-            "System.Numerics.Vectors.dll", "System.Security.AccessControl.dll",
-            "System.Security.Principal.Windows.dll",
-        },
-        // BC 29.0.54011.55935 tier against runtime 10.0.11: the five above are not loops there.
-        [10] = new[] { "System.Diagnostics.EventLog.dll" },
+        "Microsoft.Win32.Registry.dll", "System.ComponentModel.Annotations.dll",
+        "System.Numerics.Vectors.dll", "System.Security.AccessControl.dll",
+        "System.Security.Principal.Windows.dll",
     };
+
+    private static readonly Dictionary<int, string[]> ExpectedLoopFilesByTierMajor = new()
+    {
+        [27] = LoopFilesOfBc27And28,
+        [28] = LoopFilesOfBc27And28,
+        // BC 29.0.54011.55935 tier against runtime 10.0.11: the five above are not loops there.
+        [29] = new[] { "System.Diagnostics.EventLog.dll" },
+    };
+
+    /// <summary>
+    /// The BC major of the tier directory, read from its own Ncl.dll file version. Never defaulted:
+    /// this runs only after the artifacts gate passed, so an absent or unreadable Ncl.dll is a broken
+    /// measurement and fails loudly instead of selecting no row (which would skip).
+    /// </summary>
+    private static int TierMajor(string tierDir)
+    {
+        var ncl = Path.Combine(tierDir, "Microsoft.Dynamics.Nav.Ncl.dll");
+        Assert.True(File.Exists(ncl), $"cannot establish the tier's BC major: {ncl} is missing");
+        var major = System.Diagnostics.FileVersionInfo.GetVersionInfo(ncl).FileMajorPart;
+        Assert.True(major >= 27, $"cannot establish the tier's BC major: {ncl} reads file major {major}, not a BC 27+ version");
+        return major;
+    }
 
     // Real implementations that carry a single forwarder to System.Runtime: hiding them turned a
     // working JsonDocument / Activity alias into AL0185 (review of #5442).
@@ -274,18 +293,18 @@ public sealed class DotNetForwarderCycleTests : IDisposable
     }
 
     /// <summary>
-    /// The EXACT set, for the tier families it was measured on. A tier that grows a loop fails here
+    /// The EXACT set, for the tier majors it was measured on. A tier that grows a loop fails here
     /// naming the new member, which forces a conscious update (and a look at what aliases lose);
-    /// a family with no measurement skips by name rather than passing.
+    /// a tier major with no measurement skips by name rather than passing.
     /// </summary>
     [SkippableFact]
-    public void WithNoReferencePacks_TheHiddenSetIsTheMeasuredOneForThisRuntimeFamily()
+    public void WithNoReferencePacks_TheHiddenSetIsTheMeasuredOneForThisTier()
     {
         TestArtifacts.SkipIfMissing();
-        var (dirs, _, runtime) = RealProbingSet();
-        var major = Environment.Version.Major;
-        Skip.IfNot(ExpectedLoopFilesByRuntimeMajor.TryGetValue(major, out var known),
-            $"no measured hidden set for a .NET {major} runtime; the property test gates this family");
+        var (dirs, tier, runtime) = RealProbingSet();
+        var major = TierMajor(tier);
+        Skip.IfNot(ExpectedLoopFilesByTierMajor.TryGetValue(major, out var known),
+            $"no measured hidden set for a BC {major} tier; the property test gates this tier");
 
         var hidden = BcCompiler.FindForwarderLoopMembers(new AssemblyLocator(dirs), dirs, runtime)
             .Select(Path.GetFileName).OrderBy(n => n, StringComparer.Ordinal).ToArray();
@@ -293,8 +312,8 @@ public sealed class DotNetForwarderCycleTests : IDisposable
         var added = hidden.Except(known!, StringComparer.Ordinal).ToArray();
         var gone = known!.Except(hidden, StringComparer.Ordinal).ToArray();
         Assert.True(added.Length == 0 && gone.Length == 0,
-            $"hidden set changed on this tier (runtime .NET {major}): new loop members [{string.Join(", ", added)}], " +
+            $"hidden set changed on this tier (BC {major}, runtime .NET {Environment.Version.Major}): new loop members [{string.Join(", ", added)}], " +
             $"no longer looping [{string.Join(", ", gone)}]. Confirm each new member is a real loop " +
-            "(the property test proves it) and update ExpectedLoopFilesByRuntimeMajor.");
+            "(the property test proves it) and update ExpectedLoopFilesByTierMajor.");
     }
 }
