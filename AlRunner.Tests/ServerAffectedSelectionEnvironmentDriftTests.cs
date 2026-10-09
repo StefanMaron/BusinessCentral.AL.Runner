@@ -75,6 +75,47 @@ public class ServerAffectedSelectionEnvironmentDriftTests
         }
         """;
 
+    // #5452: a profile of the dependency, and a test that reads it through All Profile.
+    private static string ProfileSource(string caption) => $$"""
+        profile "Drift Profile SX"
+        {
+            Caption = '{{caption}}';
+            RoleCenter = "Drift RC SX";
+        }
+        """;
+
+    private const string RoleCenterSource = """
+        page 60475 "Drift RC SX"
+        {
+            PageType = RoleCenter;
+            layout
+            {
+                area(RoleCenter)
+                {
+                }
+            }
+        }
+        """;
+
+    private const string ProfileTestsSource = """
+        codeunit 60483 "Drift Profile Tests SX"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure ReadsProfile()
+            var
+                P: Record "All Profile";
+            begin
+                P.SetRange("Profile ID", 'Drift Profile SX');
+                if not P.FindFirst() then
+                    Error('ReadsProfile: the profile was not found');
+                if P.Caption <> 'Drift Profile A' then
+                    Error('ReadsProfile: the caption was %1', P.Caption);
+            end;
+        }
+        """;
+
     // #5088: a dependency's report and the reportextension of it, and a test that runs the report.
     private const string DriftReportSource = """
         report 60476 "Drift Report SX"
@@ -167,7 +208,7 @@ public class ServerAffectedSelectionEnvironmentDriftTests
         }));
     }
 
-    private static (string App, string TestApp, string Cache) Layout(string name, bool permissionSet = false, bool report = false)
+    private static (string App, string TestApp, string Cache) Layout(string name, bool permissionSet = false, bool report = false, bool profile = false)
     {
         var root = TestScratch.Dir("al-runner-server-affected-drift-" + name);
         var app = Path.Combine(root, "App");
@@ -183,19 +224,26 @@ public class ServerAffectedSelectionEnvironmentDriftTests
             File.WriteAllText(Path.Combine(app, "src", "Perm.PermissionSet.al"), PermissionSetSource("Drift Perm A"));
             File.WriteAllText(Path.Combine(testApp, "PermTests.Codeunit.al"), PermTestsSource);
         }
+        if (profile)
+        {
+            File.WriteAllText(Path.Combine(app, "src", "Profile.Profile.al"), ProfileSource("Drift Profile A"));
+            File.WriteAllText(Path.Combine(app, "src", "RC.Page.al"), RoleCenterSource);
+            File.WriteAllText(Path.Combine(testApp, "ProfileTests.Codeunit.al"), ProfileTestsSource);
+        }
         if (report)
         {
             File.WriteAllText(Path.Combine(app, "src", "Report.Report.al"), DriftReportSource);
             File.WriteAllText(Path.Combine(app, "src", "ReportExt.ReportExt.al"), ReportExtensionSource("exit;"));
             File.WriteAllText(Path.Combine(testApp, "ReportTests.Codeunit.al"), ReportTestsSource);
         }
-        Package(app, testApp, permissionSet ? "Drift Perm A" : null, report);
+        Package(app, testApp, permissionSet ? "Drift Perm A" : null, report, profileCaption: profile ? "Drift Profile A" : null);
         return (app, testApp, Path.Combine(root, "cache"));
     }
 
     // Rebuilds App.app from App/, at App/app.json's version, replacing the previous build: the
     // second environment.
-    private static void Package(string app, string testApp, string? permissionSetCaption = null, bool report = false, bool reportExtension = true)
+    private static void Package(string app, string testApp, string? permissionSetCaption = null, bool report = false, bool reportExtension = true,
+        string? profileCaption = null)
     {
         var identity = InProcessAppPackager.ReadIdentity(Path.Combine(app, "app.json"))!;
         var packages = Path.Combine(testApp, ".alpackages");
@@ -218,6 +266,10 @@ public class ServerAffectedSelectionEnvironmentDriftTests
                 Properties = new[] {
                     new { Name = "Assignable", Value = "true" }, new { Name = "Caption", Value = permissionSetCaption },
                 },
+            } },
+            Profiles = profileCaption == null ? Array.Empty<object>() : new object[] { new {
+                Name = "Drift Profile SX",
+                Properties = new[] { new { Name = "Caption", Value = profileCaption } },
             } },
             Reports = report ? new object[] { new { Id = 60476, Name = "Drift Report SX", RequestPage = new { Id = 0, Name = "RequestOptionsPage" } } } : Array.Empty<object>(),
             ReportExtensions = report && reportExtension ? new object[] { new { Id = 60477, Name = "Drift Report Ext SX", Target = "Drift Report SX", RequestPage = new { ControlChanges = Array.Empty<object>() } } } : Array.Empty<object>(),
@@ -440,6 +492,31 @@ public class ServerAffectedSelectionEnvironmentDriftTests
         var d = drifted.Drift ?? throw new Xunit.Sdk.XunitException("no environmentDrift: " + drifted.Raw);
         Assert.Equal("diffed", d.GetProperty("mode").GetString());
         Assert.Equal(new[] { "ReportExtension 60477 Drift Report Ext SX" },
+            d.GetProperty("objects").EnumerateArray().Select(o => o.GetString()));
+    }
+
+    // #5452: a dependency's changed profile is attributed to the tests that read All Profile, so the diff
+    // stays exact (a minor BC bump changes some), and only those tests run. The other tests of the
+    // bundle do not read it and are not selected.
+    [SkippableFact]
+    public async Task ProfileDiffers_SelectsTheTestThatReadsAllProfile_AndTheDiffStaysExact()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (app, testApp, cache) = Layout("profile", profile: true);
+        await RecordBaseline(testApp, cache, tests: 4);
+
+        File.WriteAllText(Path.Combine(app, "src", "Profile.Profile.al"), ProfileSource("Drift Profile B"));
+        Package(app, testApp, profileCaption: "Drift Profile B");
+
+        await using var second = await CliServer.StartAsync(new[] { "--cache", cache });
+        var drifted = await Send(second, testApp);
+        Assert.False(drifted.ForcedFull, drifted.Raw);
+        Assert.Equal(new[] { "ReadsProfile" }, drifted.Status.Keys);
+        Assert.True(drifted.Status["ReadsProfile"] == "fail", drifted.Raw);
+        Assert.Contains("the caption was Drift Profile B", drifted.Raw, StringComparison.Ordinal);
+        var d = drifted.Drift ?? throw new Xunit.Sdk.XunitException("no environmentDrift: " + drifted.Raw);
+        Assert.Equal("diffed", d.GetProperty("mode").GetString());
+        Assert.Equal(new[] { "Profile Drift Profile SX" },
             d.GetProperty("objects").EnumerateArray().Select(o => o.GetString()));
     }
 

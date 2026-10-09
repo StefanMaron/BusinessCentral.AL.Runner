@@ -20,7 +20,8 @@ public class AffectedMetadataTablesTests
         Row("Codeunit", 2000000137),
         Row("Table", 2000000041, 2000000141, 2000000063, 2000000136),
         Row("TableExtension", 2000000041, 2000000141, 2000000063),
-        Row("Page", 2000000143, 2000000138, 2000000192),
+        // #5452: All Profile resolves each profile's RoleCenter page name to a page id, so a page is listed by it too.
+        Row("Page", 2000000143, 2000000138, 2000000192, 2000000178),
         Row("PageExtension", 2000000143, 2000000192),
         Row("Query", 2000000142),
         Row("XmlPort", 2000000280),
@@ -30,6 +31,10 @@ public class AffectedMetadataTablesTests
         // #5076: a permission set is read through the permission tables, and through nothing else.
         Row("PermissionSet", 2000000004, 2000000005, 2000000167, 2000000250, 2000000251, 2000000254),
         Row("PermissionSetExtension", 2000000004, 2000000005, 2000000167, 2000000250, 2000000251, 2000000254),
+        // #5452: a declared profile is read through All Profile and nothing else. A profileextension is not
+        // read by it at all (the runner does not apply one), so it keys no table of its own.
+        Row("Profile", 2000000178),
+        Row("ProfileExtension"),
     };
 
     // Every kind is listed by AllObj, AllObjWithCaption and Event Subscription.
@@ -113,6 +118,28 @@ public class AffectedMetadataTablesTests
             new Dictionary<int, List<int>>(), Recorded("tbl|Table|2000000250"), new Dictionary<int, List<int>>());
         Assert.Contains("a record of metadata table 2000000250 was held outside any one test", Assert.Single(held.Unattributed),
             StringComparison.Ordinal);
+    }
+
+    // #5452: a dependency's changed profile selects through All Profile and is no unattributable kind,
+    // so a minor BC bump that changes one still diffs exactly. A profileextension is still unattributable:
+    // All Profile does not read it, so nothing proves that no test depends on one.
+    [Fact]
+    public void DependencyChangedProfile_KeysAllProfile_AndIsAttributed_ButAProfileExtensionIsNot()
+    {
+        var keys = AffectedEnvironmentDrift.SelectionKeys(new[] { new AffectedObjectId("Profile", null, "BUSINESS MANAGER") },
+            new Dictionary<int, List<int>>(), Recorded(), new Dictionary<int, List<int>>());
+        Assert.Empty(keys.Unattributed);
+        Assert.Contains("tbl|Table|2000000178", keys.EventKeys);
+
+        var held = AffectedEnvironmentDrift.SelectionKeys(new[] { new AffectedObjectId("Profile", null, "BUSINESS MANAGER") },
+            new Dictionary<int, List<int>>(), Recorded("tbl|Table|2000000178"), new Dictionary<int, List<int>>());
+        Assert.Contains("a record of metadata table 2000000178 was held outside any one test", Assert.Single(held.Unattributed),
+            StringComparison.Ordinal);
+
+        var extension = AffectedEnvironmentDrift.SelectionKeys(new[] { new AffectedObjectId("ProfileExtension", null, "BM EXT") },
+            new Dictionary<int, List<int>>(), Recorded(), new Dictionary<int, List<int>>());
+        Assert.Equal("ProfileExtension BM EXT changed, and no test recording holds the use of this kind of object (ProfileExtension)",
+            Assert.Single(extension.Unattributed));
     }
 
     // The environment diff keys a dependency's changed object the same way (AffectedEnvironmentDrift.SelectionKeys).
