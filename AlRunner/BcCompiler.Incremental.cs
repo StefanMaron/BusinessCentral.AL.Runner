@@ -938,7 +938,7 @@ public sealed partial class BcCompiler
             publisher: publisher, name: moduleName, version: version,
             exact: false, appId: appId, isPropagated: false, alternateIds: ImmutableArray<Guid>.Empty);
         var selfModule = ExcludeObjects(baseline.ModuleDef, allChangedIdentities);
-        var selfLoader = new RadSelfBaselineLoader(appId, selfModule);
+        var selfLoader = new RadSelfBaselineLoader(appId, selfModule, specs);
         var combinedLoader = refLoader != null
             ? new CompositeSymbolReferenceLoader(new NavCA.ISymbolReferenceLoader[] { selfLoader, refLoader })
             : (NavCA.ISymbolReferenceLoader)selfLoader;
@@ -2613,7 +2613,9 @@ public sealed partial class BcCompiler
     {
         private readonly Guid _appId;
         private readonly NavSymRef.ModuleDefinition _module;
-        public RadSelfBaselineLoader(Guid appId, NavSymRef.ModuleDefinition module) { _appId = appId; _module = module; }
+        private readonly NavCA.SymbolReferenceSpecification[] _dependencies;
+        public RadSelfBaselineLoader(Guid appId, NavSymRef.ModuleDefinition module, IEnumerable<NavCA.SymbolReferenceSpecification> dependencies)
+        { _appId = appId; _module = module; _dependencies = dependencies.Where(d => d.AppId != appId).ToArray(); }
 
         public NavSymRef.ModuleDefinition? LoadModule(NavCA.SymbolReferenceSpecification reference, IList<NavCA.Diagnostics.Diagnostic> diagnostics)
         {
@@ -2636,10 +2638,11 @@ public sealed partial class BcCompiler
             if (reference.AppId != _appId)
                 throw new FileNotFoundException(
                     $"Symbol reference dependencies not found: {reference.Publisher}/{reference.Name} {reference.Version}");
-            // Self has no further transitive deps THIS loader needs to report — the
-            // module's own dependency closure is already the (separately supplied)
-            // `combinedSpecs` list, not something discovered on demand here.
-            return Enumerable.Empty<NavCA.SymbolReferenceSpecification>();
+            // #5454: the module's dependencies are the resolved specs, not none. A packaged
+            // report's data item names its table as `#<appid>#Name` and BC resolves that through
+            // THIS module's dependencies; reporting none left a System-table data item without
+            // members (AL0118 in the extension, then BadExpression at emit).
+            return _dependencies;
         }
     }
 }

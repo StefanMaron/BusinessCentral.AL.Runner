@@ -253,13 +253,13 @@ public class ServerAffectedSelectionObjectKindTests
         Write(bundle, "KindExt.EnumExt.al", EnumExtension());
         await Send(server, bundle);
 
-        // An edited reportextension is keyed since #5088 (ServerAffectedSelectionReportExtensionTests), but
-        // this column on a System-table data item makes the incremental emit throw (BadExpression), so the
-        // compile falls back to a full one and forces the full run before any selection is read.
+        // An edited reportextension is keyed since #5088 (ServerAffectedSelectionReportExtensionTests), and its
+        // column on a System-table data item is emitted incrementally since #5454
+        // (ServerAffectedSelectionSystemTableExtensionTests): no test runs the report, so nothing is selected.
         Write(bundle, "KindExt.ReportExt.al", ReportExtension("            column(Num3; Number) { }\n"));
         var reportExtension = await Send(server, bundle);
-        Assert.True(reportExtension.ForcedFull, reportExtension.Raw);
-        Assert.Equal(All, reportExtension.Ran);
+        Assert.False(reportExtension.ForcedFull, reportExtension.Raw);
+        Assert.Empty(reportExtension.Ran);
 
         // #5076: a permission set is keyed through the permission tables (ServerAffectedSelectionMetadataTableTests),
         // so an edit no test's tables list selects nothing, instead of running everything.
