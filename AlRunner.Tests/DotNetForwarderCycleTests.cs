@@ -150,6 +150,52 @@ public sealed class DotNetForwarderCycleTests : IDisposable
     }
 
     // ---------------------------------------------------------------------------------------
+    // The exact-set pin must not skip on CI when its table has no row for the tier (#5468).
+    // ---------------------------------------------------------------------------------------
+
+    private static readonly Dictionary<int, string[]> TwoRowTable = new()
+    {
+        [27] = new[] { "A.dll" },
+        [29] = new[] { "B.dll" },
+    };
+
+    [Fact]
+    public void ARowThatExistsIsReturned_OnCiAndOffIt()
+    {
+        // Control: the row-found path is the same on both branches, so the failure below is not a
+        // blanket "CI refuses everything".
+        Assert.Equal(new[] { "A.dll" }, ExpectedSetOrSkip(TwoRowTable, 27, runningOnCi: true));
+        Assert.Equal(new[] { "B.dll" }, ExpectedSetOrSkip(TwoRowTable, 29, runningOnCi: false));
+    }
+
+    [Fact]
+    public void NoRowForTheTier_OffCi_SkipsNamingTheTierMajorAndTheTable()
+    {
+        var skip = Assert.Throws<Xunit.SkipException>(() => ExpectedSetOrSkip(TwoRowTable, 28, runningOnCi: false));
+        Assert.Contains("BC 28", skip.Message);
+        Assert.Contains("ExpectedLoopFilesByTierMajor", skip.Message);
+        Assert.Contains("27, 29", skip.Message);   // the rows that do exist
+    }
+
+    [Fact]
+    public void NoRowForTheTier_OnCi_FailsInsteadOfSkipping()
+    {
+        var ex = Record.Exception(() => ExpectedSetOrSkip(TwoRowTable, 28, runningOnCi: true));
+        Assert.NotNull(ex);
+        Assert.IsNotType<Xunit.SkipException>(ex);   // a skip is the green nothing this guards against
+        Assert.Contains("BC 28", ex.Message);
+        Assert.Contains("ExpectedLoopFilesByTierMajor", ex.Message);
+    }
+
+    [Fact]
+    public void EveryTierMajorTheCiMatrixRunsHasARow()
+    {
+        // The CI legs' tiers (27.5, 28.5, 29.0) are all keyed; a leg whose tier is not would now fail.
+        foreach (var major in new[] { 27, 28, 29 })
+            Assert.Contains(major, ExpectedLoopFilesByTierMajor.Keys);
+    }
+
+    // ---------------------------------------------------------------------------------------
     // The real service tier and the real runtime: does BC's own locator send Cecil round a loop?
     // ---------------------------------------------------------------------------------------
 
@@ -239,6 +285,24 @@ public sealed class DotNetForwarderCycleTests : IDisposable
         return major;
     }
 
+    /// <summary>
+    /// The row for <paramref name="major"/>. No row is a skip on a developer box (the tier is whatever
+    /// is installed there) and a FAILURE on CI (#5468): a CI leg's tier is one the matrix chose, so no
+    /// row means a stale table, and a skip would turn the exact-set pin into a green nothing. The CI
+    /// flag is a parameter, as in TestArtifacts.SkipIfMissingIn, so both outcomes are testable.
+    /// </summary>
+    internal static string[] ExpectedSetOrSkip(
+        IReadOnlyDictionary<int, string[]> table, int major, bool runningOnCi)
+    {
+        if (table.TryGetValue(major, out var row)) return row;
+        var reason = $"no measured hidden set for a BC {major} tier in ExpectedLoopFilesByTierMajor " +
+                     $"(rows: {string.Join(", ", table.Keys.OrderBy(k => k))}); the property test gates this tier";
+        if (runningOnCi)
+            Assert.Fail($"{reason}. On a CI leg ({string.Join("/", TestArtifacts.CiEnvironmentVariables)} is set) the " +
+                        "tier is one the matrix chose, so a missing row is a stale table and NOT a legitimate skip.");
+        throw new Xunit.SkipException(reason);
+    }
+
     // Real implementations that carry a single forwarder to System.Runtime: hiding them turned a
     // working JsonDocument / Activity alias into AL0185 (review of #5442).
     private static readonly string[] RealImplementationsThatMustStayVisible =
@@ -303,14 +367,13 @@ public sealed class DotNetForwarderCycleTests : IDisposable
         TestArtifacts.SkipIfMissing();
         var (dirs, tier, runtime) = RealProbingSet();
         var major = TierMajor(tier);
-        Skip.IfNot(ExpectedLoopFilesByTierMajor.TryGetValue(major, out var known),
-            $"no measured hidden set for a BC {major} tier; the property test gates this tier");
+        var known = ExpectedSetOrSkip(ExpectedLoopFilesByTierMajor, major, TestArtifacts.RunningOnCi);
 
         var hidden = BcCompiler.FindForwarderLoopMembers(new AssemblyLocator(dirs), dirs, runtime)
             .Select(Path.GetFileName).OrderBy(n => n, StringComparer.Ordinal).ToArray();
 
-        var added = hidden.Except(known!, StringComparer.Ordinal).ToArray();
-        var gone = known!.Except(hidden, StringComparer.Ordinal).ToArray();
+        var added = hidden.Except(known, StringComparer.Ordinal).ToArray();
+        var gone = known.Except(hidden, StringComparer.Ordinal).ToArray();
         Assert.True(added.Length == 0 && gone.Length == 0,
             $"hidden set changed on this tier (BC {major}, runtime .NET {Environment.Version.Major}): new loop members [{string.Join(", ", added)}], " +
             $"no longer looping [{string.Join(", ", gone)}]. Confirm each new member is a real loop " +
