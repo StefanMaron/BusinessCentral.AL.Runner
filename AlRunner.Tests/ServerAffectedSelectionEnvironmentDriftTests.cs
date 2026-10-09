@@ -452,6 +452,53 @@ public class ServerAffectedSelectionEnvironmentDriftTests
             d.GetProperty("objects").EnumerateArray().Select(o => o.GetString()));
     }
 
+    // #5088: a dependency's changed reportextension is attributed to the tests that ran its base report,
+    // so the diff stays exact and only those tests run.
+    [SkippableFact]
+    public async Task ReportExtensionDiffers_SelectsTheTestThatRanItsBaseReport_AndTheDiffStaysExact()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (app, testApp, cache) = Layout("report-extension", report: true);
+        await RecordBaseline(testApp, cache, tests: 4);
+
+        File.WriteAllText(Path.Combine(app, "src", "ReportExt.ReportExt.al"), ReportExtensionSource("Error('Drift Ext B');"));
+        Package(app, testApp, report: true);
+
+        await using var second = await CliServer.StartAsync(new[] { "--cache", cache });
+        var drifted = await Send(second, testApp);
+        Assert.False(drifted.ForcedFull, drifted.Raw);
+        Assert.Equal(new[] { "RunsReport" }, drifted.Status.Keys);
+        Assert.True(drifted.Status["RunsReport"] == "fail", drifted.Raw);
+        Assert.Contains("Drift Ext B", drifted.Raw, StringComparison.Ordinal);
+        var d = drifted.Drift ?? throw new Xunit.Sdk.XunitException("no environmentDrift: " + drifted.Raw);
+        Assert.Equal("diffed", d.GetProperty("mode").GetString());
+        Assert.Equal(new[] { "ReportExtension 60477 Drift Report Ext SX" },
+            d.GetProperty("objects").EnumerateArray().Select(o => o.GetString()));
+    }
+
+    // The removed extension is in the new environment's registry no more, and a dependency's extension
+    // instance is no key of a kind the diff selects on, so only the recording names its base report.
+    [SkippableFact]
+    public async Task ReportExtensionRemoved_SelectsTheTestThatRanItsBaseReport_FromTheRecording()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (app, testApp, cache) = Layout("report-extension-removed", report: true);
+        await RecordBaseline(testApp, cache, tests: 4);
+
+        File.Delete(Path.Combine(app, "src", "ReportExt.ReportExt.al"));
+        Package(app, testApp, report: true, reportExtension: false);
+
+        await using var second = await CliServer.StartAsync(new[] { "--cache", cache });
+        var drifted = await Send(second, testApp);
+        Assert.False(drifted.ForcedFull, drifted.Raw);
+        Assert.Equal(new[] { "RunsReport" }, drifted.Status.Keys);
+        Assert.True(drifted.Status["RunsReport"] == "pass", drifted.Raw);
+        var d = drifted.Drift ?? throw new Xunit.Sdk.XunitException("no environmentDrift: " + drifted.Raw);
+        Assert.Equal("diffed", d.GetProperty("mode").GetString());
+        Assert.Equal(new[] { "ReportExtension 60477 Drift Report Ext SX" },
+            d.GetProperty("objects").EnumerateArray().Select(o => o.GetString()));
+    }
+
     [SkippableFact]
     public async Task NoPerObjectRecord_UsesTheBaselineAsIs_AndSaysItIsApproximate()
     {
