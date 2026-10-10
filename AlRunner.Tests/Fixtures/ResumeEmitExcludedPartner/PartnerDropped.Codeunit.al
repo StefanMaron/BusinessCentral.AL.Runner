@@ -6,8 +6,8 @@ codeunit 50921 "Resume Excl Partner Dropped"
     [Test]
     procedure PartnerDropped_A()
     var
-        Missing: Record "This Table Does Not Exist At All";
+        Missing: Page "This Table Does Not Exist At All";
     begin
-        Missing.Init();
+        Missing.Run();
     end;
 }

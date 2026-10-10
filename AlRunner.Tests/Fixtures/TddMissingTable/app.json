@@ -1,0 +1,12 @@
+{
+  "id": "6d2e4f10-7b35-4a81-9c47-1e8f3a5d7ba5",
+  "name": "Runner Tests Fixture - Tdd Missing Table",
+  "publisher": "AL Runner Fixtures",
+  "version": "1.0.0.0",
+  "brief": "The app of the #5445 missing-table --tdd reproducer.",
+  "description": "Tests that use tables no app declares.",
+  "dependencies": [],
+  "idRanges": [ { "from": 65320, "to": 65339 } ],
+  "runtime": "14.0",
+  "features": []
+}

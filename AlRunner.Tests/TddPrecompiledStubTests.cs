@@ -32,6 +32,24 @@ public sealed class TddPrecompiledStubTests
         Assert.Null(TddPrecompiledStub.FreeCodeunitId(trees, Array.Empty<(int, int)>(), new HashSet<int>()));
     }
 
+    /// <summary>#5445: ids are per object type, in both directions - a codeunit does not take a table's id from the
+    /// first free table id, and a table does not take a codeunit's.</summary>
+    [Fact]
+    public void FreeTableId_IsPerObjectType_InBothDirections()
+    {
+        var trees = new[]
+        {
+            Parse("codeunit 65320 \"A\" { } codeunit 65321 \"B\" { }"),
+            Parse("table 65320 \"C\" { fields { field(1; \"K\"; Integer) { } } }"),
+        };
+        var ranges = new[] { (65320, 65323) };
+
+        Assert.Equal(65321, TddPrecompiledStub.FreeTableId(trees, ranges, new HashSet<int>()));
+        Assert.Equal(65322, TddPrecompiledStub.FreeCodeunitId(trees, ranges, new HashSet<int>()));
+        Assert.Equal(65322, TddPrecompiledStub.FreeTableId(trees, ranges, new HashSet<int> { 65321 }));
+        Assert.Null(TddPrecompiledStub.FreeTableId(trees, ranges, new HashSet<int> { 65321, 65322, 65323 }));
+    }
+
     [Fact]
     public void ReadIdRanges_ReadsTheManifest_AndNothingFromAnUnreadableOne()
     {

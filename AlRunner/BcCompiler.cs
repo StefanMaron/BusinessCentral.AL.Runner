@@ -2129,7 +2129,7 @@ public sealed partial class BcCompiler
             // generated into this module's own trees is worth a recompile here.
             tddGeneratedMembers.AddRange(newlyGenerated.Where(g => g.GeneratedIntoFile != null));
             newlyGenerated = newlyGenerated.Where(g => g.GeneratedIntoFile == null).ToList();
-            var newMembers = newlyGenerated.Where(g => g.MemberKind != TddMissingObject.MemberKind).ToList();
+            var newMembers = newlyGenerated.Where(g => !TddMissingObject.IsObjectKind(g.MemberKind)).ToList();
             if (newlyGenerated.Count > 0 && newMembers.Count == 0)
                 tddGeneratedMembers.AddRange(newlyGenerated); // only the objects: already compiled above
             else if (newlyGenerated.Count > 0)

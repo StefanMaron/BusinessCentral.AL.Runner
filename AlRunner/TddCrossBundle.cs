@@ -455,17 +455,25 @@ public static class TddCrossBundle
         lock (Sync) return Attempted.ToList();
     }
 
-    private static readonly System.Text.RegularExpressions.Regex CodeunitDeclaration = new(
-        "^[ \\t]*codeunit[ \\t]+\\d+[ \\t]+(?:\"((?:[^\"]|\"\")*)\"|(\\w+))",
+    private static System.Text.RegularExpressions.Regex DeclarationOf(string keyword) => new(
+        "^[ \\t]*" + keyword + "[ \\t]+\\d+[ \\t]+(?:\"((?:[^\"]|\"\")*)\"|(\\w+))",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Multiline
         | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    private static readonly System.Text.RegularExpressions.Regex CodeunitDeclaration = DeclarationOf("codeunit");
+    private static readonly System.Text.RegularExpressions.Regex TableDeclaration = DeclarationOf("table");
 
     /// <summary>The first file of any bundle of this multi-bundle run whose text declares a codeunit named
     /// <paramref name="name"/>, or null (#5431). A text probe over every bundle, not only the ones another bundle
     /// depends on: a bundle the compiling one forgot to declare a dependency on is still the object's home, and
     /// an empty codeunit of that name would shadow it. It may say yes for a declaration in a comment, never no for
     /// a real one; empty outside a multi-bundle run.</summary>
-    internal static string? RunDeclaresCodeunit(string name)
+    internal static string? RunDeclaresCodeunit(string name) => RunDeclares(CodeunitDeclaration, name);
+
+    /// <summary>The same probe for a table (#5445): `table` followed by an id and the name, so a `tableextension`
+    /// never matches.</summary>
+    internal static string? RunDeclaresTable(string name) => RunDeclares(TableDeclaration, name);
+
+    private static string? RunDeclares(System.Text.RegularExpressions.Regex declaration, string name)
     {
         List<string> dirs;
         lock (Sync) dirs = RunBundles.ToList();
@@ -476,7 +484,7 @@ public static class TddCrossBundle
                 try { text = TddSourceOverlay.ReadAllText(file); }
                 catch (IOException) { continue; }
                 if (text.IndexOf(name, StringComparison.OrdinalIgnoreCase) < 0) continue;
-                foreach (System.Text.RegularExpressions.Match m in CodeunitDeclaration.Matches(text))
+                foreach (System.Text.RegularExpressions.Match m in declaration.Matches(text))
                     if (string.Equals(m.Groups[1].Success ? m.Groups[1].Value.Replace("\"\"", "\"") : m.Groups[2].Value,
                             name, StringComparison.OrdinalIgnoreCase))
                         return file;
