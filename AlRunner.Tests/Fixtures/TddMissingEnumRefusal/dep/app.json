@@ -1,0 +1,10 @@
+{
+  "id": "04637eda-5a96-437e-8fc3-2b03650ea09e",
+  "name": "Runner Tests Fixture - Tdd Missing Enum Sibling",
+  "publisher": "AL Runner Fixtures",
+  "version": "1.0.0.0",
+  "dependencies": [],
+  "idRanges": [ { "from": 65340, "to": 65359 } ],
+  "runtime": "14.0",
+  "features": []
+}

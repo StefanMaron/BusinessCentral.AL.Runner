@@ -161,6 +161,38 @@ public sealed class TddMissingEnumTests : IDisposable
         Assert.Equal(before, TddMissingObjectTests.HashTree(app));
     }
 
+    /// <summary>
+    /// Two enums that exist but are out of the compiling app's reach: "Sibling Status" belongs to the other bundle of the run
+    /// (the app forgot to depend on it) and "Namespaced Elsewhere Status" sits in a namespace the test does not use. An empty
+    /// enum of either name would shadow the real one, so both are refused, named, and the tests FAILED on the AL0185.
+    /// </summary>
+    [SkippableFact]
+    public void EnumsOutOfReach_AreNotShadowed()
+    {
+        TestArtifacts.SkipIfMissing();
+        var root = Path.Combine(Fixtures, "TddMissingEnumRefusal");
+        var dep = TddMissingObjectTests.CopyFolder(Path.Combine(root, "dep"), Path.Combine(_scratch, "dep"));
+        var test = TddMissingObjectTests.CopyFolder(Path.Combine(root, "test"), Path.Combine(_scratch, "test"));
+
+        var (stdout, stderr, exit) = TddMissingObjectTests.RunRunner(null, "--tdd",
+            $"--cache \"{Path.Combine(_scratch, "cache")}\"", "--output-json", $"\"{dep}\"", $"\"{test}\"");
+
+        Assert.True(exit == 1, $"exit {exit}\n{stderr}");
+        using var doc = JsonDocument.Parse(stdout.Trim());
+        var tests = TestsOf(doc);
+        Assert.Equal(2, tests.Count);
+        foreach (var (name, type) in new[] { ("SiblingBundleEnum_IsNotShadowed", "Sibling Status"), ("NamespacedEnum_IsNotShadowed", "Namespaced Elsewhere Status") })
+        {
+            var t = tests.Single(x => x.GetProperty("name").GetString()!.EndsWith("." + name));
+            Assert.Equal("fail", t.GetProperty("status").GetString());
+            Assert.Contains($"error AL0185: Enum '{type}' is missing", t.GetProperty("message").GetString());
+            Assert.Empty(TddMissingObjectTests.StubsOf(t));
+        }
+        Assert.Contains("--tdd: enum \"Sibling Status\" not generated - another bundle of the run declares it (SiblingStatus.Enum.al)", stderr);
+        Assert.Contains("--tdd: enum \"Namespaced Elsewhere Status\" not generated - an enum of that name exists in a module or namespace this code does not reach", stderr);
+        Assert.DoesNotContain("--tdd: generated enum", stderr);
+    }
+
     private const string StatusSymbols = """
         "EnumTypes":[{"Id":65400,"Name":"Package Only Status","Values":[{"Ordinal":0,"Name":"Open"}],"Properties":[]}]
         """;

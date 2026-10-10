@@ -1,0 +1,10 @@
+{
+  "id": "9d1af572-61da-4e48-8207-9bab27aec45d",
+  "name": "Runner Tests Fixture - Tdd Missing Enum Undeclared Test",
+  "publisher": "AL Runner Fixtures",
+  "version": "1.0.0.0",
+  "dependencies": [],
+  "idRanges": [ { "from": 65360, "to": 65379 } ],
+  "runtime": "14.0",
+  "features": []
+}

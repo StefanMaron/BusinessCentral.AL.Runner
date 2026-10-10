@@ -123,7 +123,7 @@ public static partial class TddGeneration
             {
                 if (compilation.GetApplicationObjectTypeSymbolsByNameAcrossModulesAndNamespaces(kind.Symbol, name).Length > 0)
                 {
-                    Refuse($"a {kind.Word} of that name exists in a module or namespace this code does not reach, and an empty one would shadow it");
+                    Refuse($"{(isEnum ? "an" : "a")} {kind.Word} of that name exists in a module or namespace this code does not reach, and an empty one would shadow it");
                     continue;
                 }
                 if ((isTable ? TddCrossBundle.RunDeclaresTable(name) : isEnum ? TddCrossBundle.RunDeclaresEnum(name)
