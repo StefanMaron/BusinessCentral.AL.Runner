@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **affected:** select a changed Profile through the All Profile table
 - **cli:** --test-exact selects one test by whole qualified name; --exclude-test emptying a selection is exit 6
 - **tdd:** generate a missing codeunit (no app declares it) so the test compiles and runs against it
 - **tdd:** generate a missing procedure of a precompiled codeunit beside it
