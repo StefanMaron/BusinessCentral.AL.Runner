@@ -142,6 +142,53 @@ public sealed class DeferredPlatformAppsProvisioningTests
         });
     }
 
+    /// <summary>
+    /// #4481: the green attempt child re-runs the invocation from the top, so it re-emits the whole
+    /// startup preamble, and the parent had already printed its own copy before deciding to defer.
+    /// Replaying the child's capture whole therefore printed every queued startup line twice
+    /// (today, at default verbosity, the run header). The user must see it exactly once. Counted
+    /// over the quiet run most users take.
+    /// </summary>
+    [SkippableFact]
+    public void ColdDeferral_GreenAttempt_PrintsTheStartupPreambleExactlyOnce()
+    {
+        TestArtifacts.SkipIfMissing();
+        WithScratch("al-runner-4481-cold", scratch =>
+        {
+            var bundle = WriteBundle(Path.Combine(scratch, "bundle"), 61990, """
+                Row."No." := 7; Row.Txt := 'seven'; Row.Insert(true);
+                Row.Get(7);
+                if Row.Txt <> 'seven' then
+                    Error('expected seven, got %1', Row.Txt);
+                """);
+
+            // An explicit --expectations dir is what makes `[expectations] loaded` print at default
+            // verbosity, so a second queued line rides the same replay.
+            var expectationsDir = Path.Combine(scratch, "expectations");
+            Directory.CreateDirectory(expectationsDir);
+
+            var (output, exit) = RunIsolated(bundle, scratch, $"--expectations \"{expectationsDir}\"");
+
+            Assert.True(exit == 0, $"expected a green deferred run. exit={exit}\n{output}");
+            // The replay happened (this is the deferral path, not a run with the apps present).
+            Assert.Contains(DeferredGreenNote, output);
+            var lines = output.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
+            // The run header (`al-runner <ver> · BC <build> · N app`) prints at default verbosity;
+            // `[bc] selected BC` prints only under --verbose, so it is bounded rather than required.
+            int Count(Func<string, bool> match) => lines.Count(match);
+            var header = Count(l => l.StartsWith("al-runner ", StringComparison.Ordinal) && l.Contains(" · BC "));
+            Assert.True(header == 1,
+                $"the run header printed {header} time(s), expected exactly 1: the attempt child "
+                + $"re-prints the preamble the parent already showed (#4481).\n{output}");
+            var selected = Count(l => l.StartsWith("[bc] selected BC", StringComparison.Ordinal));
+            Assert.True(selected <= 1, $"`[bc] selected BC` printed {selected} time(s).\n{output}");
+            var expectations = Count(l => l.StartsWith("[expectations] loaded", StringComparison.Ordinal));
+            Assert.True(expectations == 1,
+                $"`[expectations] loaded` printed {expectations} time(s), expected 1 (#4481).\n{output}");
+            Assert.Contains("passed 1 ", output);
+        });
+    }
+
     /// <summary>A platform floor whose AL names a system table the System app supplies: the
     /// attempt without it cannot come out green, so the run ends in today's refusal, and the
     /// discarded attempt's AL0185 never reaches the user.</summary>

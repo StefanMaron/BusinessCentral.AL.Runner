@@ -2084,19 +2084,21 @@ which is why the skip requires an implicit `Microsoft/Application` root.
 The attempt's output is **replayed** on top of the output this process has already produced, so
 it is only safe where the parent has printed nothing the child also prints.
 
-**The parent always prints something.** `Program.cs` queues its startup lines and flushes them
+**The startup preamble is not replayed.** `Program.cs` queues its startup lines and flushes them
 (`FlushDeferredStartupLines`) *before* either deferral decision, and the run header —
 `al-runner <version> · BC <build> · N app(s)` — is an unconditional `Console.WriteLine`, not gated on
-`--verbose`. So a replay duplicates at least that line on **every** path, quiet runs included.
-That is a pre-existing property of #2232's cold deferral, tracked as **#4481**; this issue's warm
-skip widens the exposure rather than creating it.
+`--verbose`. The attempt child re-runs the invocation from the top, so it would queue the same
+lines; inside it (`AL_RUNNER_DEFERRED_PLATFORM_APPS=1`) the flush discards them instead of printing
+them, so the user sees the preamble once, from the parent (#4481). Dropping them at the source is
+what makes the replay safe without counting lines, which cannot work while every invocation
+re-execs into a shadow-runtime child whose streams are inherited rather than captured (#2375).
 
-What the two conditions below do is bound the damage to where it is *only* that one line, and
-keep it out of the two modes where a duplicate is a hard failure rather than cosmetic noise:
+What the suppression does **not** cover is anything the child prints directly rather than through
+that queue, and that is why two conditions remain:
 
-- **`--verbose`** — the preamble grows to the whole startup narrative (shadow re-exec, BC
-  selection, the #2210 cross-major note) and the child re-emits all of it. Measured: the
-  cross-major note went from one occurrence to two, against a test asserting exactly once.
+- **`--verbose`** — the startup narrative includes lines printed directly (shadow re-exec, the
+  #2210 cross-major note), which the child still emits. Measured before #4481: the cross-major note
+  went from one occurrence to two, against a test asserting exactly once.
 - **`--output-json`** — stdout is contracted to hold the JSON document and nothing else, so
   interleaving any replayed text breaks the parse outright.
 
@@ -2104,13 +2106,8 @@ Both are diagnostic or machine-readable modes whose runs still work; they simply
 saving. Removing either condition reintroduces the loud duplication, which is why
 `CrossMajorNoteTests`, `OutputPathPreparationTests` and
 `DeferredPlatformAppsWithholdTests.Verbose_DoesNotReplayAChildsOutput_SoThePreambleIsNotDuplicated`
-all pin it.
-
-**A note on why the replay is not simply made preamble-aware.** Every invocation already re-execs
-into a shadow-runtime child whose streams are *inherited* rather than captured, so a line count
-taken in the outer process does not describe what the user sees. #2375 tracks removing that
-re-exec; until then the honest fix is to decline rather than to guess at the overlap, and #4481
-owns the residual one-line duplication on the paths that do take it.
+all pin it. The quiet-run header is pinned by
+`DeferredPlatformAppsProvisioningTests.ColdDeferral_GreenAttempt_PrintsTheStartupPreambleExactlyOnce`.
 
 
 ## Known gaps — in scope but not yet implemented

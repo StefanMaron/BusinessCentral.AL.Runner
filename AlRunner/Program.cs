@@ -1801,7 +1801,11 @@ FlushDeferredStartupLines();
 // print a line twice.
 void FlushDeferredStartupLines()
 {
-    foreach (var deferredLine in deferredStartupLines) deferredLine();
+    // #4481: inside #2223/#2232's attempt child the parent has already printed this preamble
+    // (it flushes before either deferral decision) and replays this process's whole capture
+    // afterwards, so printing it here shows every line twice.
+    if (!AlRunner.Infrastructure.ProvisioningCheck.WithholdingPlatformApps())
+        foreach (var deferredLine in deferredStartupLines) deferredLine();
     deferredStartupLines.Clear();
 }
 
@@ -2057,14 +2061,10 @@ if (!provisionSubcommand)
     //
     // NOT under --verbose or --output-json, and those are correctness conditions rather than
     // preferences: the attempt's output is REPLAYED on top of what this process has already
-    // printed. The parent always prints SOMETHING — FlushDeferredStartupLines runs above, and
-    // the bundle banner is an unconditional Console.WriteLine — so a replay always duplicates
-    // at least that line, on every path including a quiet one. That residue is #2232's, tracked
-    // as #4481. What these two conditions buy is keeping the duplication down to that one line
-    // and out of the modes where it is a hard failure rather than noise: removing either
-    // reintroduces the loud form that broke CrossMajorNoteTests and OutputPathPreparationTests.
-    // Both modes, and why the replay is not instead made preamble-aware, are in
-    // docs/limitations.md#platform-apps-deferral.
+    // printed. The child does not re-print the queued startup lines (FlushDeferredStartupLines,
+    // #4481), but under --verbose it emits more directly, and --output-json owns stdout:
+    // removing either condition reintroduces the loud form that broke CrossMajorNoteTests and
+    // OutputPathPreparationTests. Both modes are in docs/limitations.md#platform-apps-deferral.
     if (!serverMode && !watchMode && !tddMode && strictExitCode
         && !AlRunner.Log.Verbose
         && !outputJson

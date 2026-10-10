@@ -324,6 +324,11 @@ public sealed class DeferredPlatformAppsWithholdTests
             Assert.Equal(0, r.DepAssembliesLoaded);
             Assert.True(r.Exit == 0, $"the run must still pass. exit={r.Exit}\n{r.Output}");
             Assert.Contains("passed 1 ", r.Output);
+            // #4481: the warm skip replays its attempt child too, and must not repeat the header
+            // this process already printed.
+            var header = r.Output.Split('\n').Count(l =>
+                l.StartsWith("al-runner ", StringComparison.Ordinal) && l.Contains(" · BC "));
+            Assert.True(header == 1, $"the run header printed {header} time(s), expected 1 (#4481).\n{r.Output}");
         });
     }
 
@@ -401,9 +406,9 @@ public sealed class DeferredPlatformAppsWithholdTests
     /// mechanism, so a reader of this file can see why the --verbose condition exists.
     ///
     /// Scope, so this test is not read as more than it is: it pins the LOUD duplication, the
-    /// kind that breaks an assertion. A quiet run still duplicates the bundle banner, because
-    /// FlushDeferredStartupLines runs before either decision site and the banner is not gated on
-    /// --verbose — that residue is #2232's and is tracked as #4481, not fixed here.
+    /// kind that breaks an assertion. The quiet-run header duplication (#4481) is pinned by
+    /// FloorOnlyBundle_WithPlatformAppsOnDisk_LoadsNoneOfTheClosure and
+    /// DeferredPlatformAppsProvisioningTests.ColdDeferral_GreenAttempt_PrintsTheStartupPreambleExactlyOnce.
     /// </summary>
     [SkippableFact]
     public void Verbose_DoesNotReplayAChildsOutput_SoThePreambleIsNotDuplicated()
