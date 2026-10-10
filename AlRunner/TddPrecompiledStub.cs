@@ -58,6 +58,11 @@ internal static class TddPrecompiledStub
         ISet<int> reserved) => FreeObjectId(trees, idRanges, reserved,
             o => o is NavSyntax.TableSyntax t ? t.ObjectId?.Value.Value as int? : null);
 
+    /// <summary>The same for an enum (#5445).</summary>
+    internal static int? FreeEnumId(NavSyntax.SyntaxTree[] trees, IReadOnlyList<(int From, int To)> idRanges,
+        ISet<int> reserved) => FreeObjectId(trees, idRanges, reserved,
+            o => o is NavSyntax.EnumTypeSyntax e ? e.ObjectId?.Value.Value as int? : null);
+
     private static int? FreeObjectId(NavSyntax.SyntaxTree[] trees, IReadOnlyList<(int From, int To)> idRanges,
         ISet<int> reserved, Func<NavSyntax.ObjectSyntax, int?> idOfThisType)
     {

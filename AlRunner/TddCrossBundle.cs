@@ -461,6 +461,7 @@ public static class TddCrossBundle
         | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
     private static readonly System.Text.RegularExpressions.Regex CodeunitDeclaration = DeclarationOf("codeunit");
     private static readonly System.Text.RegularExpressions.Regex TableDeclaration = DeclarationOf("table");
+    private static readonly System.Text.RegularExpressions.Regex EnumDeclaration = DeclarationOf("enum");
 
     /// <summary>The first file of any bundle of this multi-bundle run whose text declares a codeunit named
     /// <paramref name="name"/>, or null (#5431). A text probe over every bundle, not only the ones another bundle
@@ -472,6 +473,10 @@ public static class TddCrossBundle
     /// <summary>The same probe for a table (#5445): `table` followed by an id and the name, so a `tableextension`
     /// never matches.</summary>
     internal static string? RunDeclaresTable(string name) => RunDeclares(TableDeclaration, name);
+
+    /// <summary>The same probe for an enum (#5445): `enum` followed by an id and the name, so an `enumextension`
+    /// never matches.</summary>
+    internal static string? RunDeclaresEnum(string name) => RunDeclares(EnumDeclaration, name);
 
     private static string? RunDeclares(System.Text.RegularExpressions.Regex declaration, string name)
     {

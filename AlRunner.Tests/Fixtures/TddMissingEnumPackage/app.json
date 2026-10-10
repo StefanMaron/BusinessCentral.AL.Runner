@@ -1,0 +1,12 @@
+{
+  "id": "f478f3eb-7ca4-48de-b52a-f0bd58511581",
+  "name": "Runner Tests Fixture - Tdd Missing Enum Package",
+  "publisher": "AL Runner Fixtures",
+  "version": "1.0.0.0",
+  "brief": "The app of the #5445 missing-enum --tdd reproducer.",
+  "description": "Tests that use enums no app declares.",
+  "dependencies": [],
+  "idRanges": [ { "from": 65360, "to": 65379 } ],
+  "runtime": "14.0",
+  "features": []
+}

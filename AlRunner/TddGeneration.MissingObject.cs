@@ -1,5 +1,5 @@
-// The missing-OBJECT half of --tdd generation: a codeunit (#5431) or a table (#5445) that no app declares, named
-// by a variable type (`Missing: Codeunit "No Such Codeunit"`, `T: Record "No Such Table"`, AL0185).
+// The missing-OBJECT half of --tdd generation: a codeunit (#5431), a table or an enum (#5445) that no app declares, named
+// by a variable type (`Missing: Codeunit "No Such Codeunit"`, `T: Record "No Such Table"`, `K: Enum "No Such Enum"`, AL0185).
 // See docs/tdd-missing-object.md.
 using NavCA = Microsoft.Dynamics.Nav.CodeAnalysis;
 using NavSyntax = Microsoft.Dynamics.Nav.CodeAnalysis.Syntax;
@@ -7,8 +7,8 @@ using NavDiag = Microsoft.Dynamics.Nav.CodeAnalysis.Diagnostics;
 
 namespace AlRunner;
 
-/// <summary>An empty codeunit or a table with one placeholder field --tdd added to a file of the compile because no app
-/// declares it. <see cref="UseSites"/> are the places the tests reach it from (file path and position), found in the
+/// <summary>An empty codeunit or enum, or a table with one placeholder field, --tdd added to a file of the compile
+/// because no app declares it. <see cref="UseSites"/> are the places the tests reach it from (file path and position), found in the
 /// trees before it was added.</summary>
 public sealed record TddMissingObject(TddGeneratedMember Member, IReadOnlyList<(string FilePath, int Position)> UseSites)
 {
@@ -16,9 +16,11 @@ public sealed record TddMissingObject(TddGeneratedMember Member, IReadOnlyList<(
     public const string MemberKind = "codeunit";
     /// <summary>The <see cref="TddGeneratedMember.MemberKind"/> of a generated table (#5445).</summary>
     public const string TableKind = "table";
+    /// <summary>The <see cref="TddGeneratedMember.MemberKind"/> of a generated enum (#5445).</summary>
+    public const string EnumKind = "enum";
 
     /// <summary>True for the kind of an object, as against the kind of a member added to one.</summary>
-    public static bool IsObjectKind(string memberKind) => memberKind is MemberKind or TableKind;
+    public static bool IsObjectKind(string memberKind) => memberKind is MemberKind or TableKind or EnumKind;
 }
 
 public static partial class TddGeneration
@@ -30,6 +32,7 @@ public static partial class TddGeneration
     private sealed record MissingKind(string TypeKeyword, string Word, NavCA.SymbolKind Symbol, string PackageKind);
     private static readonly MissingKind CodeunitKind = new("Codeunit", "codeunit", NavCA.SymbolKind.Codeunit, "Codeunit");
     private static readonly MissingKind TableKind = new("Record", "table", NavCA.SymbolKind.Table, "Table");
+    private static readonly MissingKind EnumKind = new("Enum", "enum", NavCA.SymbolKind.Enum, "Enum");
 
     /// <summary>The name of the one field a generated table is born with, and its primary key (#5445). AL0366: a table
     /// has to have at least one Normal field, so an empty table is not an option; the existing member generation adds
@@ -57,7 +60,7 @@ public static partial class TddGeneration
         var originalTrees = (NavSyntax.SyntaxTree[])trees.Clone();
         var diagnostics = compilation.GetDeclarationDiagnostics().Concat(emitDiagnostics ?? Enumerable.Empty<NavDiag.Diagnostic>());
         // kind word and name (lower case) -> every AL0185 type reference naming it, de-duplicated by position.
-        var byName = new SortedDictionary<string, List<(int TreeIdx, NavSyntax.SubtypedDataTypeSyntax Node, string Name, MissingKind Kind)>>(StringComparer.Ordinal);
+        var byName = new SortedDictionary<string, List<(int TreeIdx, NavCA.SyntaxNode Node, string Name, MissingKind Kind)>>(StringComparer.Ordinal);
         var refused = new HashSet<string>(StringComparer.Ordinal);
         foreach (var diag in diagnostics)
         {
@@ -65,13 +68,29 @@ public static partial class TddGeneration
             if (!diag.Location.IsInSource || diag.Location.SourceTree is not { } tree) continue;
             var treeIdx = Array.IndexOf(originalTrees, tree);
             if (treeIdx < 0) continue;
-            var node = tree.GetRoot().FindToken(diag.Location.SourceSpan.Start).Parent?.AncestorsAndSelf()
-                .OfType<NavSyntax.SubtypedDataTypeSyntax>().FirstOrDefault();
-            if (node == null || node.Span != diag.Location.SourceSpan) continue;
-            var kind = new[] { CodeunitKind, TableKind }.FirstOrDefault(k =>
-                string.Equals(node.TypeName.ValueText, k.TypeKeyword, StringComparison.OrdinalIgnoreCase));
+            var parent = tree.GetRoot().FindToken(diag.Location.SourceSpan.Start).Parent;
+            // `Codeunit "X"` and `Record "X"` are a SubtypedDataTypeSyntax whose span is the diagnostic's; `Enum "X"` is an
+            // EnumDataTypeSyntax whose name reference has it (measured; the keyword is not part of the span).
+            NavCA.SyntaxNode? node;
+            string typeKeyword, written;
+            if (parent?.AncestorsAndSelf().OfType<NavSyntax.SubtypedDataTypeSyntax>().FirstOrDefault() is { } subtyped
+                && subtyped.Span == diag.Location.SourceSpan)
+            {
+                node = subtyped;
+                typeKeyword = subtyped.TypeName.ValueText;
+                written = subtyped.Subtype.ToString().Trim();
+            }
+            else if (parent?.AncestorsAndSelf().OfType<NavSyntax.EnumDataTypeSyntax>().FirstOrDefault() is { } enumType
+                && enumType.EnumTypeName.Span == diag.Location.SourceSpan)
+            {
+                node = enumType;
+                typeKeyword = "Enum";
+                written = enumType.EnumTypeName.ToString().Trim();
+            }
+            else continue;
+            var kind = new[] { CodeunitKind, TableKind, EnumKind }.FirstOrDefault(k =>
+                string.Equals(typeKeyword, k.TypeKeyword, StringComparison.OrdinalIgnoreCase));
             if (kind == null) continue;
-            var written = node.Subtype.ToString().Trim();
             var name = Unquote(written);
             if (!IsPlainObjectName(written, name))
             {
@@ -88,6 +107,7 @@ public static partial class TddGeneration
         var idRanges = TddPrecompiledStub.ReadIdRanges(manifestAppJsonPath);
         var reservedCodeunits = new HashSet<int>();
         var reservedTables = new HashSet<int>();
+        var reservedEnums = new HashSet<int>();
         var tablesToRefresh = new List<(int Id, string Text)>();
         var appended = new Dictionary<int, System.Text.StringBuilder>();
         var result = new List<TddMissingObject>();
@@ -97,6 +117,7 @@ public static partial class TddGeneration
             var name = sites[0].Name;
             var kind = sites[0].Kind;
             var isTable = kind == TableKind;
+            var isEnum = kind == EnumKind;
             void Refuse(string reason) => Console.Error.WriteLine($"--tdd: {kind.Word} {Quote(name)} not generated - {reason}");
             try
             {
@@ -105,7 +126,8 @@ public static partial class TddGeneration
                     Refuse($"a {kind.Word} of that name exists in a module or namespace this code does not reach, and an empty one would shadow it");
                     continue;
                 }
-                if ((isTable ? TddCrossBundle.RunDeclaresTable(name) : TddCrossBundle.RunDeclaresCodeunit(name)) is { } declaredIn)
+                if ((isTable ? TddCrossBundle.RunDeclaresTable(name) : isEnum ? TddCrossBundle.RunDeclaresEnum(name)
+                        : TddCrossBundle.RunDeclaresCodeunit(name)) is { } declaredIn)
                 {
                     Refuse($"another bundle of the run declares it ({Path.GetFileName(declaredIn)}) - declare the dependency on it; an empty {kind.Word} would shadow it");
                     continue;
@@ -115,15 +137,16 @@ public static partial class TddGeneration
                     Refuse(inPackage);
                     continue;
                 }
-                var id = isTable
-                    ? TddPrecompiledStub.FreeTableId(trees, idRanges, reservedTables)
-                    : TddPrecompiledStub.FreeCodeunitId(trees, idRanges, reservedCodeunits);
+                var reserved = isTable ? reservedTables : isEnum ? reservedEnums : reservedCodeunits;
+                var id = isTable ? TddPrecompiledStub.FreeTableId(trees, idRanges, reserved)
+                    : isEnum ? TddPrecompiledStub.FreeEnumId(trees, idRanges, reserved)
+                    : TddPrecompiledStub.FreeCodeunitId(trees, idRanges, reserved);
                 if (id == null)
                 {
                     Refuse($"no free {kind.Word} id in the app's idRanges for it");
                     continue;
                 }
-                (isTable ? reservedTables : reservedCodeunits).Add(id.Value);
+                reserved.Add(id.Value);
                 var home = sites[0].TreeIdx;
                 if (!appended.TryGetValue(home, out var sb)) appended[home] = sb = new();
                 string objectText;
@@ -134,7 +157,7 @@ public static partial class TddGeneration
                         $"    keys\n    {{\n        key(PK; {field}) {{ Clustered = true; }}\n    }}\n}}\n";
                     tablesToRefresh.Add((id.Value, objectText));
                 }
-                else objectText = $"\ncodeunit {id.Value} {Quote(name)}\n{{\n}}\n";
+                else objectText = $"\n{kind.Word} {id.Value} {Quote(name)}\n{{\n}}\n";
                 sb.Append(objectText);
                 var uses = new List<(string, int)>();
                 foreach (var s in sites) uses.AddRange(UseSitesOf(originalTrees, s.TreeIdx, s.Node));
@@ -244,7 +267,7 @@ public static partial class TddGeneration
 
     /// <summary>Where the code reaches the object from: the type reference itself, and, for a variable declared
     /// outside any procedure (a global of the test codeunit), every mention of its name in the same object.</summary>
-    private static IEnumerable<(string, int)> UseSitesOf(NavSyntax.SyntaxTree[] trees, int treeIdx, NavSyntax.SubtypedDataTypeSyntax node)
+    private static IEnumerable<(string, int)> UseSitesOf(NavSyntax.SyntaxTree[] trees, int treeIdx, NavCA.SyntaxNode node)
     {
         var file = trees[treeIdx].FilePath;
         yield return (file, node.SpanStart);
