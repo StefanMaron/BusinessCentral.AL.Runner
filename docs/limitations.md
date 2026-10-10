@@ -2079,7 +2079,7 @@ So the saving belongs to `application`-floor bundles alone. A platform-only bund
 nothing to skip, and attempting it spends a whole subprocess to save ~620 KB already loaded —
 which is why the skip requires an implicit `Microsoft/Application` root.
 
-### Two conditions the deferral declines under, and why
+### Two conditions the warm skip declines under, and why
 
 The attempt's output is **replayed** on top of the output this process has already produced, so
 it is only safe where the parent has printed nothing the child also prints.
@@ -2094,11 +2094,13 @@ what makes the replay safe without counting lines, which cannot work while every
 re-execs into a shadow-runtime child whose streams are inherited rather than captured (#2375).
 
 What the suppression does **not** cover is anything the child prints directly rather than through
-that queue, and that is why two conditions remain:
+that queue, and that is why two conditions remain on the **#2223 warm skip**:
 
-- **`--verbose`** — the startup narrative includes lines printed directly (shadow re-exec, the
-  #2210 cross-major note), which the child still emits. Measured before #4481: the cross-major note
-  went from one occurrence to two, against a test asserting exactly once.
+- **`--verbose`** — the startup narrative includes lines printed directly, which the child still
+  emits: the shadow re-exec's `[reexec]`/`[Cecil]` lines, `package caches (requested)`, and the
+  #2210 cross-major note when a variant set ships (in the other branch that note is queued, so the
+  child discards it). Measured before #4481: the cross-major note went from one occurrence to two,
+  against a test asserting exactly once.
 - **`--output-json`** — stdout is contracted to hold the JSON document and nothing else, so
   interleaving any replayed text breaks the parse outright.
 
@@ -2108,6 +2110,25 @@ saving. Removing either condition reintroduces the loud duplication, which is wh
 `DeferredPlatformAppsWithholdTests.Verbose_DoesNotReplayAChildsOutput_SoThePreambleIsNotDuplicated`
 all pin it. The quiet-run header is pinned by
 `DeferredPlatformAppsProvisioningTests.ColdDeferral_GreenAttempt_PrintsTheStartupPreambleExactlyOnce`.
+
+**The #2232 cold deferral does not decline under either mode, and handles them differently
+(#5477).** Declining would change the run's verdict, not only its speed: with no platform apps
+on disk the alternative is a download, or the offline refusal, so `--verbose` or `--output-json`
+would turn a green run into an exit 2. Instead:
+
+- **Stdout.** The parent points `Console.Out` at stderr under `--output-json` and keeps the real
+  stdout for the final document. The attempt child does the same, so its JSON arrives as a
+  non-error line; `Replay` writes non-error lines to that saved stdout, never to `Console.Out`.
+  Before #5477 the document landed on stderr and stdout was empty, with exit 0.
+- **Direct prints.** At the point the child has caught up with the parent (the `#2232` child branch
+  in `Program.cs`) it writes `DeferredPlatformAppsAttempt.BeginMarker` to both streams, and
+  `Replay` drops each stream's lines up to its marker: those are second copies of what the parent
+  printed itself. A stream with no marker is replayed whole, so a child that never reaches the
+  marker costs duplicated lines, not lost ones. Pinned by `DeferredPlatformAppsReplayTests` and
+  the `ColdDeferral_GreenAttempt_*` tests in `DeferredPlatformAppsProvisioningTests`.
+
+What a `--verbose` cold run still shows twice is each process's own runtime log (the parent and the
+child each boot a runtime and say so); those are two events, not one printed twice.
 
 
 ## Known gaps — in scope but not yet implemented

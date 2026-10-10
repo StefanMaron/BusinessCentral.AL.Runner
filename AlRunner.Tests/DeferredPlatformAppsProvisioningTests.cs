@@ -71,6 +71,15 @@ public sealed class DeferredPlatformAppsProvisioningTests
 
     private static (string Output, int Exit) RunIsolated(string bundleDir, string scratchRoot, params string[] extraArgs)
     {
+        var r = RunIsolatedSplit(bundleDir, scratchRoot, extraArgs);
+        return (r.Merged, r.Exit);
+    }
+
+    /// <summary>The same run with stdout and stderr kept apart, for the tests whose claim is WHICH
+    /// stream a line is on (#5477). <c>Merged</c> is the interleaving <see cref="RunIsolated"/> reports.</summary>
+    private static (string Stdout, string Stderr, string Merged, int Exit) RunIsolatedSplit(
+        string bundleDir, string scratchRoot, params string[] extraArgs)
+    {
         var realServiceTierDir = RealServiceTierDir();
         TestArtifacts.SkipIf(!Directory.Exists(realServiceTierDir),
             $"real BC service-tier dir not provisioned at '{realServiceTierDir}'.");
@@ -100,15 +109,17 @@ public sealed class DeferredPlatformAppsProvisioningTests
         // would make this process the child and skip the gate unconditionally.
         psi.Environment.Remove(AlRunner.Infrastructure.ProvisioningCheck.DeferredPlatformAppsEnvVar);
 
-        var sb = new StringBuilder();
+        var merged = new StringBuilder();
+        var stdout = new StringBuilder();
+        var stderr = new StringBuilder();
         using var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
+        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (merged) { merged.AppendLine(e.Data); stdout.AppendLine(e.Data); } };
+        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (merged) { merged.AppendLine(e.Data); stderr.AppendLine(e.Data); } };
         p.BeginOutputReadLine();
         p.BeginErrorReadLine();
         if (!p.WaitForExit(300_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
         p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
+        lock (merged) return (stdout.ToString(), stderr.ToString(), merged.ToString(), p.ExitCode);
     }
 
     private static void WithScratch(string name, Action<string> body)
@@ -186,6 +197,80 @@ public sealed class DeferredPlatformAppsProvisioningTests
             Assert.True(expectations == 1,
                 $"`[expectations] loaded` printed {expectations} time(s), expected 1 (#4481).\n{output}");
             Assert.Contains("passed 1 ", output);
+        });
+    }
+
+    private const string GreenBody = """
+        Row."No." := 7; Row.Txt := 'seven'; Row.Insert(true);
+        Row.Get(7);
+        if Row.Txt <> 'seven' then
+            Error('expected seven, got %1', Row.Txt);
+        """;
+
+    /// <summary>
+    /// #5477: <c>--output-json</c> contracts stdout to hold the JSON document and nothing else.
+    /// The cold deferral replayed the attempt child's stdout through <c>Console.Out</c>, which the
+    /// parent has already pointed at stderr for this mode, so stdout came out EMPTY and the document
+    /// landed on stderr with exit 0. Both directions are pinned: the document is on stdout, parses as
+    /// one JSON value, and records the run's outcome; and nothing diagnostic shares that stream.
+    /// </summary>
+    [SkippableFact]
+    public void ColdDeferral_GreenAttempt_OutputJson_StdoutIsExactlyTheJsonDocument()
+    {
+        TestArtifacts.SkipIfMissing();
+        WithScratch("al-runner-5477-json", scratch =>
+        {
+            var bundle = WriteBundle(Path.Combine(scratch, "bundle"), 61992, GreenBody);
+
+            var (stdout, stderr, merged, exit) = RunIsolatedSplit(bundle, scratch, "--output-json");
+
+            Assert.True(exit == 0, $"expected a green deferred run. exit={exit}\n{merged}");
+            // The deferral path, not a run with the apps present, and its note stays a diagnostic.
+            Assert.Contains(DeferredGreenNote, stderr);
+            Assert.DoesNotContain(DeferredGreenNote, stdout);
+            Assert.False(string.IsNullOrWhiteSpace(stdout),
+                $"--output-json left stdout empty on the deferred path (#5477).\nstderr:\n{stderr}");
+            using var doc = System.Text.Json.JsonDocument.Parse(stdout);
+            Assert.Equal(System.Text.Json.JsonValueKind.Object, doc.RootElement.ValueKind);
+            // The document describes THIS run: its test, passed, and the exit code the process took.
+            Assert.Equal(0, doc.RootElement.GetProperty("exitCode").GetInt32());
+            Assert.Contains("TheTest", stdout);
+            // And the document is not ALSO on stderr: one copy, on the contracted stream.
+            Assert.DoesNotContain("\"exitCode\"", stderr);
+        });
+    }
+
+    /// <summary>
+    /// #5477, the sibling shape: under <c>--verbose</c> the parent has already printed lines directly
+    /// (outside the queued startup preamble), and the attempt child prints the same ones again; the
+    /// replay put both in front of the user. Each such line must show once. Deliberately NOT "no line
+    /// repeats": a verbose run legitimately repeats its own internal logs within one process, and two
+    /// processes each boot a runtime and say so.
+    /// </summary>
+    [SkippableFact]
+    public void ColdDeferral_GreenAttempt_Verbose_DirectlyPrintedLinesAppearOnce()
+    {
+        TestArtifacts.SkipIfMissing();
+        WithScratch("al-runner-5477-verbose", scratch =>
+        {
+            var bundle = WriteBundle(Path.Combine(scratch, "bundle"), 61994, GreenBody);
+
+            var (output, exit) = RunIsolated(bundle, scratch, "--verbose");
+
+            Assert.True(exit == 0, $"expected a green deferred run. exit={exit}\n{output}");
+            Assert.Contains(DeferredGreenNote, output);
+            var lines = output.Split('\n').Select(l => l.TrimEnd('\r').Trim()).Where(l => l.Length > 0).ToList();
+            // Printed by Program.cs's own top-level flow, before the deferral decision.
+            string[] startupNarrative = ["[Cecil]", "[reexec]", "[bc]", "[expectations]", "al-runner ", "package caches"];
+            var narrative = lines.Where(l => startupNarrative.Any(p => l.StartsWith(p, StringComparison.Ordinal))).ToList();
+            Assert.Contains(narrative, l => l.StartsWith("package caches (requested)", StringComparison.Ordinal));
+            var repeated = narrative.GroupBy(l => l).Where(g => g.Count() > 1)
+                .Select(g => $"{g.Count()}x  {g.Key}").ToList();
+            Assert.True(repeated.Count == 0,
+                "these verbose startup lines were printed more than once on the deferred path (#5477):\n"
+                + string.Join("\n", repeated) + $"\n--- full output ---\n{output}");
+            // The marker that makes this possible is protocol between the two processes, never output.
+            Assert.DoesNotContain("deferred-attempt-begin", output);
         });
     }
 
