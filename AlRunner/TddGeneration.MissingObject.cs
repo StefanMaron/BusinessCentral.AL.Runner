@@ -41,8 +41,8 @@ public static partial class TddGeneration
     internal const string PlaceholderKeyField = "TDD Key";
 
     /// <summary>
-    /// A codeunit named by a variable type that no app declares gets an EMPTY object with that name, appended to
-    /// the first file (in file order) that names it, with the first id of the app's <c>idRanges</c> that no codeunit
+    /// A codeunit or an enum (a table: one placeholder field) named by a variable type that no app declares gets an object with that name, appended to
+    /// the first file (in file order) that names it, with the first id of the app's <c>idRanges</c> that no object of that type
     /// of the compile uses. Nothing of any other object is touched. The caller recompiles; the call sites then
     /// report the members they need as AL0132 against the new object, and <see cref="Generate"/> adds them as for
     /// any object of the app.

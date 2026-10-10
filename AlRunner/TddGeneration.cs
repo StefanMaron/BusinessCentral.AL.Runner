@@ -16,7 +16,7 @@
 // (TddCrossBundle.cs), recompiled by re-running the cycle. A procedure of a codeunit declared by neither
 // (a package's: .app symbols, a DLL or embedded source) is stubbed BESIDE the object in a new codeunit of
 // this compile, never in it (#5037, TddPrecompiledStub.cs, docs/tdd-precompiled.md); any other symbol
-// declared by neither, or one BC couldn't resolve at all, is refused for a structural reason. A codeunit or a table no app
+// declared by neither, or one BC couldn't resolve at all, is refused for a structural reason. A codeunit, a table or an enum no app
 // declares at all (AL0185) is first added as an object of the compile (TddGeneration.MissingObject.cs,
 // docs/tdd-missing-object.md), and the members its calls need are then generated as for any object. And because
 // generation runs strictly BEFORE the

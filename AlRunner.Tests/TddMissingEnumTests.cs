@@ -152,6 +152,12 @@ public sealed class TddMissingEnumTests : IDisposable
         Assert.Equal(new[] { "Zulu Nowhere Status: enum 65360" }, TddMissingObjectTests.StubsOf(control));
         Assert.Contains("--tdd: enum \"Package Only Status\" not generated - the package Tdd Package Only 1.0.0.0 (AL_Runner_Fixtures_Tdd_Package_Only_1.0.0.0.app) declares it - if the test means that enum, add the dependency on it to app.json; if it means a new one, give it another name; an empty enum would shadow it", stderr);
         Assert.DoesNotContain("--tdd: generated enum \"Package Only Status\"", stderr);
+        // An enum written as an id is refused by name, and no enum of that name is generated.
+        var idName = tests.Single(t => t.GetProperty("name").GetString()!.EndsWith(".EnumWrittenAsAnId_IsRefused"));
+        Assert.Equal("fail", idName.GetProperty("status").GetString());
+        Assert.Contains("error AL0185: Enum '65999' is missing", idName.GetProperty("message").GetString());
+        Assert.Contains("--tdd: enum \"65999\" not generated - it is named by an id or with a namespace, and only a plain name is generated", stderr);
+        Assert.DoesNotContain("--tdd: generated enum \"65999\"", stderr);
         Assert.Equal(before, TddMissingObjectTests.HashTree(app));
     }
 

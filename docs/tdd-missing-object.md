@@ -1,4 +1,4 @@
-# `--tdd` and a codeunit or table that no app declares (#5431, #5445)
+# `--tdd` and a codeunit, table or enum that no app declares (#5431, #5445)
 
 `al-runner --tdd test`, where a test names a codeunit that exists in no app of the run:
 
@@ -69,6 +69,38 @@ begin T."Amount" := 5; T.Insert(); end;
   bundle of the run (`TddCrossBundle.RunDeclaresTable`: a `table <id> "Name"` declaration, never a `tableextension`), in a
   package (readable or not, `FindPackageDeclaringObject` with the symbol cache's kind `Table`; a package's CODEUNIT of the
   name does not block a table, nor its table a codeunit), a name written as an id or with a namespace, no free table id.
+
+## An enum (#5445)
+
+```al
+[Test] procedure UsesAnEnum()
+var K: Enum "No Such Enum";
+begin K := K::Open; K := Enum::"No Such Enum"::Closed; end;
+```
+
+`error AL0185: Enum 'No Such Enum' is missing`, handled like the codeunit above, with these differences:
+
+- **The shape.** An EMPTY enum compiles (measured), so it starts empty: no placeholder value is invented. The existing member
+  generation adds the values the tests name, in the repeat compile, exactly as for an enum the app declares: `K::Open` and
+  `Enum::"X"::Open` both generate a value, numbered from 0 in the order the code names them (file, then position). Cost: the
+  first value named takes ordinal 0, which is what a variable of the type holds before it is assigned, so a test asserting a
+  fresh variable differs from the first value it names proves nothing here. The annotation names the generated enum and each
+  value (`No Such Enum: enum 65322`, `No Such Enum: enum value "Open" = 0`).
+- **Where the AL0185 sits.** `Enum "X"` is an `EnumDataTypeSyntax` whose name reference carries the diagnostic, not the
+  `SubtypedDataTypeSyntax` of a `Codeunit "X"` / `Record "X"` (measured), so the diagnostic is matched to either shape.
+- **Ids** come from the same `idRanges`, free for ENUMS only (`TddPrecompiledStub.FreeEnumId`): a codeunit or a table holding
+  the same number does not take it. A codeunit, a table and an enum may share a name, and each is generated and annotated on
+  its own; a missing value goes to the enum (`TddGeneration.TryGenerate` matches the object by name AND type).
+- **Refused** like a codeunit, with the enum's words: an enum of that name in another module or namespace, in another bundle
+  of the run (`TddCrossBundle.RunDeclaresEnum`: an `enum <id> "Name"` declaration, never an `enumextension`), in a package
+  (readable or not, `FindPackageDeclaringObject` with the symbol cache's kind `Enum`; a package's codeunit or table of the name
+  does not block an enum, nor its enum a codeunit or a table), a name written as an id or with a namespace
+  (`Enum Ns."X"`), no free enum id.
+- **No record-engine refresh.** Unlike a table, an enum is compiled from the trees, so nothing but the trees is handed on.
+
+An enum named only by `Enum::"X"::Value`, with no variable, parameter or field of the type, is **AL0118** and not AL0185
+(measured), so nothing is generated and the file is FAILED naming that diagnostic. Likewise a package's enum that `app.json`
+does not list stays AL0185, FAILED, with the package named.
 
 ## Refused, and the run says why (`--tdd: codeunit "X" not generated - ...`)
 
@@ -146,15 +178,16 @@ dependency is AL0185.
 - **Two phases, because AL0185 hides everything else.** The first compile throws, so there are no AL0132s to read;
   the object is added from the declaration diagnostics (`GetDeclarationDiagnostics`), the compile is repeated, and
   the AL0132s of the repeat are generated as usual (`BcCompiler`, `TddRecompile`). A second AL0185 this does not
-  generate (a `Record "X"`, a page, an enum, a refused name) in ANY file of the same compile makes the repeat throw
+  generate (a page, a report, a refused name) in ANY file of the same compile makes the repeat throw
   again, so the members of the objects that were generated are not added either. The objects are still reported (#5447).
-  A table or codeunit is no longer such a second AL0185 once it is generated (#5445).
+  A table, codeunit or enum is no longer such a second AL0185 once it is generated (#5445).
 - `Run` on the new object is the codeunit's own `Run`, never a generated procedure.
 
 ## Not covered
 
-A page, enum, report, query, xmlport or interface that no app declares (#5445 keeps them; each needs its own inference: a
-page its source table and controls, an enum its values from `Enum::"X"::Value`, an interface its procedures and an
-implementer); a codeunit named only by `Codeunit::"X"` or a table only by `TableNo = "X"`, `RecordRef.Open(...)` or a
-property, with no variable of that type; a table's primary key and its field types beyond what `Rec.Field := x` fixes;
-a second table, codeunit or any member generated into a bundle other than the one that names the object.
+A page, report, query, xmlport or interface that no app declares (#5445 keeps them; each needs its own inference: a page its
+source table and controls, an interface its procedures and an implementer); an enum named only by `Enum::"X"::Value`, a
+codeunit named only by `Codeunit::"X"` or a table only by `TableNo = "X"`, `RecordRef.Open(...)` or a property, with no
+variable of that type; a table's primary key and its field types beyond what `Rec.Field := x` fixes; an enum's captions,
+`Extensible` and implemented interfaces; a second table, codeunit, enum or any member generated into a bundle other than the
+one that names the object.
