@@ -263,6 +263,8 @@ public class AffectedEventSelectionTests
         Assert.Null(Reason(
             O("Codeunit", 1, "C"), O("Page", 2, "P"), O("Report", 3, "R"), O("Query", 4, "Q"),
             O("XmlPort", 5, "X"), O("Table", 6, "T"), O("TableExtension", 7, "TE"), O("PageExtension", 8, "PE"),
+            // #5452: keyed through All Profile (AffectedMetadataTables); id-less, declared by name.
+            O("Profile", null, "Kind Profile"),
             // #5076: keyed through the permission tables (AffectedMetadataTables).
             O("PermissionSet", 9, "PS"), O("PermissionSetExtension", 12, "PSE"),
             // #5088: keyed through its base report (ChangedReportExtensionKeys).
@@ -275,8 +277,8 @@ public class AffectedEventSelectionTests
         // A kind nothing here knows, and one declared by name only: never "changed but selects nothing".
         Assert.Equal("SomeFutureKind 11 changed, and no test recording holds the use of this kind of object (SomeFutureKind)",
             Reason(O("SomeFutureKind", 11, "F")));
-        Assert.Equal("Profile Kind Profile changed, and no test recording holds the use of this kind of object (Profile)",
-            Reason(O("Profile", null, "Kind Profile")));
+        Assert.Equal("ProfileExtension Kind ProfileExt changed, and no test recording holds the use of this kind of object (ProfileExtension)",
+            Reason(O("ProfileExtension", null, "Kind ProfileExt")));
         // An interface's extends list decides what `is`/`as` answer for implementers nobody edited.
         Assert.Equal("Interface Probe I changed, and no test recording holds the use of this kind of object (Interface)",
             Reason(O("Interface", null, "Probe I")));

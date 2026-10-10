@@ -14,8 +14,6 @@ internal static class AffectedMetadataTables
     {
         /// <summary>Rows list the objects of <see cref="Entry.Kinds"/> (every kind when null): a whole-object change of one keys the table.</summary>
         ObjectListing,
-        /// <summary>Rows come from kinds that <see cref="AffectedEventSelection.UnkeyedKindChange"/> already turns into a full run.</summary>
-        UnkeyedKind,
         /// <summary>Rows come from the host, the session, a fixed BC list or the runtime, not from AL objects.</summary>
         NotObjectDerived,
     }
@@ -27,6 +25,7 @@ internal static class AffectedMetadataTables
 
     private static readonly string[] TableKinds = { "Table", "TableExtension" };
     private static readonly string[] PageKinds = { "Page", "PageExtension" };
+    private static readonly string[] ProfileListingKinds = { "Profile", "Page" };
     private static readonly string[] PermissionKinds = { "PermissionSet", "PermissionSetExtension" };
 
     /// <summary>
@@ -46,7 +45,9 @@ internal static class AffectedMetadataTables
         new("PageActionVirtualTable", new[] { 2000000143 }, Source.ObjectListing, PageKinds, "one row per action of each page, those a pageextension adds included"),
         new("QueryMetadataVirtualTable", new[] { 2000000142 }, Source.ObjectListing, new[] { "Query" }, "one row per query"),
         new("XmlPortMetadataVirtualTable", new[] { 2000000280 }, Source.ObjectListing, new[] { "XmlPort" }, "one row per xmlport"),
-        new("AllProfileVirtualTable", new[] { 2000000178 }, Source.UnkeyedKind, new[] { "Profile" }, "one row per profile object"),
+        // #5452: the RoleCenter page NAME of each row is resolved to a page id (RecordPatches.PageIdsByName),
+        // so renumbering or renaming a page changes the rows too. Nothing else reads a declared profile.
+        new("AllProfileVirtualTable", new[] { 2000000178 }, Source.ObjectListing, ProfileListingKinds, "one row per profile object, its role center page resolved to an id"),
         new("DateVirtualTable", new[] { 2000000007 }, Source.NotObjectDerived, null, "computed per period"),
         new("EventSubscriptionVirtualTable", new[] { 2000000140 }, Source.ObjectListing, null, "one row per subscriber declared in any object"),
         new("ReportLayoutListVirtualTable", new[] { 2000000234 }, Source.ObjectListing, new[] { "Report" }, "the layouts each report declares"),

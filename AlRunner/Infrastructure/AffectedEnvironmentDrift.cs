@@ -362,8 +362,8 @@ internal static class AffectedEnvironmentDrift
                 if (r.ForceFullReason != null) unattributed.Add(r.ForceFullReason);
                 continue;
             }
-            // #5076: read only through the permission tables, which the metadata keys above already select on.
-            if (o.Kind is "PermissionSet" or "PermissionSetExtension") continue;
+            // #5076, #5452: read only through the permission tables and All Profile, which the metadata keys above select on.
+            if (o.Kind is "PermissionSet" or "PermissionSetExtension" or "Profile") continue;
             unattributed.Add($"{Display(o)} changed, and no test recording holds the use of this kind of object ({o.Kind})");
         }
         return new EnvironmentDriftKeys(coverage, events, unattributed);

@@ -1104,8 +1104,13 @@ its kind. `AffectedMetadataTables.Population` classifies **every** table
   these tables: the runner answers every permission check as SUPER whatever the sets declare
   (#5076; `RecordPatches.EffectivePermissionForObject.cs` has the list of rewrites), so a
   permission set is keyed here and nowhere else;
-- rows from kinds that still force a full run (a profile, "affectedOnly and object kinds no
-  test records"), so nothing is keyed;
+- rows that list profiles (`Profile`): `All Profile`. A declared profile reaches a test only
+  through this table (#5452; the profile parser and the dependency symbol read feed no other
+  consumer, and a `profile` has no id, so no instance or procedure of it can be recorded). It
+  also lists `Page`: each row's `Role Center ID` is the id of the page the profile names, so a
+  changed page selects the tests that read `All Profile`. A `ProfileExtension` is not read by
+  the table at all and stays one of the kinds that force a full run ("affectedOnly and object
+  kinds no test records");
 - rows not derived from AL objects (host time zones and cultures, the session, a fixed
   BC list, the code coverage log, ...), so nothing is keyed.
 
@@ -1148,11 +1153,15 @@ selects nothing while a full run would fail a test. This covers:
   own methods, and a proof that the incremental compile re-emits callers whose enum
   ordinals changed; neither exists, so these stay a full run (and `approximate` across
   environments);
-- a `Profile`, `PageCustomization`, `ControlAddIn`, `Entitlement`, and any kind not listed above.
+- a `ProfileExtension`, `PageCustomization`, `ControlAddIn`, `Entitlement`, and any kind not listed above.
 
 A `PermissionSet` or `PermissionSetExtension` is not one of them (#5076): the permission
 tables are the only thing that reads a declared set, so it selects the tests that read those
 tables, as in "affectedOnly and metadata virtual tables".
+
+A `Profile` is not one of them either (#5452): `All Profile` is the only thing that reads a
+declared profile, so it selects the tests that read that table, as in "affectedOnly and metadata
+virtual tables".
 
 A `ReportExtension` is not one of them either (#5088): it selects the tests that ran its base
 report, as in "affectedOnly and report extensions".

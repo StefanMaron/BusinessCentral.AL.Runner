@@ -61,6 +61,16 @@ public class ServerAffectedSelectionMetadataTableTests
         => "permissionset 60799 \"MetaSel Perm SX\"\n{\n    Assignable = true;\n    Caption = 'MetaSel Perm';\n"
            + "    Permissions = codeunit \"MetaSel Unrelated SX\" = X" + extra + ";\n}\n";
 
+    // #5452: All Profile lists the profiles the apps declare, and resolves each one's RoleCenter page name to a
+    // page id, so the page is a row source of it too.
+    private static string Profile(string caption)
+        => "profile \"MetaSel Profile SX\"\n{\n    Caption = '" + caption + "';\n    RoleCenter = \"MetaSel RC SX\";\n}\n";
+
+    private static string RoleCenter(string caption = "")
+        => "page 60794 \"MetaSel RC SX\"\n{\n    PageType = RoleCenter;\n"
+           + (caption == "" ? "" : "    Caption = '" + caption + "';\n") + "    layout\n    {\n"
+           + "        area(RoleCenter)\n        {\n        }\n    }\n}\n";
+
     private const string NewCodeunit = "codeunit 60797 \"MetaSel New SX\"\n{\n}\n";
 
     private static string Unrelated(string body = "exit(7);")
@@ -140,6 +150,33 @@ public class ServerAffectedSelectionMetadataTableTests
             end;
 
             [Test]
+            procedure ReadsAllProfile()
+            var
+                P: Record "All Profile";
+                ThisModule: ModuleInfo;
+            begin
+                NavApp.GetCurrentModuleInfo(ThisModule);
+                if P.Get(P.Scope::Tenant, ThisModule.Id(), 'MetaSel Profile SX') then
+                    Error('PROBE-PROFILE %1 %2', P.Caption, P."Role Center ID");
+            end;
+
+            [Test]
+            procedure ReadsAllProfileViaRecordRef()
+            var
+                R: RecordRef;
+                F: FieldRef;
+                i: Integer;
+            begin
+                R.Open(Database::"All Profile");
+                for i := 1 to R.FieldCount() do
+                    if R.FieldIndex(i).Name() = 'Profile ID' then
+                        F := R.FieldIndex(i);
+                F.SetRange('MetaSel Profile SX');
+                if R.FindFirst() then
+                    Error('PROBE-PROFILEREF');
+            end;
+
+            [Test]
             procedure Unrelated()
             var
                 U: Codeunit "MetaSel Unrelated SX";
@@ -170,9 +207,11 @@ public class ServerAffectedSelectionMetadataTableTests
 
     private static readonly string[] All =
     {
-        "ReadsAggregatePermissionSet", "ReadsAllObj", "ReadsAllObjWithCaption", "ReadsCodeunitMetadata", "ReadsPageControlField",
-        "ReadsPermissionSetTable", "ReadsTableMetadata", "Unrelated",
+        "ReadsAggregatePermissionSet", "ReadsAllObj", "ReadsAllObjWithCaption", "ReadsAllProfile", "ReadsAllProfileViaRecordRef",
+        "ReadsCodeunitMetadata", "ReadsPageControlField", "ReadsPermissionSetTable", "ReadsTableMetadata", "Unrelated",
     };
+
+    private static readonly string[] ProfileReaders = { "ReadsAllObj", "ReadsAllObjWithCaption", "ReadsAllProfile", "ReadsAllProfileViaRecordRef" };
 
     private static string Bundle(string prefix)
     {
@@ -192,6 +231,7 @@ public class ServerAffectedSelectionMetadataTableTests
         """);
         Write(dir, "Tab.Table.al", Table);
         Write(dir, "Page.Page.al", Page);
+        Write(dir, "RC.Page.al", RoleCenter());
         Write(dir, "Unrelated.Codeunit.al", Unrelated());
         Write(dir, "Tests.Codeunit.al", Tests);
         return dir;
@@ -232,7 +272,8 @@ public class ServerAffectedSelectionMetadataTableTests
     private static void AssertSelected(Observed o, string[] expected, params (string Test, string Probe)[] failing)
     {
         Assert.False(o.ForcedFull, o.Raw);
-        Assert.Equal(expected.OrderBy(x => x, StringComparer.Ordinal), o.Ran);
+        Assert.True(expected.OrderBy(x => x, StringComparer.Ordinal).SequenceEqual(o.Ran),
+            $"expected [{string.Join(", ", expected.OrderBy(x => x, StringComparer.Ordinal))}], ran [{string.Join(", ", o.Ran)}]: {o.Raw}");
         foreach (var t in expected)
         {
             var probe = failing.Where(f => f.Test == t).Select(f => f.Probe).FirstOrDefault();
@@ -288,6 +329,25 @@ public class ServerAffectedSelectionMetadataTableTests
         File.Delete(Path.Combine(bundle, "Ext.PageExt.al"));
         AssertSelected(await Send(server, bundle), new[] { "ReadsAllObj", "ReadsAllObjWithCaption", "ReadsPageControlField" });
 
+        // #5452: a profile is a row of All Profile (and of AllObj and AllObjWithCaption, which list every kind), and
+        // of no other table read here, by whichever route the test reads it. Its RoleCenter page is resolved to
+        // an id, so a change of that page selects the readers too (a renumbering is a full run before it gets here).
+        var profileReaders = ProfileReaders;
+        Write(bundle, "Prof.Profile.al", Profile("MetaSel Profile A"));
+        AssertSelected(await Send(server, bundle), profileReaders,
+            ("ReadsAllProfile", "PROBE-PROFILE MetaSel Profile A 60794"), ("ReadsAllProfileViaRecordRef", "PROBE-PROFILEREF"));
+
+        Write(bundle, "Prof.Profile.al", Profile("MetaSel Profile B"));
+        AssertSelected(await Send(server, bundle), profileReaders,
+            ("ReadsAllProfile", "PROBE-PROFILE MetaSel Profile B 60794"), ("ReadsAllProfileViaRecordRef", "PROBE-PROFILEREF"));
+
+        Write(bundle, "RC.Page.al", RoleCenter("MetaSel RC Changed"));
+        AssertSelected(await Send(server, bundle), profileReaders.Append("ReadsPageControlField").ToArray(),
+            ("ReadsAllProfile", "PROBE-PROFILE MetaSel Profile B 60794"), ("ReadsAllProfileViaRecordRef", "PROBE-PROFILEREF"));
+
+        File.Delete(Path.Combine(bundle, "Prof.Profile.al"));
+        AssertSelected(await Send(server, bundle), profileReaders);
+
         // #5076: a permission set is a row of Permission Set and Aggregate Permission Set (and of AllObj
         // and AllObjWithCaption, which list every kind), and of no other table read here.
         var permissionReaders = new[] { "ReadsAggregatePermissionSet", "ReadsAllObj", "ReadsAllObjWithCaption", "ReadsPermissionSetTable" };
@@ -321,10 +381,11 @@ public class ServerAffectedSelectionMetadataTableTests
             Assert.Contains(probe, held.Line[t], StringComparison.Ordinal);
         }
     }
-    // #5076 on #5007's path: the permission set changes while no server runs, so the persisted baseline's
-    // diff names it, and a third server on the same cache root (warm) finds nothing left to run.
+    // #5076, #5452 on #5007's path: the permission set changes and a profile appears while no server runs, so
+    // the persisted baseline's diff names them, and a third server on the same cache root (warm) finds nothing
+    // left to run.
     [SkippableFact]
-    public async Task NextServer_ChangedPermissionSet_SelectsTheTestsReadingThePermissionTables()
+    public async Task NextServer_ChangedPermissionSetAndProfile_SelectTheTestsReadingTheirTables()
     {
         TestArtifacts.SkipIfMissing();
         var bundle = Bundle("al-runner-server-affected-metasel-persist");
@@ -343,9 +404,12 @@ public class ServerAffectedSelectionMetadataTableTests
         Assert.True(baseline.Status["ReadsAggregatePermissionSet"] == "fail", baseline.Raw);
         Assert.True(baseline.Status["ReadsPermissionSetTable"] == "fail", baseline.Raw);
 
+        // #5452: a profile is added in the same step, so the one warm run below also proves it was recorded.
         Write(bundle, "Perm.PermissionSet.al", PermissionSet(",\n        table \"MetaSel Tab SX\" = X"));
-        AssertSelected(await Fresh(), new[] { "ReadsAggregatePermissionSet", "ReadsAllObj", "ReadsAllObjWithCaption", "ReadsPermissionSetTable" },
-            ("ReadsAggregatePermissionSet", "PROBE-AGGPERM"), ("ReadsPermissionSetTable", "PROBE-PERMSET"));
+        Write(bundle, "Prof.Profile.al", Profile("MetaSel Profile A"));
+        AssertSelected(await Fresh(), ProfileReaders.Concat(new[] { "ReadsAggregatePermissionSet", "ReadsPermissionSetTable" }).ToArray(),
+            ("ReadsAggregatePermissionSet", "PROBE-AGGPERM"), ("ReadsPermissionSetTable", "PROBE-PERMSET"),
+            ("ReadsAllProfile", "PROBE-PROFILE MetaSel Profile A 60794"), ("ReadsAllProfileViaRecordRef", "PROBE-PROFILEREF"));
 
         var warm = await Fresh();
         Assert.False(warm.ForcedFull, warm.Raw);
