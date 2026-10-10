@@ -34,9 +34,10 @@ internal static class DeferredPlatformAppsAttempt
         /// never shown. A stream with no marker is replayed whole: duplicated lines are the cost of
         /// a child that did not reach the marker, and losing output would be worse.
         /// </summary>
-        public void Replay(TextWriter? stdout = null)
+        public void Replay(TextWriter? stdout = null, TextWriter? stderr = null)
         {
             stdout ??= Console.Out;
+            stderr ??= Console.Error;
             var skipOut = FirstMarker(isError: false);
             var skipErr = FirstMarker(isError: true);
             int seenOut = 0, seenErr = 0;
@@ -44,7 +45,7 @@ internal static class DeferredPlatformAppsAttempt
             {
                 var index = isError ? seenErr++ : seenOut++;
                 if (index <= (isError ? skipErr : skipOut)) continue;
-                (isError ? Console.Error : stdout).WriteLine(line);
+                (isError ? stderr : stdout).WriteLine(line);
             }
         }
 
