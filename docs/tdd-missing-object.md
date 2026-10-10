@@ -46,7 +46,10 @@ begin T."Amount" := 5; T.Insert(); end;
   The key is explicit although the compiler accepts a keyless table and the runner gave the same results for both
   (measured), so a compiler that requires one does not change the result. AutoIncrement because no test can name this field to
   give each row its own key: without it a second `Insert` is "The record already exists". Cost: `T.Get(1)` finds the
-  first row inserted, not a row the test keyed; a test that needs its own key values stays unable to say so, loudly.
+  first row inserted, not a row the test keyed. This can pass by coincidence: an Integer the test assigns as its key
+  (`T."Entry No." := 1`) becomes an ordinary NON-KEY field, the row gets the placeholder's key (1 on an empty table), and
+  `T.Get(1)` finds it. Nothing fails, so a test that depends on its own key values proves nothing about them here; the
+  annotation names the generated table so the reader can tell.
 - **Fields.** The existing member generation does the rest in the repeat compile, for a table that is generated exactly
   as for one the app declares: a field is added from `Rec.Field := <typed expression>` and from nothing else. Measured on a
   table that EXISTS and lacks the field (so not specific to this change): `T.Amount := 3` is generated, a field that is

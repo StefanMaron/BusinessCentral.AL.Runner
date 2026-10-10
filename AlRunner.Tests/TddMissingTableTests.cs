@@ -161,6 +161,33 @@ public sealed class TddMissingTableTests : IDisposable
         Assert.Equal(before, TddMissingObjectTests.HashTree(app));
     }
 
+    /// <summary>
+    /// A field the test assigns on a table that bundle "a" declares beside a codeunit of the same name (one file): the
+    /// field is generated into bundle "a"'s TABLE and the test runs to its value. The cross-bundle twin of the
+    /// name-and-type match of <c>TddGeneration.TryGenerate</c>; found by name alone, the codeunit was picked and the
+    /// field refused (AL0132).
+    /// </summary>
+    [SkippableFact]
+    public void CrossBundle_TableSharingANameWithACodeunit_GetsTheFieldOnTheTable()
+    {
+        TestArtifacts.SkipIfMissing();
+        var root = Path.Combine(Fixtures, "TddMissingTableTwinBundles");
+        var a = TddMissingObjectTests.CopyFolder(Path.Combine(root, "a"), Path.Combine(_scratch, "a"));
+        var b = TddMissingObjectTests.CopyFolder(Path.Combine(root, "b"), Path.Combine(_scratch, "b"));
+        var before = TddMissingObjectTests.HashTree(a);
+
+        var (stdout, stderr, exit) = TddMissingObjectTests.RunRunner(null, "--tdd",
+            $"--cache \"{Path.Combine(_scratch, "cache")}\"", "--output-json", $"\"{a}\"", $"\"{b}\"");
+
+        Assert.True(exit == 0, $"exit {exit}\n{stderr}");
+        using var doc = JsonDocument.Parse(stdout.Trim());
+        var t = Assert.Single(TestsOf(doc));
+        Assert.Equal("pass", t.GetProperty("status").GetString());
+        Assert.Equal(new[] { "Twin: field \"Weight\": Integer" }, TddMissingObjectTests.StubsOf(t));
+        Assert.DoesNotContain("AL0132", stdout + stderr);
+        Assert.Equal(before, TddMissingObjectTests.HashTree(a)); // the generation is an in-memory overlay
+    }
+
     private const string LedgerSymbols = """
         "Tables":[{"Id":65400,"Name":"Package Only Ledger","Fields":[{"Id":1,"Name":"Entry No.","TypeDefinition":{"Name":"Integer"}}],
           "Keys":[{"Name":"PK","FieldNames":["Entry No."],"Properties":[]}],"Properties":[]}]
