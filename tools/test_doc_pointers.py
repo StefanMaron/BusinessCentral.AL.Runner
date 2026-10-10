@@ -107,17 +107,43 @@ def slug(heading: str) -> str:
 
 
 _EXPLICIT_ANCHOR = re.compile(r'<a\s+(?:id|name)="([^"]+)"', re.IGNORECASE)
+_ATX_HEADING = re.compile(r"^ {0,3}#{1,6}(?:[ \t]+(?P<text>.*?))?[ \t]*$")
+_FENCE = re.compile(r"^\s*(?P<mark>`{3,}|~{3,})")
+_MD_LINK = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
+_HTML_TAG = re.compile(r"</?[A-Za-z][^>]*>")
 
 
 def anchors_of(markdown: str) -> set[str]:
-    """Both spellings in use under docs/: explicit <a id=".."> and heading slugs."""
+    """The anchors GitHub would give this document (#4480).
+
+    Explicit <a id=".."> / <a name=".."> anywhere, plus one slug per ATX heading, built
+    the way GitHub builds it: link syntax reduced to its text, HTML tags dropped, and a
+    heading repeating an earlier slug gets `-1`, `-2`, ... in document order. A `#` line
+    inside a code fence is not a heading, so it is not an anchor either.
+    """
     found = {a.lower() for a in _EXPLICIT_ANCHOR.findall(markdown)}
+    seen: dict[str, int] = {}
+    fence: str | None = None
     for line in markdown.split("\n"):
-        t = line.lstrip()
-        if t.startswith("#"):
-            # Strip a trailing explicit anchor so "### Title <a id=x></a>" slugs from "Title".
-            text = re.sub(r"<a\s[^>]*>\s*</a>\s*$", "", t.lstrip("#").strip()).strip()
-            found.add(slug(text))
+        f = _FENCE.match(line)
+        if f:
+            mark = f.group("mark")
+            if fence is None:
+                fence = mark[0]
+            elif mark[0] == fence:
+                fence = None
+            continue
+        if fence is not None:
+            continue
+        m = _ATX_HEADING.match(line)
+        if not m or m.group("text") is None:
+            continue
+        text = _HTML_TAG.sub("", _MD_LINK.sub(r"\1", m.group("text")))
+        text = re.sub(r"[ \t]+#+$", "", text).strip()
+        base = slug(text)
+        n = seen.get(base, 0)
+        seen[base] = n + 1
+        found.add(base if n == 0 else f"{base}-{n}")
     return found
 
 
