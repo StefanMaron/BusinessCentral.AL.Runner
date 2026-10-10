@@ -4,8 +4,8 @@ codeunit 51001 "Jobs Tdd Helper"
 {
     trigger OnRun()
     var
-        Missing: Record "This Helper Table Does Not Exist";
+        Missing: Page "This Helper Table Does Not Exist";
     begin
-        Missing.Init();
+        Missing.Run();
     end;
 }
