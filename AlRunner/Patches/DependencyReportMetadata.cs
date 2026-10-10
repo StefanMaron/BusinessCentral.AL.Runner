@@ -160,15 +160,18 @@ public static partial class RecordPatches
     }
 
     private static IEnumerable<BcAppSymbolCache.ReportExtensionSymbol> DependencyReportExtensionsOf(string reportName)
+        => DependencyReportExtensionsWithApp(reportName).Select(e => e.Extension);
+
+    private static IEnumerable<(string AppPath, BcAppSymbolCache.ReportExtensionSymbol Extension)> DependencyReportExtensionsWithApp(string reportName)
     {
-        foreach (var (_, symbols) in EnumerateRegisteredBcAppSymbols("reportextensions (request-page application area)"))
+        foreach (var (appPath, symbols) in EnumerateRegisteredBcAppSymbols("reportextensions (request-page application area)"))
             foreach (var ext in symbols.ReportExtensions ?? (IReadOnlyList<BcAppSymbolCache.ReportExtensionSymbol>)Array.Empty<BcAppSymbolCache.ReportExtensionSymbol>())
                 // A same-numbered source-parsed reportextension wins, as on the page side
                 // (DependencyPageExtensionFieldControls): the project's own compiled .app at the
                 // bundle root is registered as a dependency and declares the very extension being
                 // compiled from source, and its delta document is read instead.
                 if (!_parsedReportExtensions.ContainsKey(ext.Id) && NamesEqual(ext.TargetName, reportName))
-                    yield return ext;
+                    yield return (appPath, ext);
     }
 
     // Two precompiled reportextensions setting one field to different areas refuse: which BC
@@ -386,12 +389,17 @@ public static partial class RecordPatches
         if (string.IsNullOrEmpty(report.ReferenceSourceFileName)) return null;
         var source = BcAppSymbolCache.TryReadSourceFile(appPath, report.ReferenceSourceFileName!);
         if (string.IsNullOrEmpty(source)) return null;
+        return ColumnSourceExpressionsFrom(source!);
+    }
 
+    /// <summary>The same map, read out of already-fetched AL source text.</summary>
+    internal static Dictionary<string, string> ColumnSourceExpressionsFrom(string source)
+    {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (Match m in RxReportColumnHeader.Matches(source!))
+        foreach (Match m in RxReportColumnHeader.Matches(source))
         {
             var name = m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value;
-            var expr = ReadColumnExpression(source!, m.Index + m.Length);
+            var expr = ReadColumnExpression(source, m.Index + m.Length);
             // First declaration wins: a report and a reportextension in one file may both
             // declare a column of the same name, and the report's own is the one whose id
             // the symbol file carries.
@@ -702,7 +710,7 @@ public static partial class RecordPatches
 
     private static void WriteDataItem(
         XmlWriter w, BcAppSymbolCache.ReportDataItemSymbol di, Dictionary<string, string>? sourceExprByColumn,
-        string? enclosingDataItemName)
+        string? enclosingDataItemName, bool stateFieldNoOfComputedColumns = false)
     {
         int tableId = ResolveTableIdByName(di.RelatedTable);
 
@@ -750,14 +758,14 @@ public static partial class RecordPatches
             w.WriteElementString("ReqFilterFields", di.RequestFilterFields);
 
         foreach (var col in di.Columns ?? new List<BcAppSymbolCache.ReportColumnSymbol>())
-            WriteDataItemField(w, col, tableId, sourceExprByColumn);
+            WriteDataItemField(w, col, tableId, sourceExprByColumn, stateFieldNoOfComputedColumns);
 
         w.WriteEndElement();
     }
 
     private static void WriteDataItemField(
         XmlWriter w, BcAppSymbolCache.ReportColumnSymbol col, int tableId,
-        Dictionary<string, string>? sourceExprByColumn)
+        Dictionary<string, string>? sourceExprByColumn, bool stateFieldNoOfComputedColumns)
     {
         string? sourceExpr = null;
         sourceExprByColumn?.TryGetValue(col.Name, out sourceExpr);
@@ -777,6 +785,10 @@ public static partial class RecordPatches
             int fieldNo = TryResolveFieldNoForExpression(tableId, sourceExpr);
             if (fieldNo > 0)
                 w.WriteElementString("FieldNo", fieldNo.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            // BC's emitter states -1 for a computed column (captured: PrecompiledReportExtensionDeltaTests).
+            // Only a reportextension's data items say so (#4837); a report's own leave it out, as before.
+            else if (stateFieldNoOfComputedColumns)
+                w.WriteElementString("FieldNo", "-1");
         }
         if (sourceExpr != null)
             w.WriteElementString("SourceExpr", sourceExpr);
