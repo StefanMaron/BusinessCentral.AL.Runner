@@ -262,6 +262,46 @@ public sealed class TddMissingObjectPackageProbeTests : IDisposable
         Assert.Contains("so it cannot be ruled out as the home of the table;", reason);
     }
 
+    private const string EnumName = "Nowhere Declared Status";
+    private const string StatusEnum = "\"EnumTypes\":[{\"Id\":65420,\"Name\":\"Nowhere Declared Status\",\"Values\":[],\"Properties\":[]}]";
+
+    /// <summary>#5445, the enum half of the kind check: a package's ENUM of the name is refused, in the enum's words, and a
+    /// package's codeunit or table of the same name does not block it, nor its enum a codeunit or a table.</summary>
+    [Fact]
+    public void AnEnumOfThePackage_BlocksTheEnum_AndNothingElseOfTheNameDoes()
+    {
+        var reason = TddGeneration.FindPackageDeclaringObject(new[] { Package("e.app", "Enumerated", StatusEnum) }, EnumName, "Enum");
+        Assert.StartsWith("the package Enumerated 1.0.0.0 (e.app) declares it - if the test means that enum, add the dependency on it to app.json; if it means a new one, give it another name; an empty enum would shadow it", reason);
+
+        const string others = "\"Codeunits\":[{\"Id\":65411,\"Name\":\"Nowhere Declared Status\",\"Methods\":[],\"Properties\":[]}]," +
+            "\"Tables\":[{\"Id\":65410,\"Name\":\"Nowhere Declared Status\",\"Fields\":[],\"Properties\":[]}]";
+        Assert.Null(TddGeneration.FindPackageDeclaringObject(new[] { Package("o.app", "Others", others) }, EnumName, "Enum"));
+        var enumOnly = new[] { Package("e2.app", "Enumerated", StatusEnum) };
+        Assert.Null(TddGeneration.FindPackageDeclaringObject(enumOnly, EnumName, "Codeunit"));
+        Assert.Null(TddGeneration.FindPackageDeclaringObject(enumOnly, EnumName, "Table"));
+    }
+
+    /// <summary>The sibling-bundle text probe for an enum (#5445): an `enum N "Name"` declaration of another bundle is found;
+    /// an enum of another name, an enumextension and a codeunit of the same name are not.</summary>
+    [Fact]
+    public void ASiblingBundlesEnum_IsFoundByTheTextProbe_AndNothingElseIs()
+    {
+        var bundle = Path.Combine(_scratch, "enum-bundle");
+        Directory.CreateDirectory(bundle);
+        File.WriteAllText(Path.Combine(bundle, "Other.al"),
+            "enumextension 50000 \"Nowhere Declared Status\" extends \"Sales Document Type\" { }\ncodeunit 50001 \"Nowhere Declared Status\" { }\nenum 50002 \"Different Status\" { }\n");
+        TddCrossBundle.RegisterRunBundle(bundle);
+        try
+        {
+            Assert.Null(TddCrossBundle.RunDeclaresEnum(EnumName));
+            File.WriteAllText(Path.Combine(bundle, "Status.Enum.al"), "enum 50003 \"nowhere DECLARED status\"\n{\n}\n");
+            Assert.Equal(Path.Combine(bundle, "Status.Enum.al"), TddCrossBundle.RunDeclaresEnum(EnumName));
+            // The codeunit probe sees the codeunit in Other.al and never the enum file.
+            Assert.Equal(Path.Combine(bundle, "Other.al"), TddCrossBundle.RunDeclaresCodeunit(EnumName));
+        }
+        finally { TddCrossBundle.ClearSourceImpls(); }
+    }
+
     /// <summary>The sibling-bundle text probe (#5431) for a table: a `table N "Name"` declaration of another bundle is
     /// found, a table of another name, a tableextension and a codeunit of the same name are not.</summary>
     [Fact]

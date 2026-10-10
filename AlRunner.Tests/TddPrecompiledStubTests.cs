@@ -50,6 +50,26 @@ public sealed class TddPrecompiledStubTests
         Assert.Null(TddPrecompiledStub.FreeTableId(trees, ranges, new HashSet<int> { 65321, 65322, 65323 }));
     }
 
+    /// <summary>#5445: the enum id space is its own, in both directions - a codeunit or a table with id 65321 does not take
+    /// it from an enum, and an enum does not take a codeunit's or a table's.</summary>
+    [Fact]
+    public void FreeEnumId_IsPerObjectType_InBothDirections()
+    {
+        var trees = new[]
+        {
+            Parse("codeunit 65320 \"A\" { } codeunit 65321 \"B\" { }"),
+            Parse("table 65322 \"T\" { fields { field(1; \"K\"; Integer) { } } }"),
+            Parse("enum 65320 \"E\" { }"),
+        };
+        var ranges = new[] { (65320, 65323) };
+
+        Assert.Equal(65321, TddPrecompiledStub.FreeEnumId(trees, ranges, new HashSet<int>()));
+        Assert.Equal(65322, TddPrecompiledStub.FreeCodeunitId(trees, ranges, new HashSet<int>()));
+        Assert.Equal(65320, TddPrecompiledStub.FreeTableId(trees, ranges, new HashSet<int>()));
+        Assert.Equal(65322, TddPrecompiledStub.FreeEnumId(trees, ranges, new HashSet<int> { 65321 }));
+        Assert.Null(TddPrecompiledStub.FreeEnumId(trees, ranges, new HashSet<int> { 65321, 65322, 65323 }));
+    }
+
     [Fact]
     public void ReadIdRanges_ReadsTheManifest_AndNothingFromAnUnreadableOne()
     {

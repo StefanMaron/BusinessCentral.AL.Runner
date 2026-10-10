@@ -47,7 +47,7 @@ public sealed class TddMissingEnumTests : IDisposable
 
         var (stdout, stderr, exit) = RunTdd(app);
 
-        Assert.True(exit == 0, $"exit {exit}\n{stderr}");
+        Assert.True(exit == 1, $"exit {exit}\n{stderr}");
         using var doc = JsonDocument.Parse(stdout.Trim());
         var tests = TestsOf(doc);
         JsonElement Find(string name) => tests.Single(t => t.GetProperty("name").GetString()!.EndsWith("." + name));
@@ -58,7 +58,7 @@ public sealed class TddMissingEnumTests : IDisposable
             Assert.Equal(stubs, TddMissingObjectTests.StubsOf(t));
         }
 
-        // Enum id 65320 is the app's own enum; the codeunits hold 65320-65321 (and the generated Twin 65322), which
+        // Enum id 65320 is the app's own enum; the codeunits hold 65320-65322 (and the generated Twin 65323), which
         // enums do not care about: "Another Missing Enum" takes 65321 although a codeunit has it.
         const string NoSuch = "No Such Enum: enum 65322";
         AssertPasses("VariableValues_RunToTheGeneratedEnum", NoSuch, "No Such Enum: enum value \"Open\" = 0", "No Such Enum: enum value \"Closed\" = 1");
@@ -66,23 +66,31 @@ public sealed class TddMissingEnumTests : IDisposable
         AssertPasses("GlobalVariable_RunsToTheGeneratedEnum", "Another Missing Enum: enum 65321", "Another Missing Enum: enum value \"Left\" = 0");
         AssertPasses("SameEnum_InASecondFile", NoSuch, "No Such Enum: enum value \"Closed\" = 1");
         // A codeunit and an enum sharing a name are two objects, each in its own id space, and the value goes to the enum.
-        AssertPasses("EnumAndCodeunit_ShareOneName", "Twin: codeunit 65322", "Twin: enum 65323", "Twin: enum value \"Alpha\" = 0",
+        AssertPasses("EnumAndCodeunit_ShareOneName", "Twin: codeunit 65323", "Twin: enum 65323", "Twin: enum value \"Alpha\" = 0",
             "Twin: procedure \"Calc\"(Arg1: Integer): Integer");
         AssertPasses("ExistingEnum_KeepsItsRealValues");
         AssertPasses("Unrelated_NamesNoStub");
 
-        Assert.Equal(7, doc.RootElement.GetProperty("total").GetInt32());
+        // An enum named only by `Enum::"X"::Value` (no variable of the type) is AL0118, not AL0185: not generated, loudly.
+        var literal = Find("LiteralOnly_IsRefused");
+        Assert.Equal("fail", literal.GetProperty("status").GetString());
+        Assert.Contains("error AL0118: The name '\"Only Literal Enum\"' does not exist in the current context", literal.GetProperty("message").GetString());
+        Assert.Empty(TddMissingObjectTests.StubsOf(literal));
+
+        Assert.Equal(8, doc.RootElement.GetProperty("total").GetInt32());
         Assert.Equal(7, doc.RootElement.GetProperty("passed").GetInt32());
+        Assert.Equal(1, doc.RootElement.GetProperty("failed").GetInt32());
 
         var lines = stderr.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
         Assert.Equal(new[]
         {
-            $"--tdd: generated codeunit \"Twin\" (id 65322) in A2SecondFileTests.Codeunit.al: {GeneratedNote}",
+            $"--tdd: generated codeunit \"Twin\" (id 65323) in A2SecondFileTests.Codeunit.al: {GeneratedNote}",
             $"--tdd: generated enum \"Another Missing Enum\" (id 65321) in A1EnumTests.Codeunit.al: {GeneratedNote}",
             $"--tdd: generated enum \"No Such Enum\" (id 65322) in A1EnumTests.Codeunit.al: {GeneratedNote}",
             $"--tdd: generated enum \"Twin\" (id 65323) in A2SecondFileTests.Codeunit.al: {GeneratedNote}",
         }, lines.Where(l => l.StartsWith("--tdd: generated ") && l.Contains(" (id ")).ToList());
         Assert.DoesNotContain("no members were generated", stdout + stderr);
+        Assert.DoesNotContain("Only Literal Enum", string.Join("\n", lines.Where(l => l.StartsWith("--tdd: generated "))));
         Assert.Equal(before, TddMissingObjectTests.HashTree(app));
     }
 
