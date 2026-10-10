@@ -2099,13 +2099,16 @@ if (!provisionSubcommand)
         if (Environment.GetEnvironmentVariable(AlRunner.Infrastructure.ProvisioningCheck.DeferredPlatformAppsEnvVar) == "1")
         {
             decision = decision with { ShouldDownloadPlatform = false };
+            // #5477: everything this process printed so far, the parent printed too.
+            AlRunner.Infrastructure.DeferredPlatformAppsAttempt.EmitBeginMarker(outputJsonStdout ?? Console.Out);
         }
         else
         {
             var attempt = AlRunner.Infrastructure.DeferredPlatformAppsAttempt.Run(args);
             if (attempt.ExitCode == 0)
             {
-                attempt.Replay();
+                // #5477: under --output-json Console.Out is stderr; the document belongs on the saved stdout.
+                attempt.Replay(outputJsonStdout);
                 Console.Error.WriteLine(
                     $"[provision] ran without the Microsoft platform apps this bundle's app.json floor declares ({missingList}): " +
                     "none are on disk, and the run passed without them. A bundle that uses them does not pass that attempt " +
