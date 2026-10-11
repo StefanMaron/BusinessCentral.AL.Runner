@@ -33,6 +33,9 @@ public sealed class AppLoaderManifestMemoStableKeyTests : IDisposable
     {
         _root = TestScratch.FlatDir("app-loader-memo-stable-key-");
         Directory.CreateDirectory(_root);
+        // Helper files go here, so nothing but the package changes in the package's own directory:
+        // a memo keyed on that directory's stamp (the wrong subject) would otherwise see it move.
+        Directory.CreateDirectory(Path.Combine(_root, "aux"));
         _cacheRoot = TestScratch.FlatDir("app-loader-memo-stable-key-cache-");
         Directory.CreateDirectory(_cacheRoot);
         CacheRoots.SetOverride(_cacheRoot);
@@ -241,6 +244,7 @@ public sealed class AppLoaderManifestMemoStableKeyTests : IDisposable
     private static void Put(ZipArchive zip, string name, string text)
     {
         var entry = zip.CreateEntry(name, CompressionLevel.NoCompression);
+        entry.LastWriteTime = new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);   // the same bytes on every run
         using var s = entry.Open();
         s.Write(Encoding.UTF8.GetBytes(text));
     }
@@ -250,7 +254,7 @@ public sealed class AppLoaderManifestMemoStableKeyTests : IDisposable
     private void RewriteInPlaceKeepingMtime(string path, byte[] bytes)
     {
         Assert.NotNull(FileIdentity.Probe(Path.GetFullPath(path)).Key);
-        var reference = path + ".mtime";
+        var reference = Path.Combine(_root, "aux", "reference.mtime");
         File.WriteAllText(reference, "");
         Assert.NotNull(Os("touch", "-r", path, reference));
         var length = new FileInfo(path).Length;
@@ -275,7 +279,7 @@ public sealed class AppLoaderManifestMemoStableKeyTests : IDisposable
     /// differs from <paramref name="ctime"/>: from then on, now is later than that ctime.</summary>
     private void WaitUntilTheClockPasses(string ctime)
     {
-        var scratch = Path.Combine(_root, "clock.tmp");
+        var scratch = Path.Combine(_root, "aux", "clock.tmp");
         for (var i = 0; i < 5000; i++)
         {
             File.WriteAllText(scratch, i.ToString());
