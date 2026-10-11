@@ -1,0 +1,15 @@
+{
+  "id": "8a88783b-4518-4c72-bf00-f4690193d949",
+  "name": "Tdd Member Ext Dep",
+  "publisher": "AL Runner Fixtures",
+  "version": "1.0.0.0",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65380,
+      "to": 65389
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

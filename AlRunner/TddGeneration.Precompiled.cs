@@ -85,7 +85,7 @@ public static partial class TddGeneration
             byKey, generatedByKey, diagsByKey);
         GenerateFieldsBesidePackageTables(compilation, originalTrees, trees, parseOptions, manifestAppJsonPath,
             fieldEntries, generatedByKey, diagsByKey);
-        GenerateValuesBesidePackageEnums(originalTrees, trees, parseOptions, manifestAppJsonPath,
+        GenerateValuesBesidePackageEnums(compilation, originalTrees, trees, parseOptions, manifestAppJsonPath,
             valueEntries, generatedByKey, diagsByKey);
     }
 

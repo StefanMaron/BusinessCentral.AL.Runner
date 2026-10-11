@@ -1,0 +1,30 @@
+{
+  "id": "90656aa4-1dcb-457a-9034-327035ca99e2",
+  "name": "Runner Tests Fixture - Tdd Package Member Ext Test",
+  "publisher": "AL Runner Fixtures",
+  "version": "1.0.0.0",
+  "brief": "The test app of the #5491 --tdd reproducer.",
+  "description": "Depends on a package whose table and enum lack a field and a value, and on a second package whose extensions already add members to them in the ids this app may allocate from.",
+  "dependencies": [
+    {
+      "id": "8a88783b-4518-4c72-bf00-f4690193d949",
+      "name": "Tdd Member Ext Dep",
+      "publisher": "AL Runner Fixtures",
+      "version": "1.0.0.0"
+    },
+    {
+      "id": "9f0c2ae1-c0fa-4d6f-84e7-a2f8c2f55413",
+      "name": "Tdd Member Ext Pkg2",
+      "publisher": "AL Runner Fixtures",
+      "version": "1.0.0.0"
+    }
+  ],
+  "idRanges": [
+    {
+      "from": 65400,
+      "to": 65419
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
