@@ -247,31 +247,56 @@ public sealed class BcCompilerLoaderLifecycleTests : IDisposable
         Assert.Equal("Leaf@1.0.0.0,System@28.0.0.0", DependenciesOf(loader, "Assert"));
     }
 
-    /// <summary>The same rewrite with the timestamp put back (<c>cp -p</c>, <c>rsync -t</c>). BC's manifest
-    /// memo is keyed by path alone, so a reused loader would answer the old dependency list; the check
-    /// has to use what the writer cannot set back (ctime, #5409). Main rebuilds here, because the key of
-    /// a package that becomes a dependency is new. The in-process test pins the loader; the runner's own
-    /// manifest memo (AppLoader.ReadManifest, #5499) is a separate one.</summary>
+    /// <summary>The same rewrite with the mtime put back EXACTLY (<c>cp -p</c>, <c>rsync -t</c>): same
+    /// length, same nanosecond mtime, only ctime moved. BC's manifest memo is keyed by path alone, so a
+    /// reused loader would answer the old dependency list; the check has to use what the writer cannot
+    /// set back (ctime, #5409). Main rebuilds here, because the key of a package that becomes a dependency
+    /// is new. .NET's <c>SetLastWriteTimeUtc</c> keeps 100 ns ticks only, so the OS tool puts it back. The
+    /// in-process test pins the loader; the runner's own manifest memo (AppLoader.ReadManifest, #5499) is
+    /// a separate one.</summary>
     [SkippableFact]
     public void ANeverDependencyRewrittenToTheSameLengthWithTheTimestampPutBack_RebuildsWhenItBecomesADependency()
     {
+        // Linux only, as FileIdentityTests is: there a missing key or a missing coreutils fails below
+        // instead of skipping, so this cannot skip on a leg where that class runs.
+        Skip.IfNot(OperatingSystem.IsLinux(), "ctime is only available through statx on Linux (FileIdentity header)");
         var dir = MakeDir("cache");
         WriteGraph(dir);
         WritePkg(dir, "Assert", "1.0.0.0", deps: new[] { "Mid" }, marker: "abcdefgh");   // as long as the rewrite below
         SetDeps(dir, "Greeter");
         InvokeGetSharedReferences(new[] { dir });
         var path = _byName["Assert"].Path;
-        Skip.If(AlRunner.Infrastructure.FileIdentity.Probe(Path.GetFullPath(path)).Key == null,
-            "this platform gives no ctime, so only length and mtime can be compared (FileIdentity header)");
-        var stamp = File.GetLastWriteTimeUtc(path);
+        Assert.NotNull(AlRunner.Infrastructure.FileIdentity.Probe(Path.GetFullPath(path)).Key);
+        var reference = path + ".mtime";
+        File.WriteAllText(reference, "");
+        Assert.NotNull(Os("touch", "-r", path, reference));
+        var length = new FileInfo(path).Length;
+        var mtime = Os("stat", "-c", "%.9Y", path);
+        var ctime = Os("stat", "-c", "%.9Z", path);
+        Assert.NotNull(mtime);
 
         RewriteAssertToTheSameLength(dir);
-        File.SetLastWriteTimeUtc(path, stamp);
+        Assert.NotNull(Os("touch", "-m", "-r", reference, path));
+
+        // The premise: only ctime moved. Were mtime to differ, the test could pass on that alone.
+        Assert.Equal(length, new FileInfo(path).Length);
+        Assert.Equal(mtime, Os("stat", "-c", "%.9Y", path));
+        Assert.NotEqual(ctime, Os("stat", "-c", "%.9Z", path));
         SetDeps(dir, "Greeter", "Assert");
         var loader = InvokeGetSharedReferences(new[] { dir }).Loader!;
 
         Assert.Equal(2, BcCompiler.ReferenceLoaderBuildCount);
         Assert.Equal("Leaf@1.0.0.0,System@28.0.0.0", DependenciesOf(loader, "Assert"));
+    }
+
+    private static string? Os(string exe, params string[] args)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo(exe) { RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        using var p = System.Diagnostics.Process.Start(psi)!;
+        var stdout = p.StandardOutput.ReadToEnd();
+        p.WaitForExit(30_000);
+        return p.ExitCode == 0 ? stdout.Trim() : null;
     }
 
     /// <summary>A dependency added by reuse is remembered with its path, so a later rewrite of it is a
