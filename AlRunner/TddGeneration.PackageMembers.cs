@@ -32,7 +32,6 @@ public static partial class TddGeneration
         var idRanges = TddPrecompiledStub.ReadIdRanges(manifestAppJsonPath);
         var reservedExtensions = new HashSet<int>();
         var appended = new Dictionary<int, StringBuilder>();
-        var extensionTexts = new List<string>();
         var pending = new List<(string Key, TddGeneratedMember Member, List<NavDiag.Diagnostic> Diags)>();
 
         // Tables in name order, fields in name order, sites in file then position order: the compile reports the
@@ -111,13 +110,13 @@ public static partial class TddGeneration
                 text.Append("    }\n}\n");
                 if (!appended.TryGetValue(homeIdx, out var sb)) appended[homeIdx] = sb = new();
                 sb.Append(text);
-                extensionTexts.Add(text.ToString());
+                var extension = new TddPackageExtension("table", extensionId.Value, TableExtensionName(extensionId.Value), tableName, text.ToString());
                 Console.Error.WriteLine(
                     $"--tdd: table extension {Quote(TableExtensionName(extensionId.Value))} (id {extensionId.Value}) beside package table {tableName} in " +
                     $"{Path.GetFileName(trees[homeIdx].FilePath)}: {string.Join(", ", withIds.Select(f => $"{Quote(f.Name)} (field {f.FieldId})"))}");
                 foreach (var f in withIds)
                     pending.Add(($"beside-field|{TableKeyOf(table.First().Target)}|{f.Name.ToLowerInvariant()}",
-                        new TddGeneratedMember(tableName, "field", $"{Quote(f.Name)}: {f.Type}"), f.Diags));
+                        new TddGeneratedMember(tableName, "field", $"{Quote(f.Name)}: {f.Type}") { PackageExtension = extension }, f.Diags));
             }
             catch (Exception ex)
             {
@@ -128,15 +127,51 @@ public static partial class TddGeneration
         foreach (var (idx, sb) in appended)
             trees[idx] = NavSyntax.SyntaxTree.ParseObjectText(trees[idx].GetText().ToString() + sb, path: trees[idx].FilePath,
                 encoding: null!, parseOptions, default);
-        // The record engine reads a table's shape from its own registry of declarations, which cannot see an in-memory
-        // extension; the same refresh a generated field of a source table needs (RecordPatches.TddReparse.cs).
-        foreach (var text in extensionTexts) AlRunner.Patches.RecordPatches.TddRegisterTableExtension(text);
         foreach (var (key, member, diags) in pending)
         {
             generatedByKey[key] = member;
             diagsByKey[key] = diags;
         }
     }
+
+    /// <summary>
+    /// Run once the compile has settled (after the exclusion rounds), with the trees that were COMPILED. A package extension that
+    /// is in them is registered with the record engine (a table's, see <c>RecordPatches.TddRegisterTableExtension</c>); one whose
+    /// file the compile dropped is not, its members are taken out of <paramref name="members"/> (the closing list and the
+    /// tests' annotations must not claim a field nobody declares), and the run says so. Returns true when a table extension
+    /// was registered: the record engine now holds state the trees alone do not reproduce, so no incremental baseline may be
+    /// recorded for this compile (<c>BcCompiler.Emit</c>; #5430).
+    /// Observably equivalent to the extension being on disk: registered only if compiled, from the text a file would hold.
+    /// </summary>
+    internal static bool SettlePackageExtensions(NavSyntax.SyntaxTree[] compiledTrees, bool compiled, List<TddGeneratedMember> members)
+    {
+        var registered = false;
+        foreach (var ext in members.Where(m => m.PackageExtension != null).Select(m => m.PackageExtension!).Distinct().ToList())
+        {
+            if (compiled && IsDeclaredIn(compiledTrees, ext))
+            {
+                if (ext.RecordEngineText == null) continue;
+                AlRunner.Patches.RecordPatches.TddRegisterTableExtension(ext.RecordEngineText);
+                registered = true;
+                continue;
+            }
+            var dropped = members.Where(m => m.PackageExtension == ext).ToList();
+            Console.Error.WriteLine(
+                $"--tdd: dropped with its file: {ext.Word} extension {Quote(ext.Name)} beside package {ext.Word} {ext.ObjectName}, which the compile dropped, so it is not " +
+                $"declared: {string.Join(", ", dropped.Select(m => m.Signature))} is not reported as generated and the record engine was not told of it");
+            members.RemoveAll(m => m.PackageExtension == ext);
+        }
+        return registered;
+    }
+
+    private static bool IsDeclaredIn(NavSyntax.SyntaxTree[] trees, TddPackageExtension ext)
+        => trees.Any(t => t.GetRoot() is NavSyntax.CompilationUnitSyntax root && root.Objects.Any(o =>
+            (o switch
+            {
+                NavSyntax.TableExtensionSyntax te when ext.Word == "table" => te.ObjectId?.Value.Value as int?,
+                NavSyntax.EnumExtensionTypeSyntax ee when ext.Word == "enum" => ee.ObjectId?.Value.Value as int?,
+                _ => null,
+            }) == ext.Id && Unquote(IdentTextOf(o.Name)) == ext.Name));
 
     internal static string EnumExtensionName(int id) => $"TDD Enum Extension {id}";
 
@@ -213,9 +248,10 @@ public static partial class TddGeneration
                 Console.Error.WriteLine(
                     $"--tdd: enum extension {Quote(EnumExtensionName(extensionId.Value))} (id {extensionId.Value}) beside package enum {enumName} in " +
                     $"{Path.GetFileName(trees[homeIdx].FilePath)}: {string.Join(", ", withOrdinals.Select(v => $"{Quote(v.Name)} (ordinal {v.Ordinal})"))}");
+                var extension = new TddPackageExtension("enum", extensionId.Value, EnumExtensionName(extensionId.Value), enumName, null);
                 foreach (var v in withOrdinals)
                     pending.Add(($"beside-value|{TableKeyOf(target)}|{v.Name.ToLowerInvariant()}",
-                        new TddGeneratedMember(enumName, "enum value", $"{Quote(v.Name)} = {v.Ordinal}"), v.Diags));
+                        new TddGeneratedMember(enumName, "enum value", $"{Quote(v.Name)} = {v.Ordinal}") { PackageExtension = extension }, v.Diags));
             }
             catch (Exception ex)
             {

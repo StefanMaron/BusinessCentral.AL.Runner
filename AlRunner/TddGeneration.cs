@@ -55,7 +55,15 @@ public sealed record TddGeneratedMember(string ObjectDisplayName, string MemberK
     /// the file it went into, as in-memory overlay text. The current compile cannot see it until
     /// that bundle is recompiled.</summary>
     public string? GeneratedIntoFile { get; init; }
+
+    /// <summary>Set for a field or enum value generated in a tableextension or enumextension beside a PACKAGE object (#5430):
+    /// the extension it lives in. Settled after the compile (<see cref="TddGeneration.SettlePackageExtensions"/>).</summary>
+    public TddPackageExtension? PackageExtension { get; init; }
 }
+
+/// <summary>An extension --tdd appended to a file of the compile for a package's table or enum (#5430). <see cref="RecordEngineText"/>
+/// is the text the record engine registers for a table extension (null for an enum, which is compiled from the trees).</summary>
+public sealed record TddPackageExtension(string Word, int Id, string Name, string ObjectName, string? RecordEngineText);
 
 public static partial class TddGeneration
 {

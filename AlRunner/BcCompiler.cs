@@ -2547,6 +2547,12 @@ public sealed partial class BcCompiler
             }
         }
 
+        // #5430: a table extension --tdd appended for a package's table is registered with the record engine only now, once
+        // the compile settled and its file is known to have survived. The registration is state the trees do not reproduce
+        // (the watch reset clears it), so a compile that made one is no incremental baseline.
+        var tddRegisteredPackageExtension = _tddMode
+            && TddGeneration.SettlePackageExtensions(trees, caught == null && outputter.Captured.Count > 0, tddGeneratedMembers);
+
         // #5161: a clean compile of a bundle that calls into one --tdd generated a member into. The
         // compile that generated into ANOTHER bundle is skipped: its own diagnostics already named the tests.
         // One that only generated into itself (#5271) still follows, for its calls into other bundles.
@@ -2583,7 +2589,8 @@ public sealed partial class BcCompiler
         // #1902: only a CLEAN success (nothing excluded, every source captured) is trustworthy
         // as a RAD baseline — a module that only compiled after dropping broken objects must
         // not let a later incremental cycle silently treat those objects as "still there".
-        if (trackIncrementalBaseline && caught == null && excludedObjects.Count == 0 && outputter.Captured.Count > 0)
+        if (trackIncrementalBaseline && caught == null && excludedObjects.Count == 0 && outputter.Captured.Count > 0
+            && !tddRegisteredPackageExtension)
         {
             try
             {
