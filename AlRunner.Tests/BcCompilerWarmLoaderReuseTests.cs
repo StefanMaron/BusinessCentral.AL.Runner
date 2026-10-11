@@ -18,8 +18,9 @@
 // either side of it; the sigdiff was one `D:` line.
 //
 // The fix compares the dep list as a SUBSET instead: the loader is reused when the current
-// dep set is contained in the one it was built for. Removal is free; anything that adds or
-// changes a key rebuilds exactly as before.
+// dep set is contained in the one it was built for. Removal is free; anything that changes a
+// key rebuilds exactly as before. (#5473 later made ADDING a dep over the same scan a reuse
+// too, see BcCompilerLoaderLifecycleTests; a changed key still rebuilds.)
 //
 // Why "adds or changes" must keep rebuilding
 // ------------------------------------------
@@ -37,7 +38,7 @@
 // --------------------
 //  * POSITIVE  — narrowing (and restoring) the dep set builds the loader exactly ONCE and
 //                performs exactly ZERO additional warm work. Counts, never durations.
-//  * NEGATIVE  — an ADDED dep rebuilds and re-warms; a dep REPUBLISHED AT A NEW PATH (the
+//  * NEGATIVE  — a dep REPUBLISHED AT A NEW PATH (the
 //                server-mode regression above, in unit form) rebuilds; a changed scan-dir
 //                set rebuilds. Without these a memo that never invalidates would pass the
 //                positive tests.
@@ -135,15 +136,17 @@ public sealed class BcCompilerWarmLoaderReuseTests : IDisposable
         Assert.Equal(WarmedSpecs(3), BcCompiler.ReferenceLoaderWarmSpecCount);
     }
 
-    // ── NEGATIVE: adding or changing a dep must still rebuild ─────────────────────────
+    // ── ADDING a dep over the same scan reuses too (#5473); a changed one must rebuild ──
 
     /// <summary>
-    /// A dep the loader was NOT built for must still force a rebuild — the reuse rule is
-    /// subset, not "any dep set will do". This is the assertion that stops the fix
-    /// degenerating into a memo that never invalidates.
+    /// A dep the loader was NOT warmed for, over packages it already scans, is served by it:
+    /// the loader never sees the dep list, it enumerates the scan dirs at lookup. So it is
+    /// reused, and only the added dep (not the platform module already walked) is warmed on it.
+    /// What still rebuilds is pinned in <see cref="BcCompilerLoaderLifecycleTests"/>, and
+    /// <see cref="AddingAPackageDir_StillRebuildsAndRewarms"/> below.
     /// </summary>
     [Fact]
-    public void AddingAResolvedDep_StillRebuildsAndRewarms()
+    public void AddingAResolvedDepOverTheSameScan_ReusesTheLoaderAndWarmsOnlyTheAddedDep()
     {
         var dir = MakeDir("pkg");
         var apps = WriteApps(dir, 3);
@@ -156,14 +159,13 @@ public sealed class BcCompilerWarmLoaderReuseTests : IDisposable
         SetDeps(dir, apps);
         InvokeGetSharedReferences(new[] { dir });
 
-        Assert.Equal(2, BcCompiler.ReferenceLoaderBuildCount);
-        // The rebuilt instance starts cold — BC's MemoryCachedSymbolReferenceLoader caches
-        // in instance fields — so its whole closure is walked again on top of the first's.
-        Assert.Equal(WarmedSpecs(2) + WarmedSpecs(3), BcCompiler.ReferenceLoaderWarmSpecCount);
+        Assert.Equal(1, BcCompiler.ReferenceLoaderBuildCount);
+        Assert.Equal(WarmedSpecs(3), BcCompiler.ReferenceLoaderWarmSpecCount);
 
-        // …and the widened set is itself reusable: repeating it does not rebuild again.
+        // …and the widened set is itself reusable: repeating it neither rebuilds nor warms again.
         InvokeGetSharedReferences(new[] { dir });
-        Assert.Equal(2, BcCompiler.ReferenceLoaderBuildCount);
+        Assert.Equal(1, BcCompiler.ReferenceLoaderBuildCount);
+        Assert.Equal(WarmedSpecs(3), BcCompiler.ReferenceLoaderWarmSpecCount);
     }
 
     /// <summary>

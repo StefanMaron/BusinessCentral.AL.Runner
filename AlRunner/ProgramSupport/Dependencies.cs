@@ -111,6 +111,43 @@ internal static partial class ProgramSupport
     }
 
     /// <summary>
+    /// Seeds the package closure with every bundle's dependency roots, before the first compile (#5473).
+    /// The closure that narrows the package scan only grows, and a scan set that grows is a new loader
+    /// that parses Base Application again, so an app, its test app and the Test Runner the test app is
+    /// run through would otherwise get one loader each. Seeds are a superset of what one bundle needs,
+    /// which only widens a scan that is a subset of the whole folder anyway. Best effort: a bundle that
+    /// cannot be read here is read, and reported, by its own resolve.
+    /// </summary>
+    internal static void SeedClosureForBundles(IEnumerable<string> bundles, bool includeInstalledTestTool)
+    {
+        var seeds = new HashSet<BcCompiler.ClosureSeed>();
+        foreach (var bundle in bundles)
+        {
+            try
+            {
+                var abs = Path.GetFullPath(bundle);
+                var manifests = CollectBundleManifests(FindBucketRoot(abs), abs);
+                foreach (var root in ReadBundleDependencyRoots(manifests))
+                    seeds.Add(new BcCompiler.ClosureSeed(root.AppId, root.Name));
+            }
+            catch (Exception) { /* an optimisation only; see above */ }
+        }
+        if (includeInstalledTestTool)
+            seeds.Add(new BcCompiler.ClosureSeed(InstalledTestTool.AppId, InstalledTestTool.Name));
+        BcCompiler.SeedClosureRoots(seeds);
+    }
+
+    /// <summary><see cref="SeedClosureForBundles"/> under this process's test-tool setting. A setting
+    /// that does not parse is left to the resolve that reads it, which names it.</summary>
+    internal static void SeedClosureForRun(IEnumerable<string> bundles)
+    {
+        bool includeTestTool;
+        try { includeTestTool = DefaultTestToolEnabled(); }
+        catch (InvalidOperationException) { includeTestTool = false; }
+        SeedClosureForBundles(bundles, includeTestTool);
+    }
+
+    /// <summary>
     /// Union the dependency roots declared across <paramref name="manifests"/>, keeping the
     /// highest version when two manifests name the same dependency.
     ///

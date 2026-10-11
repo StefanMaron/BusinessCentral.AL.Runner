@@ -178,7 +178,8 @@ public sealed partial class BcCompiler
     // the dep list's two real jobs are both redone per call anyway: the requested SPEC array
     // is rebuilt at the bottom of GetSharedReferences (so it really does shrink), and
     // WarmReferenceLoader is a read-only cache prefill (so a superset warm subsumes a subset
-    // one). Anything that ADDS or CHANGES a key still rebuilds, exactly as before.
+    // one). A key that CHANGES still rebuilds, exactly as before. One that is ADDED over packages
+    // the loader already scans does not (#5473): see JudgeLoaderReuse.
     //
     // #2678: the keys are those of the deps THIS loader can actually serve — the ones that
     // survived the .app scan (see PackageServedDepKeys). A symbol-less synthetic package is
@@ -192,6 +193,8 @@ public sealed partial class BcCompiler
     // below (scripts/tests/server-mode-test.sh assertions 2+3), and re-indexing the JSON
     // chain costs 16-38 ms against the package loader's tens of seconds.
     private static HashSet<string>? _loaderDepUniverse;
+    // What the package loader behind _loaderDepUniverse was built over; see JudgeLoaderReuse (#5473).
+    private static LoaderBuild? _loaderBuild;
     // Content signature of the dirs the JSON symbol loaders index (#2678). Separate from
     // _loaderSignature because the two halves have wildly different rebuild costs and
     // genuinely different invalidation triggers: JSON sidecars are republished under a new
@@ -1091,6 +1094,8 @@ public sealed partial class BcCompiler
             _loaderSignature = null;
             _jsonLoaderSignature = null;
             _loaderDepUniverse = null;
+            _loaderBuild = null;
+            _closureSeeds.Clear();
             _warmSpecCount = 0;
             _jsonLoaderBuildCount = 0;
             _exclPackageLoader = null;
@@ -1502,7 +1507,8 @@ public sealed partial class BcCompiler
             // gives. Freshness of the republished symbols is preserved by rebuilding the JSON
             // chain, which is the half that actually serves them.
             var loaderSig = ComputeLoaderSignature(loaderScanDirs, null, null);
-            var depKeys = PackageServedDepKeys(_resolvedDeps, scanInventory);
+            var servedDeps = PackageServedDeps(_resolvedDeps, scanInventory);
+            var depKeys = new HashSet<string>(servedDeps.Select(d => d.Key), StringComparer.Ordinal);
 
             // _extraSymbolDirs hold *.symbols.json ONLY and must NOT reach
             // CreateReferenceLoader: they may contain synthetic .app files with no
@@ -1515,8 +1521,10 @@ public sealed partial class BcCompiler
                         jsonScanDirs.Add(d);
             var jsonSig = string.Join("\n", jsonScanDirs.OrderBy(x => x, StringComparer.Ordinal));
 
-            var rebuildPackage = _refLoader == null || loaderSig != _loaderSignature
-                || !depKeys.IsSubsetOf(_loaderDepUniverse ?? new HashSet<string>(StringComparer.Ordinal));
+            var reuse = _refLoader == null || loaderSig != _loaderSignature
+                ? LoaderReuse.Rebuild
+                : JudgeLoaderReuse(servedDeps, _loaderDepUniverse, _loaderBuild);
+            var rebuildPackage = reuse == LoaderReuse.Rebuild;
             var rebuildJson = rebuildPackage || _cachedJsonLoaders == null || jsonSig != _jsonLoaderSignature;
 
             if (rebuildPackage || rebuildJson)
@@ -1596,13 +1604,25 @@ public sealed partial class BcCompiler
                     // Only on a PACKAGE rebuild: BC's MemoryCachedSymbolReferenceLoader caches in
                     // instance fields, so a reused package-loader instance is already warm, and a
                     // re-indexed JSON chain has nothing to warm (it indexes in its constructor).
-                    WarmReferenceLoader(_refLoader, _resolvedDeps);
+                    _loaderBuild = LoaderBuild.For(servedDeps, scanInventory);
+                    WarmReferenceLoader(_refLoader, _resolvedDeps, _loaderBuild.WarmedSpecs);
                     Mark("warm");
                     _loaderSignature = loaderSig;
                     // This instance is warm for exactly these dep keys; a later call whose deps
                     // are a subset of them reuses it (#1832).
                     _loaderDepUniverse = depKeys;
                 }
+            }
+
+            if (reuse == LoaderReuse.ReuseAndWarm)
+            {
+                // #5473: dependencies this loader was not warmed for, over the packages it already
+                // scans. Unioned into what it is warm for, so a later bundle returning to either set
+                // is a plain reuse; only the specs not yet walked through THIS instance are walked.
+                (_loaderDepUniverse ??= new HashSet<string>(StringComparer.Ordinal)).UnionWith(depKeys);
+                _loaderBuild!.AddDeps(servedDeps);
+                WarmReferenceLoader(_refLoader!, _resolvedDeps, _loaderBuild.WarmedSpecs);
+                Mark("warm (added deps)");
             }
 
             // ── Specs (cheap) — recompute each call with _currentAppId exclusion ──
@@ -1856,8 +1876,14 @@ public sealed partial class BcCompiler
     internal static HashSet<string> PackageServedDepKeys(
         IReadOnlyList<(AppManifest Manifest, string AppPath)>? deps,
         List<PackageScanEntry> scanInventory)
+        => new(PackageServedDeps(deps, scanInventory).Select(d => d.Key), StringComparer.Ordinal);
+
+    /// <summary><see cref="PackageServedDepKeys"/> with each key's path and whether its bytes were named.</summary>
+    internal static List<ServedDep> PackageServedDeps(
+        IReadOnlyList<(AppManifest Manifest, string AppPath)>? deps,
+        List<PackageScanEntry> scanInventory)
     {
-        var keys = new HashSet<string>(StringComparer.Ordinal);
+        var keys = new List<ServedDep>();
         if (deps == null) return keys;
         var served = new HashSet<string>(
             scanInventory.Select(e => e.Path), StringComparer.OrdinalIgnoreCase);
@@ -1868,10 +1894,15 @@ public sealed partial class BcCompiler
             // either; fall back to the raw string so it is compared consistently rather than
             // silently dropped from every subsequent comparison.
             try { full = Path.GetFullPath(d.AppPath); } catch { full = d.AppPath; }
-            if (served.Contains(full)) keys.Add(full + "@" + d.Manifest.Version + "@" + PackageContentTerm(full));
+            if (!served.Contains(full)) continue;
+            var term = PackageContentTerm(full);
+            keys.Add(new ServedDep(full, full + "@" + d.Manifest.Version + "@" + term,
+                !term.StartsWith(UnreadableTermPrefix, StringComparison.Ordinal)));
         }
         return keys;
     }
+
+    private const string UnreadableTermPrefix = "unreadable-";
 
     // #5081: a package rebuilt at the same path and version still holds different symbols, and the
     // loader reads each .app once, so the key names the bytes too. Memoized: a package already
@@ -1881,7 +1912,7 @@ public sealed partial class BcCompiler
     {
         var hash = AlRunner.Infrastructure.RunnerFingerprint.ComputeFileContentHashMemoized(appPath);
         return string.IsNullOrEmpty(hash) || hash == AlRunner.Infrastructure.RunnerFingerprint.UnknownContentHash
-            ? "unreadable-" + Guid.NewGuid().ToString("N")
+            ? UnreadableTermPrefix + Guid.NewGuid().ToString("N")
             : hash;
     }
 
@@ -1894,12 +1925,14 @@ public sealed partial class BcCompiler
     /// </summary>
     private static void WarmReferenceLoader(
         NavCA.ISymbolReferenceLoader loader,
-        IReadOnlyList<(AppManifest Manifest, string AppPath)>? resolvedDeps)
+        IReadOnlyList<(AppManifest Manifest, string AppPath)>? resolvedDeps,
+        HashSet<string>? alreadyWarmed = null)
     {
         if (loader == null || resolvedDeps == null || resolvedDeps.Count == 0) return;
         try
         {
-            var alreadyWarmed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            // The specs already walked through THIS loader instance (#5473) are not walked again.
+            alreadyWarmed ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var queue = new Queue<NavCA.SymbolReferenceSpecification>();
             foreach (var d in resolvedDeps)
                 queue.Enqueue(new NavCA.SymbolReferenceSpecification(

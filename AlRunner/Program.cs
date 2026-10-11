@@ -2644,6 +2644,8 @@ void InvalidateMovedWorkspacePackages(IReadOnlyDictionary<Guid, string> implAppP
 
 // #4706: taken before the first cycle reads any source; the loop below retakes it per cycle.
 var watchCycleSources = watchMode ? WatchSource.SourceSnapshot.Capture(bundles) : null;
+// #5473: before the first compile, so the loader built for it already holds what a later bundle adds.
+SeedClosureForRun(bundles);
 {
     var prePassExit = RunDependencyPrePasses();
     if (prePassExit != null) return prePassExit.Value;

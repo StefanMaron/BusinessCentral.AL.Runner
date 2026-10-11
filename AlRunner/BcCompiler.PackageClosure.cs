@@ -25,6 +25,19 @@ public sealed partial class BcCompiler
         foreach (var d in deps) _closureSeeds.Add(new ClosureSeed(d.Manifest.AppId, d.Manifest.Name));
     }
 
+    /// <summary>Seeds the closure with roots known before any compile (#5473): every bundle of the run, so
+    /// the first bundle's scan set already holds what a later bundle adds and the loader built for it
+    /// is the loader of the run. A root naming nothing in the scan costs nothing.</summary>
+    internal static void SeedClosureRoots(IEnumerable<ClosureSeed> roots)
+    {
+        lock (_refSync) foreach (var r in roots) _closureSeeds.Add(r);
+    }
+
+    internal static IReadOnlyCollection<ClosureSeed> ClosureSeedsForTests()
+    {
+        lock (_refSync) return _closureSeeds.ToArray();
+    }
+
     /// <summary>The seeds to restrict the scan to, or null for the whole folder. Null whenever the
     /// run did not resolve its dependencies (the --precompile fallback adds every discoverable app
     /// as a spec), so only a run that names its closure ever gets a narrowed scan. Caller holds _refSync.</summary>
