@@ -27,7 +27,7 @@ public class GetAutoCalcFieldsTests
           "version": "1.0.0.0",
           "dependencies": [],
           "idRanges": [ { "from": 63578, "to": 63579 } ],
-          "runtime": "14.0"
+          "runtime": "15.0"
         }
         """);
 

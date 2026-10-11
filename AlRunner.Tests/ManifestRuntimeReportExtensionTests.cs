@@ -39,11 +39,11 @@ public sealed class ManifestRuntimeReportExtensionTests : IDisposable
         TestArtifacts.SkipIf(!_engine.Ready,
             _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
 
-    private static void WriteAppJson(string dir, string runtimeProp)
+    private static void WriteAppJson(string dir, string runtimeProp, Guid? id = null)
     {
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         {
-          "id": "{{Guid.NewGuid()}}",
+          "id": "{{id ?? Guid.NewGuid()}}",
           "name": "Manifest Runtime Report Extension Test App",
           "publisher": "AL Runner",
           "version": "1.0.0.0",
@@ -189,17 +189,13 @@ public sealed class ManifestRuntimeReportExtensionTests : IDisposable
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 
-    [SkippableFact]
-    public void Cli_RuntimeAtOrBelow15_SharedReportGlobal_IsRefusedWithAL0155_NotExitZero()
+    private (string Output, int Exit) RunCli(string? cacheRoot)
     {
-        SkipIfEngineNotReady();
-        WriteAppJson(_root, Runtime("14.0"));
-        WriteReportPair(_root, "Shared");
-
         var args = new StringBuilder(TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner")));
         args.Append(TestBuildConfig.BcVersionArg);
         var platformApps = TestArtifacts.PlatformAppsDir();
         if (Directory.Exists(platformApps)) args.Append(" --package-cache \"").Append(platformApps).Append('"');
+        if (cacheRoot != null) args.Append(" --cache \"").Append(cacheRoot).Append('"');
         args.Append(" \"").Append(_root).Append('"');
         var psi = new ProcessStartInfo
         {
@@ -215,10 +211,49 @@ public sealed class ManifestRuntimeReportExtensionTests : IDisposable
         p.BeginErrorReadLine();
         if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
         p.WaitForExit();
-        string output; lock (sb) output = sb.ToString();
+        lock (sb) return (sb.ToString(), p.ExitCode);
+    }
 
-        Assert.True(p.ExitCode != 0, $"a compile alc refuses must not exit 0. Output:\n{output}");
+    [SkippableFact]
+    public void Cli_RuntimeAtOrBelow15_SharedReportGlobal_IsRefusedWithAL0155_NotExitZero()
+    {
+        SkipIfEngineNotReady();
+        WriteAppJson(_root, Runtime("14.0"));
+        WriteReportPair(_root, "Shared");
+
+        var (output, exit) = RunCli(cacheRoot: null);
+
+        Assert.True(exit != 0, $"a compile alc refuses must not exit 0. Output:\n{output}");
         Assert.Contains("AL0155", output);
         Assert.Contains("'Shared'", output);
+    }
+
+    /// <summary>The AL-output cache is keyed on the manifest's compiler inputs. With no runtime term, editing
+    /// `runtime` from 16.0 to 14.0 on a warm cache replays the build accepted at 16.0 (exit 0) while a fresh
+    /// cache refuses it (exit 3). Same sources, same app id, ONE cache root: the second run must refuse.</summary>
+    [SkippableFact]
+    public void Cli_RuntimeEditedFrom16To14_OnOneWarmCache_IsRefused_NotReplayedFromTheCache()
+    {
+        SkipIfEngineNotReady();
+        var appId = Guid.NewGuid();
+        var cache = TestScratch.Dir("al-runner-manifest-runtime-reportext-cache");
+        try
+        {
+            WriteAppJson(_root, Runtime("16.0"), appId);
+            WriteReportPair(_root, "Shared");
+            var accepted = RunCli(cache);
+            Assert.True(accepted.Exit == 0, $"runtime 16.0 accepts the shared global. Output:\n{accepted.Output}");
+
+            WriteAppJson(_root, Runtime("14.0"), appId);
+            var refused = RunCli(cache);
+
+            Assert.True(refused.Exit != 0,
+                $"runtime 14.0 on the warm cache replayed the 16.0 build instead of compiling. Output:\n{refused.Output}");
+            Assert.Contains("AL0155", refused.Output);
+        }
+        finally
+        {
+            try { Directory.Delete(cache, recursive: true); } catch { /* best-effort cleanup */ }
+        }
     }
 }
