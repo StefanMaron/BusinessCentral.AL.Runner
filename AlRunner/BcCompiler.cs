@@ -1052,9 +1052,9 @@ public sealed partial class BcCompiler
 
     // Per-file cache of the package read DeduplicateAppPackageDirs performs on every .app it
     // scans, and the scan runs on EVERY GetSharedReferences call (it has to: its output is what
-    // the loader signature is computed from). Keyed by path + length + last-write ticks, so a
-    // package rewritten in place (InProcessAppPackager's synthetic .apps, a --watch rebuild)
-    // invalidates its own entry.
+    // the loader signature is computed from). Keyed by path + FileIdentity.MemoStamp (ctime
+    // included, #5499), so a package rewritten in place (InProcessAppPackager's synthetic .apps, a
+    // --watch rebuild), even to the same length with its mtime put back, invalidates its own entry.
     //
     // AppLoader.ReadPackageMeta answers both questions off one open and carries them across
     // PROCESSES in its on-disk index — that index is keyed on the package's CONTENT since
@@ -1063,20 +1063,22 @@ public sealed partial class BcCompiler
     // the right key HERE precisely because this dictionary dies with the process: all it has
     // to notice is a package rewritten underneath it.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<
-        string, (long Length, long Ticks, AppManifest? Manifest, bool HasSymbolReference)> _appMetaCache = new();
+        string, (string Stamp, AppManifest? Manifest, bool HasSymbolReference)> _appMetaCache = new();
 
-    private static (AppManifest? Manifest, bool HasSymbolReference) ReadAppMeta(FileInfo fi)
+    internal static (AppManifest? Manifest, bool HasSymbolReference) ReadAppMeta(FileInfo fi)
     {
         var path = fi.FullName;
-        long len, ticks;
-        try { len = fi.Length; ticks = fi.LastWriteTimeUtc.Ticks; }
+        string? stamp;
+        try { stamp = AlRunner.Infrastructure.FileIdentity.MemoStamp(path); }
         catch { return AppLoader.ReadPackageMeta(path); }
 
-        if (_appMetaCache.TryGetValue(path, out var hit) && hit.Length == len && hit.Ticks == ticks)
+        // No stamp (statx declined ctime, or the file cannot be stat'ed): read through, never key weaker.
+        if (stamp == null) return AppLoader.ReadPackageMeta(path);
+        if (_appMetaCache.TryGetValue(path, out var hit) && hit.Stamp == stamp)
             return (hit.Manifest, hit.HasSymbolReference);
 
         var meta = AppLoader.ReadPackageMeta(path);
-        _appMetaCache[path] = (len, ticks, meta.Manifest, meta.HasSymbolReference);
+        _appMetaCache[path] = (stamp, meta.Manifest, meta.HasSymbolReference);
         return meta;
     }
 

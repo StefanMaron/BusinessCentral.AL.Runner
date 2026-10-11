@@ -113,6 +113,28 @@ internal static class FileIdentity
     }
 
     /// <summary>
+    /// The stamp an in-process memo compares to notice that a file was written since it was read,
+    /// or null when the memo must be bypassed. Where statx answers it is the <see cref="Probe"/> key,
+    /// ctime included (#5409, #5499); where the platform does not answer at all, length and mtime ticks
+    /// (the documented fallback, #5410); where statx answered but declined ctime, or the file cannot be
+    /// stat'ed, null: a caller re-reads and never keys weaker. The two shapes cannot collide, a probe
+    /// key starts with <c>ino|</c>.
+    /// </summary>
+    internal static string? MemoStamp(string fullPath, Func<string, (string? Key, bool Declined)>? probe = null)
+    {
+        try
+        {
+            // The probe is a seam for the two answers a test cannot make a filesystem give.
+            var (key, declined) = (probe ?? Probe)(fullPath);
+            if (key != null) return key;
+            if (declined) return null;
+            var f = new FileInfo(fullPath);
+            return f.Exists ? f.Length + "|" + f.LastWriteTimeUtc.Ticks : null;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
     /// The key out of what statx reported. ALL of inode, size, mtime and ctime, not just the inode: a
     /// filesystem that reported an inode and declined the rest would silently hand back
     /// `ino|maj:min:ino|0|0.0|0.0`, a key carrying none of the anti-aliasing weight, for every file on

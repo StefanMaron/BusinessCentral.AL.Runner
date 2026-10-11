@@ -37,15 +37,7 @@ public sealed partial class BcCompiler
     // platform cannot say, length and mtime; where it declined ctime, nothing, so the loader is rebuilt.
     private static string? StatOf(string path)
     {
-        try
-        {
-            var full = Path.GetFullPath(path);
-            var (key, declined) = AlRunner.Infrastructure.FileIdentity.Probe(full);
-            if (key != null) return key;
-            if (declined) return null;
-            var f = new FileInfo(full);
-            return f.Exists ? f.Length + "|" + f.LastWriteTimeUtc.Ticks : null;
-        }
+        try { return AlRunner.Infrastructure.FileIdentity.MemoStamp(Path.GetFullPath(path)); }
         catch { return null; }
     }
 

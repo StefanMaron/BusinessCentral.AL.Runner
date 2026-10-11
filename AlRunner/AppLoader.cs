@@ -43,8 +43,8 @@ public sealed record AppManifest(
 
 public static class AppLoader
 {
-    // Process-wide memo for ReadManifest, keyed by (full path, length, mtime) — cheap to
-    // compute (a single FileInfo stat, never touches file content) so a repeat ReadManifest
+    // Process-wide memo for ReadManifest, keyed by (full path, FileIdentity.MemoStamp) — cheap to
+    // compute (a single stat, never touches file content) so a repeat ReadManifest
     // call for the SAME file within this process is a dictionary lookup, not a re-parse.
     // Measured: this method is called ~113 times across ProvisioningCheck.CheckPlatformApps,
     // DependencyResolver.EnsureIndexed/Resolve and BcCompiler for the SAME package caches,
@@ -57,6 +57,12 @@ public static class AppLoader
         _manifestMemo.Clear();
         _symbolReferenceMemo.Clear();
     }
+
+    // The in-process memo key: the path and the file's stamp (FileIdentity.MemoStamp: ctime included, so
+    // a rewrite that keeps the length and puts mtime back is a different key, #5499). Null means the
+    // stamp cannot be trusted, and the call reads through to the on-disk index, which is keyed on content.
+    internal static string? MemoKeyOf(string fullPath, Func<string, (string? Key, bool Declined)>? probe = null)
+        => FileIdentity.MemoStamp(fullPath, probe) is { } stamp ? $"{fullPath}|{stamp}" : null;
 
     // Test-only: counts genuine ReadManifestUncached invocations (i.e. BOTH the memo AND
     // the disk index missed) per full .app path — mirrors BcAppSymbolCache
@@ -89,9 +95,12 @@ public static class AppLoader
     /// parallel in CI) can skip re-parsing too. The two are keyed DIFFERENTLY, and #2987 is
     /// the reason:
     ///
-    /// <para><b>The in-process memo</b> stays keyed on the stat — (full path, length,
-    /// last-write-time-UTC). It cannot outlive the process, so the only thing it has to get
-    /// right is noticing a file rewritten underneath it, which a stat does.</para>
+    /// <para><b>The in-process memo</b> stays keyed on a stat — (full path, <see
+    /// cref="FileIdentity.MemoStamp"/>: device, inode, length, mtime and ctime). It cannot outlive the
+    /// process, so the only thing it has to get right is noticing a file rewritten underneath it. ctime
+    /// is in it because mtime is writable (#5499): a same-length in-place rewrite with the mtime put
+    /// back keeps (path, length, mtime), and ctime is what the writer cannot set. Where the stamp is
+    /// unavailable the memo is skipped and the on-disk index answers.</para>
     ///
     /// <para><b>The on-disk index</b> is persisted and read by other processes, so a stat is
     /// not good enough: two runs can agree on (path, length, mtime) and disagree on the bytes,
@@ -105,18 +114,17 @@ public static class AppLoader
     public static AppManifest? ReadManifest(string appPath)
         => ReadManifestCore(appPath, ComputeManifestIndexIdentity);
 
-    internal static AppManifest? ReadManifestCore(string appPath, Func<string, string> identityOf)
+    internal static AppManifest? ReadManifestCore(
+        string appPath, Func<string, string> identityOf, Func<string, (string? Key, bool Declined)>? probe = null)
     {
         string fullPath;
-        long length;
-        long mtimeTicks;
+        string? memoKey;
         try
         {
             fullPath = Path.GetFullPath(appPath);
             var fi = new FileInfo(fullPath);
             if (!fi.Exists) return null;
-            length = fi.Length;
-            mtimeTicks = fi.LastWriteTimeUtc.Ticks;
+            memoKey = MemoKeyOf(fullPath, probe);
         }
         catch
         {
@@ -126,8 +134,7 @@ public static class AppLoader
             return ReadManifestUncached(appPath);
         }
 
-        var memoKey = $"{fullPath}|{length}|{mtimeTicks}";
-        if (_manifestMemo.TryGetValue(memoKey, out var memoized))
+        if (memoKey != null && _manifestMemo.TryGetValue(memoKey, out var memoized))
             return memoized;
 
         var identity = TryPackageIdentity(fullPath, identityOf);
@@ -137,7 +144,7 @@ public static class AppLoader
             if (indexed != null)
             {
                 PerfTrace.Log($"app-manifests HIT {Path.GetFileName(fullPath)}");
-                _manifestMemo[memoKey] = indexed;
+                if (memoKey != null) _manifestMemo[memoKey] = indexed;
                 return indexed;
             }
         }
@@ -148,7 +155,7 @@ public static class AppLoader
         // No identity AND no parse means the bytes are unreadable — say so, or the package
         // vanishes from the scan set without explanation. See ReportUnreadablePackage.
         if (parsed == null && identity == null) ReportUnreadablePackage(fullPath);
-        _manifestMemo[memoKey] = parsed;
+        if (memoKey != null) _manifestMemo[memoKey] = parsed;
         if (parsed != null && identity != null)
             TryWriteManifestIndex(identity, parsed);
         return parsed;
@@ -469,15 +476,13 @@ public static class AppLoader
         string appPath, Func<string, string> identityOf)
     {
         string fullPath;
-        long length;
-        long mtimeTicks;
+        string? memoKey;
         try
         {
             fullPath = Path.GetFullPath(appPath);
             var fi = new FileInfo(fullPath);
             if (!fi.Exists) return (null, false);
-            length = fi.Length;
-            mtimeTicks = fi.LastWriteTimeUtc.Ticks;
+            memoKey = MemoKeyOf(fullPath);
         }
         catch
         {
@@ -486,8 +491,8 @@ public static class AppLoader
             return ReadPackageMetaUncached(appPath);
         }
 
-        var memoKey = $"{fullPath}|{length}|{mtimeTicks}";
-        if (_symbolReferenceMemo.TryGetValue(memoKey, out var memoFlag)
+        if (memoKey != null
+            && _symbolReferenceMemo.TryGetValue(memoKey, out var memoFlag)
             && _manifestMemo.TryGetValue(memoKey, out var memoManifest))
             return (memoManifest, memoFlag);
 
@@ -503,8 +508,11 @@ public static class AppLoader
             && TryReadIndexPayload(identity) is { HasSymbolReference: { } storedFlag } hit)
         {
             PerfTrace.Log($"app-manifests HIT+symref {Path.GetFileName(fullPath)}");
-            _manifestMemo[memoKey] = hit.Manifest;
-            _symbolReferenceMemo[memoKey] = storedFlag;
+            if (memoKey != null)
+            {
+                _manifestMemo[memoKey] = hit.Manifest;
+                _symbolReferenceMemo[memoKey] = storedFlag;
+            }
             return (hit.Manifest, storedFlag);
         }
 
@@ -512,8 +520,11 @@ public static class AppLoader
         var read = ReadPackageMetaUncached(fullPath);
         PerfTrace.Log($"app-manifests MISS {Path.GetFileName(fullPath)}");
         if (read.Manifest == null && identity == null) ReportUnreadablePackage(fullPath);
-        _manifestMemo[memoKey] = read.Manifest;
-        _symbolReferenceMemo[memoKey] = read.HasSymbolReference;
+        if (memoKey != null)
+        {
+            _manifestMemo[memoKey] = read.Manifest;
+            _symbolReferenceMemo[memoKey] = read.HasSymbolReference;
+        }
         if (read.Manifest != null && identity != null)
             TryWriteManifestIndex(identity, read.Manifest, read.HasSymbolReference);
         return read;
