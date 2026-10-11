@@ -30,4 +30,14 @@ codeunit 65400 "Package Field Tests"
         if E."Existing Points" <> 9 then
             Error('Expected 9, got %1', E."Existing Points");
     end;
+
+    [Test]
+    procedure Rank_TheFirstFileDecidesItsType()
+    var
+        E: Record "Loyalty Entry";
+    begin
+        E.Rank := 3;
+        if E.Rank <> 3 then
+            Error('Expected 3, got %1', E.Rank);
+    end;
 }

@@ -134,6 +134,7 @@ public sealed class TddPackageMemberTests : IDisposable
         TddMissingObjectTests.RunRunner(env, "--tdd", $"--cache \"{Path.Combine(_scratch, "cache-" + Path.GetFileName(test))}\"", "--output-json", $"\"{test}\"");
 
     private const string PointsStub = "Loyalty Entry: field \"Points\": Integer";
+    private const string RankStub = "Loyalty Entry: field \"Rank\": Integer";
 
     /// <summary>The outcome both package shapes, and either order of the compile's diagnostics, must give.</summary>
     private static void AssertTheRun((string StdOut, string StdErr, int Exit) run)
@@ -161,30 +162,37 @@ public sealed class TddPackageMemberTests : IDisposable
         // fields and values keep running as before and name no stub.
         AssertPasses("NewField_RoundTripsThroughTheTable", PointsStub);
         AssertPasses("SameField_InASecondFile", PointsStub);
+        AssertPasses("Rank_TheFirstFileDecidesItsType", RankStub);
         AssertPasses("ExistingField_IsThePackagesOwn");
         AssertPasses("NewValue_IsItsOwnValue", "Loyalty Tier: enum value \"Gold\" = 65402");
         AssertPasses("TwoNewValues_AreTwoValues", "Loyalty Tier: enum value \"Gold\" = 65402", "Loyalty Tier: enum value \"Platinum\" = 65403");
         AssertPasses("ExistingValue_IsThePackagesOwn");
         AssertPasses("NamespacedTable_GetsItsFieldFromAnExtension", "Namespaced Entry: field \"Bonus\": Integer");
 
+        // "Rank" is typed by the first file (file order) that assigns it; the second file, assigning a Boolean, no longer compiles.
+        var loser = Find("Rank_TheSecondFileLoses");
+        Assert.Equal("fail", loser.GetProperty("status").GetString());
+        Assert.Contains("'Boolean'", loser.GetProperty("message").GetString());
+        Assert.Empty(TddMissingObjectTests.StubsOf(loser));
+
         // Not generated: an enum or a table the package does not let anyone extend, and a field nothing assigns.
         AssertRefused("NonExtensibleEnum_IsRefused", "error AL0132: '\"Closed Tier\"' does not contain a definition for 'Omega'");
         AssertRefused("NonExtensibleTable_IsRefused", "error AL0132: 'Record \"Sealed Entry\"' does not contain a definition for 'Extra'");
         AssertRefused("FieldOnlyRead_IsRefused", "error AL0132: 'Record \"Loyalty Entry\"' does not contain a definition for 'Unassigned'");
 
-        Assert.Equal(10, doc.RootElement.GetProperty("total").GetInt32());
-        Assert.Equal(7, doc.RootElement.GetProperty("passed").GetInt32());
-        Assert.Equal(3, doc.RootElement.GetProperty("failed").GetInt32());
+        Assert.Equal(12, doc.RootElement.GetProperty("total").GetInt32());
+        Assert.Equal(8, doc.RootElement.GetProperty("passed").GetInt32());
+        Assert.Equal(4, doc.RootElement.GetProperty("failed").GetInt32());
 
         // One extension per table or enum, in the first file (file order) that names a missing member of it. The test app's range
-        // is 65400-65419 and the ids are free for THAT object type: the seven codeunits hold 65400-65406 and do not matter, the
+        // is 65400-65419 and the ids are free for THAT object type: the eight codeunits hold 65400-65407 and do not matter, the
         // app's own tableextension and enumextension (A0Existing.al) hold 65400 and do. A field id also skips the package
         // table's own "Existing Points" (65400) and the app's extension field (65401); an ordinal skips the package enum's
         // "Legacy" (65400) and the app's extension value (65401). Tables and enums are taken in name order.
         var lines = stderr.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
         Assert.Equal(new[]
         {
-            "--tdd: table extension \"TDD Table Extension 65401\" (id 65401) beside package table Loyalty Entry in A1FieldTests.Codeunit.al: \"Points\" (field 65402)",
+            "--tdd: table extension \"TDD Table Extension 65401\" (id 65401) beside package table Loyalty Entry in A1FieldTests.Codeunit.al: \"Points\" (field 65402), \"Rank\" (field 65403)",
             "--tdd: table extension \"TDD Table Extension 65402\" (id 65402) beside package table Namespaced Entry in A4NamespaceTests.Codeunit.al: \"Bonus\" (field 65400)",
             "--tdd: enum extension \"TDD Enum Extension 65401\" (id 65401) beside package enum Loyalty Tier in A2ValueTests.Codeunit.al: \"Gold\" (ordinal 65402), \"Platinum\" (ordinal 65403)",
         }, lines.Where(l => l.StartsWith("--tdd: table extension") || l.StartsWith("--tdd: enum extension")).ToList());
@@ -192,7 +200,7 @@ public sealed class TddPackageMemberTests : IDisposable
         Assert.Contains("--tdd: not generated beside package table Sealed Entry: \"Extra\" - the table is not extensible", stderr);
         Assert.Contains("--tdd: not generated beside package enum Closed Tier: \"Omega\" - the enum is not Extensible", stderr);
         Assert.DoesNotContain("no members were generated", stdout + stderr);
-        Assert.Contains("--tdd: generated 4 member(s) this run:", stderr);
+        Assert.Contains("--tdd: generated 5 member(s) this run:", stderr);
     }
 
     /// <summary>
@@ -232,7 +240,7 @@ public sealed class TddPackageMemberTests : IDisposable
     /// <summary>
     /// Every tableextension and enumextension id of the app's range is already taken (by extensions the test app declares), so
     /// the extensions cannot be generated: nothing is, every test that needs one is FAILED as before, and the run says why.
-    /// Ids are per object type: the seven codeunits holding the same numbers do not matter, and the fillers do.
+    /// Ids are per object type: the eight codeunits holding the same numbers do not matter, and the fillers do.
     /// </summary>
     [SkippableFact]
     public void NoFreeExtensionId_RefusesAndSaysSo()
@@ -240,9 +248,9 @@ public sealed class TddPackageMemberTests : IDisposable
         TestArtifacts.SkipIfMissing();
         var test = MakeTestFolder("test-no-ids", withDll: false);
         var manifest = Path.Combine(test, "app.json");
-        File.WriteAllText(manifest, File.ReadAllText(manifest).Replace("\"to\": 65419", "\"to\": 65406"));
+        File.WriteAllText(manifest, File.ReadAllText(manifest).Replace("\"to\": 65419", "\"to\": 65407"));
         var fillers = new StringBuilder();
-        for (var id = 65401; id <= 65406; id++) // 65400 is A0Existing.al's
+        for (var id = 65401; id <= 65407; id++) // 65400 is A0Existing.al's
         {
             fillers.AppendLine($"tableextension {id} \"Filler Table {id}\" extends \"Loyalty Entry\" {{ fields {{ field({id + 100}; \"Filler {id}\"; Integer) {{ }} }} }}");
             fillers.AppendLine($"enumextension {id} \"Filler Enum {id}\" extends \"Loyalty Tier\" {{ value({id + 100}; \"Filler {id}\") {{ }} }}");
@@ -263,7 +271,7 @@ public sealed class TddPackageMemberTests : IDisposable
         Assert.Contains("no members were generated", stdout + stderr);
         // Every file names a missing member of a package table or enum, so every file is dropped and every test FAILED on an
         // AL0132 (the same count as without --tdd), none of them against a generated member.
-        Assert.Equal(10, tests.Count);
+        Assert.Equal(12, tests.Count);
         Assert.All(tests, t =>
         {
             Assert.Equal("fail", t.GetProperty("status").GetString());
