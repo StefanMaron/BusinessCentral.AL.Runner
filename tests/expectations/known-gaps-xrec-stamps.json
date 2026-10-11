@@ -1,0 +1,26 @@
+[
+  {
+    "codeunitId": 67812,
+    "CodeunitName": "Test xRec Stamp Fields",
+    "Method": "XRecStamp_Insert_RecSystemStampsNotYetWrittenInOnInsert",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/5509",
+    "Note": "The runner stamps SystemCreatedAt/ModifiedAt/By on Rec before OnInsert; BC writes them below the trigger, so Rec holds the default inside it. Identical on all ten cloud legs (BC 27.0 to 29.0) of corpus PR 564. Added by agent stma-auto-7."
+  },
+  {
+    "codeunitId": 67812,
+    "CodeunitName": "Test xRec Stamp Fields",
+    "Method": "XRecStamp_Insert_RecAutoIncrementKeyNotYetAssignedInOnInsert",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/5509",
+    "Note": "The runner assigns the AutoIncrement key before OnInsert; BC assigns it after the trigger, so Rec.\"Entry No.\" is 0 inside it. Same legs of corpus PR 564. Added by agent stma-auto-7."
+  },
+  {
+    "codeunitId": 67812,
+    "CodeunitName": "Test xRec Stamp Fields",
+    "Method": "XRecStamp_Modify_RecModifiedAtNotYetRestampedInOnModify",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/5509",
+    "Note": "The runner re-stamps SystemModifiedAt before OnModify; BC does it after the trigger, so Rec.SystemModifiedAt still holds the pre-Modify value inside it. Same legs of corpus PR 564. Added by agent stma-auto-7."
+  }
+]
