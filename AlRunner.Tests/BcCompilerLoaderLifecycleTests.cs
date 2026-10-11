@@ -84,6 +84,26 @@ public sealed class BcCompilerLoaderLifecycleTests : IDisposable
         Assert.Equal(warmed, BcCompiler.ReferenceLoaderWarmSpecCount);
     }
 
+    /// <summary>Bundles whose dependencies do not overlap: going back to an earlier one is a reuse too,
+    /// because what the loader is warm for only ever grows until it is rebuilt.</summary>
+    [Fact]
+    public void ReturningToDisjointEarlierDependencies_ReusesTheLoaderAndDoesNotWarmAgain()
+    {
+        var dir = MakeDir("cache");
+        WriteGraph(dir);
+
+        SetDeps(dir, "Assert");
+        InvokeGetSharedReferences(new[] { dir });
+        SetDeps(dir, "Greeter");
+        InvokeGetSharedReferences(new[] { dir });
+        var warmed = BcCompiler.ReferenceLoaderWarmSpecCount;
+        SetDeps(dir, "Assert");
+        InvokeGetSharedReferences(new[] { dir });
+
+        Assert.Equal(1, BcCompiler.ReferenceLoaderBuildCount);
+        Assert.Equal(warmed, BcCompiler.ReferenceLoaderWarmSpecCount);
+    }
+
     // ── EQUIVALENCE: the reused loader answers what a loader built for the bundle answers ─
 
     [Fact]
@@ -261,6 +281,32 @@ public sealed class BcCompilerLoaderLifecycleTests : IDisposable
             BcCompiler.JudgeLoaderReuse(new[] { named with { Identified = false } }, new HashSet<string>(), build));
         Assert.Equal(BcCompiler.LoaderReuse.Reuse,
             BcCompiler.JudgeLoaderReuse(new[] { named }, new HashSet<string> { named.Key }, build));
+    }
+
+    /// <summary>…and the flag itself: a package that is in the scan but cannot be read is reported as
+    /// one whose bytes were not named, a readable one as named.</summary>
+    [Fact]
+    public void ServedDeps_FlagAnUnreadablePackageAsUnidentified_AndAReadableOneAsIdentified()
+    {
+        var dir = MakeDir("cache");
+        var readable = WritePkg(dir, "Greeter", "1.0.0.0");
+        var gone = Path.Combine(dir, "gone.app");
+        var inventory = new List<BcCompiler.PackageScanEntry>
+        {
+            new(Path.GetFullPath(readable.Path), readable.AppId, "Contoso", "Greeter", new Version(1, 0, 0, 0)),
+            new(Path.GetFullPath(gone), Guid.NewGuid(), "Contoso", "Gone", new Version(1, 0, 0, 0)),
+        };
+        var deps = new List<(AppManifest, string)>
+        {
+            (ManifestOf(readable), readable.Path),
+            (new AppManifest("Contoso", "Gone", new Version(1, 0, 0, 0), Guid.NewGuid(), new List<DependencyRef>()), gone),
+        };
+
+        var served = BcCompiler.PackageServedDeps(deps, inventory);
+
+        Assert.Equal(2, served.Count);
+        Assert.True(served.Single(d => d.Path == Path.GetFullPath(readable.Path)).Identified);
+        Assert.False(served.Single(d => d.Path == Path.GetFullPath(gone)).Identified);
     }
 
     // ── Seeding every bundle's closure first: one stage, so one loader, for the run ─────
