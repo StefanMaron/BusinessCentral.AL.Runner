@@ -33,60 +33,77 @@ public sealed class TddPackageMemberTests : IDisposable
         try { Directory.Delete(_scratch, recursive: true); } catch { }
     }
 
-    /// <summary>The package of the fixture's dep app: what a compiled .app carries (symbols), and optionally the source.</summary>
-    internal static byte[] BuildDepApp(bool embedSource)
+    private const string TwinAppId = "5c3a1f87-9d24-4e60-b8a2-6f1e0d3c7b95";
+    private const string TwinFileStem = "AL_Runner_Fixtures_Tdd_Package_Members_Twin_1.0.0.0";
+
+    private const string DepSymbols = """
+        {"Tables":[
+          {"Id":65380,"Name":"Loyalty Entry","Fields":[
+            {"Id":1,"Name":"Id","TypeDefinition":{"Name":"Integer"},"Properties":[]},
+            {"Id":65400,"Name":"Existing Points","TypeDefinition":{"Name":"Integer"},"Properties":[]}
+          ],"Keys":[{"Name":"PK","FieldNames":["Id"],"Properties":[{"Name":"Clustered","Value":"1"}]}],
+          "ReferenceSourceFileName":"LoyaltyEntry.Table.al","Properties":[]},
+          {"Id":65384,"Name":"Sealed Entry","Fields":[
+            {"Id":1,"Name":"Id","TypeDefinition":{"Name":"Integer"},"Properties":[]}
+          ],"Keys":[{"Name":"PK","FieldNames":["Id"],"Properties":[{"Name":"Clustered","Value":"1"}]}],
+          "ReferenceSourceFileName":"SealedEntry.Table.al","Properties":[{"Name":"Extensible","Value":"false"}]}
+        ],
+        "EnumTypes":[
+          {"Id":65381,"Name":"Loyalty Tier","Values":[
+            {"Ordinal":0,"Name":"Bronze","Properties":[]},{"Ordinal":1,"Name":"Silver","Properties":[]},{"Ordinal":65400,"Name":"Legacy","Properties":[]}
+          ],"ReferenceSourceFileName":"LoyaltyTier.Enum.al","Properties":[{"Name":"Extensible","Value":"true"}]},
+          {"Id":65382,"Name":"Closed Tier","Values":[
+            {"Ordinal":0,"Name":"Alpha","Properties":[]}
+          ],"ReferenceSourceFileName":"ClosedTier.Enum.al","Properties":[]}
+        ],
+        "Namespaces":[{"Name":"Loyalty","Namespaces":[{"Name":"Data","Tables":[
+          {"Id":65383,"Name":"Namespaced Entry","Fields":[
+            {"Id":1,"Name":"Id","TypeDefinition":{"Name":"Integer"},"Properties":[]},
+            {"Id":2,"Name":"Existing Points","TypeDefinition":{"Name":"Integer"},"Properties":[]}
+          ],"Keys":[{"Name":"PK","FieldNames":["Id"],"Properties":[{"Name":"Clustered","Value":"1"}]}],
+          "ReferenceSourceFileName":"NamespacedEntry.Table.al","Properties":[]}
+        ]}]}],
+        "AppId":"@APPID@","Name":"Tdd Package Members Dep","Publisher":"AL Runner Fixtures","Version":"1.0.0.0"}
+        """;
+
+    /// <summary>A second package declaring a table of the same name as the dep's "Namespaced Entry", in another namespace. One
+    /// app cannot declare two tables of one name (AL0197) whatever their namespaces, so the twin is another app.</summary>
+    private const string TwinSymbols = """
+        {"Namespaces":[{"Name":"Other","Namespaces":[{"Name":"Data","Tables":[
+          {"Id":65385,"Name":"Namespaced Entry","Fields":[
+            {"Id":1,"Name":"Id","TypeDefinition":{"Name":"Integer"},"Properties":[]},
+            {"Id":2,"Name":"Twin Points","TypeDefinition":{"Name":"Integer"},"Properties":[]}
+          ],"Keys":[{"Name":"PK","FieldNames":["Id"],"Properties":[{"Name":"Clustered","Value":"1"}]}],
+          "ReferenceSourceFileName":"TwinEntry.Table.al","Properties":[]}
+        ]}]}],
+        "AppId":"@APPID@","Name":"Tdd Package Members Twin","Publisher":"AL Runner Fixtures","Version":"1.0.0.0"}
+        """;
+
+    /// <summary>A package as a compiled .app carries it: symbols, and optionally the app's own source.</summary>
+    private static byte[] BuildApp(string appId, string name, int idFrom, int idTo, string symbols, string? sourceDir)
     {
         var manifest = $"""
             <?xml version="1.0" encoding="utf-8"?>
             <Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
-              <App Id="{DepAppId}" Name="Tdd Package Members Dep" Publisher="AL Runner Fixtures" Version="1.0.0.0" Target="Cloud" ShowMyCode="true" PropagateDependencies="false" />
-              <IdRanges><IdRange MinObjectId="65380" MaxObjectId="65399" /></IdRanges>
+              <App Id="{appId}" Name="{name}" Publisher="AL Runner Fixtures" Version="1.0.0.0" Target="Cloud" ShowMyCode="true" PropagateDependencies="false" />
+              <IdRanges><IdRange MinObjectId="{idFrom}" MaxObjectId="{idTo}" /></IdRanges>
               <Dependencies />
             </Package>
             """;
-        var symbols = """
-            {"Tables":[
-              {"Id":65380,"Name":"Loyalty Entry","Fields":[
-                {"Id":1,"Name":"Id","TypeDefinition":{"Name":"Integer"},"Properties":[]},
-                {"Id":65400,"Name":"Existing Points","TypeDefinition":{"Name":"Integer"},"Properties":[]}
-              ],"Keys":[{"Name":"PK","FieldNames":["Id"],"Properties":[{"Name":"Clustered","Value":"1"}]}],
-              "ReferenceSourceFileName":"LoyaltyEntry.Table.al","Properties":[]},
-              {"Id":65384,"Name":"Sealed Entry","Fields":[
-                {"Id":1,"Name":"Id","TypeDefinition":{"Name":"Integer"},"Properties":[]}
-              ],"Keys":[{"Name":"PK","FieldNames":["Id"],"Properties":[{"Name":"Clustered","Value":"1"}]}],
-              "ReferenceSourceFileName":"SealedEntry.Table.al","Properties":[{"Name":"Extensible","Value":"false"}]}
-            ],
-            "EnumTypes":[
-              {"Id":65381,"Name":"Loyalty Tier","Values":[
-                {"Ordinal":0,"Name":"Bronze","Properties":[]},{"Ordinal":1,"Name":"Silver","Properties":[]},{"Ordinal":65400,"Name":"Legacy","Properties":[]}
-              ],"ReferenceSourceFileName":"LoyaltyTier.Enum.al","Properties":[{"Name":"Extensible","Value":"true"}]},
-              {"Id":65382,"Name":"Closed Tier","Values":[
-                {"Ordinal":0,"Name":"Alpha","Properties":[]}
-              ],"ReferenceSourceFileName":"ClosedTier.Enum.al","Properties":[]}
-            ],
-            "Namespaces":[{"Name":"Loyalty","Namespaces":[{"Name":"Data","Tables":[
-              {"Id":65383,"Name":"Namespaced Entry","Fields":[
-                {"Id":1,"Name":"Id","TypeDefinition":{"Name":"Integer"},"Properties":[]},
-                {"Id":2,"Name":"Existing Points","TypeDefinition":{"Name":"Integer"},"Properties":[]}
-              ],"Keys":[{"Name":"PK","FieldNames":["Id"],"Properties":[{"Name":"Clustered","Value":"1"}]}],
-              "ReferenceSourceFileName":"NamespacedEntry.Table.al","Properties":[]}
-            ]}]}],
-            "AppId":"@APPID@","Name":"Tdd Package Members Dep","Publisher":"AL Runner Fixtures","Version":"1.0.0.0"}
-            """.Replace("@APPID@", DepAppId);
         using var zipBuffer = new MemoryStream();
         using (var zip = new ZipArchive(zipBuffer, ZipArchiveMode.Create, leaveOpen: true))
         {
-            void Add(string name, string content)
+            void Add(string entryName, string content)
             {
-                var entry = zip.CreateEntry(name);
+                var entry = zip.CreateEntry(entryName);
                 using var w = new StreamWriter(entry.Open());
                 w.Write(content);
             }
             Add("[Content_Types].xml", """<?xml version="1.0" encoding="utf-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="" /><Default Extension="json" ContentType="" /><Default Extension="al" ContentType="" /></Types>""");
             Add("NavxManifest.xml", manifest);
-            Add("SymbolReference.json", symbols);
-            if (embedSource)
-                foreach (var f in Directory.GetFiles(Path.Combine(FixtureRoot, "dep"), "*.al"))
+            Add("SymbolReference.json", symbols.Replace("@APPID@", appId));
+            if (sourceDir != null)
+                foreach (var f in Directory.GetFiles(sourceDir, "*.al"))
                     Add("src/" + Path.GetFileName(f), File.ReadAllText(f));
         }
         var payload = zipBuffer.ToArray();
@@ -95,7 +112,7 @@ public sealed class TddPackageMemberTests : IDisposable
         bw.Write(Encoding.ASCII.GetBytes("NAVX"));
         bw.Write(40);
         bw.Write(2);
-        bw.Write(Guid.Parse(DepAppId).ToByteArray());
+        bw.Write(Guid.Parse(appId).ToByteArray());
         bw.Write((long)payload.Length);
         bw.Write(Encoding.ASCII.GetBytes("NAVX"));
         bw.Write(payload);
@@ -109,7 +126,11 @@ public sealed class TddPackageMemberTests : IDisposable
     {
         var dir = TddMissingObjectTests.CopyFolder(Path.Combine(FixtureRoot, "test"), Path.Combine(_scratch, name));
         Directory.CreateDirectory(Path.Combine(dir, ".alpackages"));
-        File.WriteAllBytes(Path.Combine(dir, ".alpackages", DepFileStem + ".app"), BuildDepApp(embedSource: !withDll));
+        File.WriteAllBytes(Path.Combine(dir, ".alpackages", DepFileStem + ".app"),
+            BuildApp(DepAppId, "Tdd Package Members Dep", 65380, 65384, DepSymbols, withDll ? null : Path.Combine(FixtureRoot, "dep")));
+        // The twin always ships its source: one package of each tier in the DLL run.
+        File.WriteAllBytes(Path.Combine(dir, ".alpackages", TwinFileStem + ".app"),
+            BuildApp(TwinAppId, "Tdd Package Members Twin", 65385, 65389, TwinSymbols, Path.Combine(FixtureRoot, "twin")));
         if (withDll)
         {
             Directory.CreateDirectory(Path.Combine(dir, ".deps-bin"));
@@ -167,7 +188,8 @@ public sealed class TddPackageMemberTests : IDisposable
         AssertPasses("NewValue_IsItsOwnValue", "Loyalty Tier: enum value \"Gold\" = 65402");
         AssertPasses("TwoNewValues_AreTwoValues", "Loyalty Tier: enum value \"Gold\" = 65402", "Loyalty Tier: enum value \"Platinum\" = 65403");
         AssertPasses("ExistingValue_IsThePackagesOwn");
-        AssertPasses("NamespacedTable_GetsItsFieldFromAnExtension", "Namespaced Entry: field \"Bonus\": Integer");
+        AssertPasses("NamespacedTable_GetsItsFieldFromAnExtension", "Loyalty.Data.Namespaced Entry: field \"Bonus\": Integer");
+        AssertPasses("TwinTable_GetsItsOwnExtension", "Other.Data.Namespaced Entry: field \"Bonus\": Integer");
 
         // "Rank" is typed by the first file (file order) that assigns it; the second file, assigning a Boolean, no longer compiles.
         var loser = Find("Rank_TheSecondFileLoses");
@@ -180,12 +202,12 @@ public sealed class TddPackageMemberTests : IDisposable
         AssertRefused("NonExtensibleTable_IsRefused", "error AL0132: 'Record \"Sealed Entry\"' does not contain a definition for 'Extra'");
         AssertRefused("FieldOnlyRead_IsRefused", "error AL0132: 'Record \"Loyalty Entry\"' does not contain a definition for 'Unassigned'");
 
-        Assert.Equal(12, doc.RootElement.GetProperty("total").GetInt32());
-        Assert.Equal(8, doc.RootElement.GetProperty("passed").GetInt32());
+        Assert.Equal(13, doc.RootElement.GetProperty("total").GetInt32());
+        Assert.Equal(9, doc.RootElement.GetProperty("passed").GetInt32());
         Assert.Equal(4, doc.RootElement.GetProperty("failed").GetInt32());
 
         // One extension per table or enum, in the first file (file order) that names a missing member of it. The test app's range
-        // is 65400-65419 and the ids are free for THAT object type: the eight codeunits hold 65400-65407 and do not matter, the
+        // is 65400-65419 and the ids are free for THAT object type: the nine codeunits hold 65400-65408 and do not matter, the
         // app's own tableextension and enumextension (A0Existing.al) hold 65400 and do. A field id also skips the package
         // table's own "Existing Points" (65400) and the app's extension field (65401); an ordinal skips the package enum's
         // "Legacy" (65400) and the app's extension value (65401). Tables and enums are taken in name order.
@@ -193,14 +215,15 @@ public sealed class TddPackageMemberTests : IDisposable
         Assert.Equal(new[]
         {
             "--tdd: table extension \"TDD Table Extension 65401\" (id 65401) beside package table Loyalty Entry in A1FieldTests.Codeunit.al: \"Points\" (field 65402), \"Rank\" (field 65403)",
-            "--tdd: table extension \"TDD Table Extension 65402\" (id 65402) beside package table Namespaced Entry in A4NamespaceTests.Codeunit.al: \"Bonus\" (field 65400)",
+            "--tdd: table extension \"TDD Table Extension 65402\" (id 65402) beside package table Loyalty.Data.Namespaced Entry in A4NamespaceTests.Codeunit.al: \"Bonus\" (field 65400)",
+            "--tdd: table extension \"TDD Table Extension 65403\" (id 65403) beside package table Other.Data.Namespaced Entry in A9TwinTests.Codeunit.al: \"Bonus\" (field 65400)",
             "--tdd: enum extension \"TDD Enum Extension 65401\" (id 65401) beside package enum Loyalty Tier in A2ValueTests.Codeunit.al: \"Gold\" (ordinal 65402), \"Platinum\" (ordinal 65403)",
         }, lines.Where(l => l.StartsWith("--tdd: table extension") || l.StartsWith("--tdd: enum extension")).ToList());
         Assert.Contains("--tdd: not generated beside package table Loyalty Entry: \"Unassigned\" - no assignment `Rec.Field := <expression>` fixes its type", stderr);
         Assert.Contains("--tdd: not generated beside package table Sealed Entry: \"Extra\" - the table is not extensible", stderr);
         Assert.Contains("--tdd: not generated beside package enum Closed Tier: \"Omega\" - the enum is not Extensible", stderr);
         Assert.DoesNotContain("no members were generated", stdout + stderr);
-        Assert.Contains("--tdd: generated 5 member(s) this run:", stderr);
+        Assert.Contains("--tdd: generated 6 member(s) this run:", stderr);
     }
 
     /// <summary>
@@ -240,7 +263,7 @@ public sealed class TddPackageMemberTests : IDisposable
     /// <summary>
     /// Every tableextension and enumextension id of the app's range is already taken (by extensions the test app declares), so
     /// the extensions cannot be generated: nothing is, every test that needs one is FAILED as before, and the run says why.
-    /// Ids are per object type: the eight codeunits holding the same numbers do not matter, and the fillers do.
+    /// Ids are per object type: the nine codeunits holding the same numbers do not matter, and the fillers do.
     /// </summary>
     [SkippableFact]
     public void NoFreeExtensionId_RefusesAndSaysSo()
@@ -248,9 +271,9 @@ public sealed class TddPackageMemberTests : IDisposable
         TestArtifacts.SkipIfMissing();
         var test = MakeTestFolder("test-no-ids", withDll: false);
         var manifest = Path.Combine(test, "app.json");
-        File.WriteAllText(manifest, File.ReadAllText(manifest).Replace("\"to\": 65419", "\"to\": 65407"));
+        File.WriteAllText(manifest, File.ReadAllText(manifest).Replace("\"to\": 65419", "\"to\": 65408"));
         var fillers = new StringBuilder();
-        for (var id = 65401; id <= 65407; id++) // 65400 is A0Existing.al's
+        for (var id = 65401; id <= 65408; id++) // 65400 is A0Existing.al's
         {
             fillers.AppendLine($"tableextension {id} \"Filler Table {id}\" extends \"Loyalty Entry\" {{ fields {{ field({id + 100}; \"Filler {id}\"; Integer) {{ }} }} }}");
             fillers.AppendLine($"enumextension {id} \"Filler Enum {id}\" extends \"Loyalty Tier\" {{ value({id + 100}; \"Filler {id}\") {{ }} }}");
@@ -264,14 +287,14 @@ public sealed class TddPackageMemberTests : IDisposable
         var tests = doc.RootElement.GetProperty("tests").EnumerateArray().ToList();
         Assert.All(tests, t => Assert.Empty(TddMissingObjectTests.StubsOf(t)));
         Assert.Contains("--tdd: not generated beside package table Loyalty Entry: \"Points\" - no free tableextension id in the app's idRanges for it", stderr);
-        Assert.Contains("--tdd: not generated beside package table Namespaced Entry: \"Bonus\" - no free tableextension id in the app's idRanges for it", stderr);
+        Assert.Contains("--tdd: not generated beside package table Loyalty.Data.Namespaced Entry: \"Bonus\" - no free tableextension id in the app's idRanges for it", stderr);
         Assert.Contains("--tdd: not generated beside package enum Loyalty Tier: \"Gold\" - no free enumextension id in the app's idRanges for it", stderr);
         Assert.DoesNotContain("TDD Table Extension", stderr);
         Assert.DoesNotContain("TDD Enum Extension", stderr);
         Assert.Contains("no members were generated", stdout + stderr);
         // Every file names a missing member of a package table or enum, so every file is dropped and every test FAILED on an
         // AL0132 (the same count as without --tdd), none of them against a generated member.
-        Assert.Equal(12, tests.Count);
+        Assert.Equal(13, tests.Count);
         Assert.All(tests, t =>
         {
             Assert.Equal("fail", t.GetProperty("status").GetString());

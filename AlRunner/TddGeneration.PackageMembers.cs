@@ -39,7 +39,7 @@ public static partial class TddGeneration
         // diagnostics in an order that changes between runs, and no id nor shape may follow it.
         foreach (var table in entries.GroupBy(e => TableKeyOf(e.Target)).OrderBy(g => g.Key, StringComparer.Ordinal))
         {
-            var tableName = table.First().Target.TargetObjectName;
+            var tableName = DisplayNameOf(table.First().Target);
             void Refuse(string field, string reason) =>
                 Console.Error.WriteLine($"--tdd: not generated beside package table {tableName}: \"{field}\" - {reason}");
             try
@@ -160,7 +160,7 @@ public static partial class TddGeneration
         foreach (var enumGroup in entries.GroupBy(e => TableKeyOf(e.Target)).OrderBy(g => g.Key, StringComparer.Ordinal))
         {
             var target = enumGroup.First().Target;
-            var enumName = target.TargetObjectName;
+            var enumName = DisplayNameOf(target);
             void Refuse(string value, string reason) =>
                 Console.Error.WriteLine($"--tdd: not generated beside package enum {enumName}: \"{value}\" - {reason}");
             try
@@ -269,6 +269,14 @@ public static partial class TddGeneration
     {
         var ns = (TableSymbolOf(type) as NavCA.ITypeSymbol ?? type)?.ContainingNamespace;
         return ns == null || ns.IsGlobalNamespace || string.IsNullOrEmpty(ns.QualifiedName) ? "" : ns.QualifiedName;
+    }
+
+    /// <summary>The name a message and an annotation use: qualified by the namespace when there is one, because two
+    /// tables of one name may sit in two namespaces and the reader must be able to tell which got the member.</summary>
+    private static string DisplayNameOf(Target target)
+    {
+        var ns = NamespaceOf(target.TargetType);
+        return ns.Length == 0 ? target.TargetObjectName : $"{ns}.{target.TargetObjectName}";
     }
 
     /// <summary>The table written as an <c>extends</c> target: qualified by its namespace, because the file the extension

@@ -11,6 +11,12 @@
       "name": "Tdd Package Members Dep",
       "publisher": "AL Runner Fixtures",
       "version": "1.0.0.0"
+    },
+    {
+      "id": "5c3a1f87-9d24-4e60-b8a2-6f1e0d3c7b95",
+      "name": "Tdd Package Members Twin",
+      "publisher": "AL Runner Fixtures",
+      "version": "1.0.0.0"
     }
   ],
   "idRanges": [
