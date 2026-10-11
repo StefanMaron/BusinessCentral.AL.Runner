@@ -52,6 +52,27 @@ DOC = """\
 ```
 
 ## [Link text](https://example.com/x) heading
+
+## The page `<Methods>` subtree
+
+## Closed heading ##
+
+## See [the page](https://example.com) and `<X>` here
+
+## Email <a id="email-anchor"></a>
+
+## Order matters #<a id="order-anchor"></a>
+
+#nospace heading text
+
+    # indented code line
+
+```text
+~~~
+# Fenced after the wrong closer
+```
+
+## After the fences
 """
 
 # The throwaway trees cite a doc directory spelled in two pieces: this file is itself under
@@ -131,6 +152,33 @@ def main() -> int:
     expect("a # line inside a code fence is not a heading", False,
            cite("not-a-heading-this-sits-inside-a-fence"),
            "is not in that file")
+
+    # --- the rules added with the fixes, one case each ----------------------------
+    expect("a code span keeps its text, tags included (GitHub: methods)", True,
+           cite("the-page-methods-subtree"))
+    expect("the tag-stripped slug of a code span is not an anchor", False,
+           cite("the-page--subtree"), "anchor #the-page--subtree is not in that file")
+    expect("a link BEFORE a code span is still reduced to its text", True,
+           cite("see-the-page-and-x-here"))
+    expect("closing #s are not part of the heading", True, cite("closed-heading"))
+    expect("a closing-# slug with a trailing hyphen is not an anchor", False,
+           cite("closed-heading-"), "is not in that file")
+    expect("the space before a trailing <a id> survives: trailing hyphen", True,
+           cite("email-"))
+    expect("so the hyphen-less slug is not an anchor", False, cite("email"),
+           "anchor #email is not in that file")
+    expect("a # before a trailing tag is not a closing sequence (tags go after it)", True,
+           cite("order-matters-"))
+    expect("so stripping tags first would wrongly give the bare slug", False,
+           cite("order-matters"), "anchor #order-matters is not in that file")
+    expect("#word without a space is not a heading", False,
+           cite("nospace-heading-text"), "is not in that file")
+    expect("a 4-space-indented # is code, not a heading", False,
+           cite("indented-code-line"), "is not in that file")
+    expect("a fence opened with backticks is not closed by ~~~", False,
+           cite("fenced-after-the-wrong-closer"), "is not in that file")
+    expect("the heading after the fences is still found", True,
+           cite("after-the-fences"))
 
     # --- the escape hatch is keyed on the marker, never on the location ------------
     expect("a marked fixture path is exempt", True,

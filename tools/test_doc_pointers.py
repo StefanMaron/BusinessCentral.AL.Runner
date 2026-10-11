@@ -113,6 +113,21 @@ _MD_LINK = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
 _HTML_TAG = re.compile(r"</?[A-Za-z][^>]*>")
 
 
+_CODE_SPAN = re.compile(r"(`+)(.+?)\1")
+
+
+def _reduce_inline(text: str) -> str:
+    """Link syntax to its text, HTML tags dropped -- except inside a `code span`,
+    whose content GitHub keeps as written (`<Methods>` slugs to `methods`)."""
+    out, pos = [], 0
+    for m in _CODE_SPAN.finditer(text):
+        out.append(_HTML_TAG.sub("", _MD_LINK.sub(r"\1", text[pos:m.start()])))
+        out.append(m.group(2))
+        pos = m.end()
+    out.append(_HTML_TAG.sub("", _MD_LINK.sub(r"\1", text[pos:])))
+    return "".join(out)
+
+
 def anchors_of(markdown: str) -> set[str]:
     """The anchors GitHub would give this document (#4480).
 
@@ -138,9 +153,10 @@ def anchors_of(markdown: str) -> set[str]:
         m = _ATX_HEADING.match(line)
         if not m or m.group("text") is None:
             continue
-        text = _HTML_TAG.sub("", _MD_LINK.sub(r"\1", m.group("text")))
-        text = re.sub(r"[ \t]+#+$", "", text).strip()
-        base = slug(text)
+        # Order matters: the closing `#`s go first, then tags and links are reduced
+        # OUTSIDE code spans only, and nothing is stripped afterwards -- GitHub keeps the
+        # space before a trailing <a id> tag, so `Email <a id="x"></a>` slugs to `email-`.
+        base = slug(_reduce_inline(re.sub(r"[ \t]+#+$", "", m.group("text"))))
         n = seen.get(base, 0)
         seen[base] = n + 1
         found.add(base if n == 0 else f"{base}-{n}")
@@ -521,7 +537,7 @@ def check_anchor_logic() -> None:
         "explicit <a id> is an anchor": "report-rendering" in a,
         "explicit <a name> is an anchor": "legacy-name" in a,
         "heading with trailing <a id> still slugs its text":
-            "351-report-rendering-layout--request-page" in a,
+            "351-report-rendering-layout--request-page-" in a,
         "absent anchor is absent": "nope" not in a,
         "trailing period is not part of the anchor":
             # the self-test cites paths that must NOT exist.
