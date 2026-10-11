@@ -257,8 +257,9 @@ public static partial class TddGeneration
         return string.Equals(lastPart, name, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>Name first, so tables and enums are taken (and take their ids) in name order whichever namespace they are in.</summary>
     private static string TableKeyOf(Target target)
-        => $"{NamespaceOf(target.TargetType)}|{target.TargetObjectName}".ToLowerInvariant();
+        => $"{target.TargetObjectName}|{NamespaceOf(target.TargetType)}".ToLowerInvariant();
 
     /// <summary>The table a `Record "X"` type is a record of.</summary>
     private static NavCA.ITableTypeSymbol? TableSymbolOf(NavCA.ITypeSymbol? type)
