@@ -193,6 +193,27 @@ public sealed class BcCompilerPackageClosureTests : IDisposable
         Assert.Equal(6, names.Count);
     }
 
+    [Fact]
+    public void TheRescanForADependencyCompiledFromSource_ServesTheClosureAndNothingElse()
+    {
+        var dir = MakeDir("cache");
+        WriteClosure(dir);
+        WriteNoise(dir, BcManifestCacheCapacity + 30);
+        var mid = _byName["Mid"];
+        // Another publisher's "Mid": a survivor sharing the excluded app's name, which is what
+        // makes hiding the excluded app unsafe and sends the compile to a rescan of its own.
+        WritePkg(dir, "Mid", "Fabrikam", "1.0.0.0");
+        _byName["Mid"] = mid;
+
+        SetDeps(dir, "Root");   // Leaf is reachable only through the excluded Mid: its manifest must still route the closure
+        using var _ = BcCompiler.ScopeCurrentAppIdentity(mid.AppId, mid.Publisher, System.Version.Parse(mid.Version));
+        var loader = InvokeGetSharedReferences(new[] { dir }).Loader!;
+
+        Assert.Equal(2, BcCompiler.ReferenceLoaderBuildCount);   // the shared loader, then the rescan
+        Assert.NotNull(loader.LoadModule(SpecFor(_byName["Leaf"]), new List<Diagnostic>()));
+        Assert.Null(loader.LoadModule(SpecFor(_byName["Noise 7"]), new List<Diagnostic>()));
+    }
+
     // ── helpers ────────────────────────────────────────────────────────────────────────
 
     /// <summary>Root -> Mid (two versions) -> Leaf by declared dependency, plus Application (which

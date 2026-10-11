@@ -1200,6 +1200,7 @@ public sealed partial class BcCompiler
         var picked = new List<string>();
         inventory = new List<PackageScanEntry>();
         var manifests = new List<AppManifest>();
+        var excludedManifests = new List<AppManifest>();   // still route the closure to what they depend on
         // #2178: remembered, not just counted. When the staging dir is what BC ends up
         // naming in an AL1022 "could not be found in the package cache folders" message,
         // a package that was IN one of the caller's dirs and dropped here is precisely the
@@ -1225,7 +1226,7 @@ public sealed partial class BcCompiler
                 scanned++;
                 var (m, hasSymbolReference) = ReadAppMeta(appInfo);
                 if (m == null) continue;
-                if (excludeAppId != null && m.AppId == excludeAppId.Value) { changed = true; continue; }
+                if (excludeAppId != null && m.AppId == excludeAppId.Value) { changed = true; excludedManifests.Add(m); continue; }
                 if (!seen.Add((m.AppId, m.Version.ToString()))) { changed = true; continue; }
                 // Drop packages carrying no SymbolReference.json. The native .app scanner
                 // cannot serve them — it reports AL1023 "package file is not valid" — and the
@@ -1275,7 +1276,8 @@ public sealed partial class BcCompiler
         var outsideClosure = 0;
         if (closure != null && picked.Count > BcManifestCacheCapacity)
         {
-            var keep = ComputeClosure(manifests, closure);
+            var keep = ComputeClosure(manifests.Concat(excludedManifests).ToList(), closure);
+            keep.RemoveWhere(i => i >= manifests.Count);
             if (keep.Count < picked.Count)
             {
                 outsideClosure = picked.Count - keep.Count;
