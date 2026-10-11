@@ -155,6 +155,7 @@ public sealed class TddPackageMemberTests : IDisposable
         TddMissingObjectTests.RunRunner(env, "--tdd", $"--cache \"{Path.Combine(_scratch, "cache-" + Path.GetFileName(test))}\"", "--output-json", $"\"{test}\"");
 
     private const string PointsStub = "Loyalty Entry: field \"Points\": Integer";
+    private const string LateStub = "Loyalty Entry: field \"Late\": Integer";
     private const string RankStub = "Loyalty Entry: field \"Rank\": Integer";
 
     /// <summary>The outcome both package shapes, and either order of the compile's diagnostics, must give.</summary>
@@ -182,7 +183,7 @@ public sealed class TddPackageMemberTests : IDisposable
         // A field the package table lacks is read back through the table, in either file that names it; the package's own
         // fields and values keep running as before and name no stub.
         AssertPasses("NewField_RoundTripsThroughTheTable", PointsStub);
-        AssertPasses("SameField_InASecondFile", PointsStub);
+        AssertPasses("SameField_InASecondFile", PointsStub, LateStub);
         AssertPasses("Rank_TheFirstFileDecidesItsType", RankStub);
         AssertPasses("ExistingField_IsThePackagesOwn");
         AssertPasses("NewValue_IsItsOwnValue", "Loyalty Tier: enum value \"Gold\" = 65402");
@@ -214,7 +215,7 @@ public sealed class TddPackageMemberTests : IDisposable
         var lines = stderr.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
         Assert.Equal(new[]
         {
-            "--tdd: table extension \"TDD Table Extension 65401\" (id 65401) beside package table Loyalty Entry in A1FieldTests.Codeunit.al: \"Points\" (field 65402), \"Rank\" (field 65403)",
+            "--tdd: table extension \"TDD Table Extension 65401\" (id 65401) beside package table Loyalty Entry in A1FieldTests.Codeunit.al: \"Late\" (field 65402), \"Points\" (field 65403), \"Rank\" (field 65404)",
             "--tdd: table extension \"TDD Table Extension 65402\" (id 65402) beside package table Loyalty.Data.Namespaced Entry in A4NamespaceTests.Codeunit.al: \"Bonus\" (field 65400)",
             "--tdd: table extension \"TDD Table Extension 65403\" (id 65403) beside package table Other.Data.Namespaced Entry in A9TwinTests.Codeunit.al: \"Bonus\" (field 65400)",
             "--tdd: enum extension \"TDD Enum Extension 65401\" (id 65401) beside package enum Loyalty Tier in A2ValueTests.Codeunit.al: \"Gold\" (ordinal 65402), \"Platinum\" (ordinal 65403)",
@@ -223,7 +224,7 @@ public sealed class TddPackageMemberTests : IDisposable
         Assert.Contains("--tdd: not generated beside package table Sealed Entry: \"Extra\" - the table is not extensible", stderr);
         Assert.Contains("--tdd: not generated beside package enum Closed Tier: \"Omega\" - the enum is not Extensible", stderr);
         Assert.DoesNotContain("no members were generated", stdout + stderr);
-        Assert.Contains("--tdd: generated 6 member(s) this run:", stderr);
+        Assert.Contains("--tdd: generated 7 member(s) this run:", stderr);
     }
 
     /// <summary>

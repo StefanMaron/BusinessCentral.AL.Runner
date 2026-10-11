@@ -1,5 +1,5 @@
 /// <summary>"Points" is also assigned in A1FieldTests, which sorts first: the tableextension lives there, once, and this
-/// file compiles against the same field.</summary>
+/// file compiles against the same field. "Late" is named only here, and still goes to that one extension.</summary>
 codeunit 65405 "Package Second File Tests"
 {
     Subtype = Test;
@@ -12,9 +12,10 @@ codeunit 65405 "Package Second File Tests"
     begin
         E.Id := 3;
         E.Points := 11;
+        E.Late := 12;
         E.Insert();
         E.Get(3);
-        if E.Points <> 11 then
-            Error('Expected 11, got %1', E.Points);
+        if (E.Points <> 11) or (E.Late <> 12) then
+            Error('Expected 11 and 12, got %1 and %2', E.Points, E.Late);
     end;
 }
