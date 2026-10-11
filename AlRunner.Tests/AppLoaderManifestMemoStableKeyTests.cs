@@ -50,6 +50,14 @@ public sealed class AppLoaderManifestMemoStableKeyTests : IDisposable
         try { Directory.Delete(_cacheRoot, recursive: true); } catch { }
     }
 
+    // Declared before the first test on purpose: TestArtifactsGateTests' skip detector attributes a skip call to the
+    // [Fact] declared above it, so after a plain [Fact] this helper would be read as that test being able to skip.
+    private static void RequireLinuxStatx()
+    {
+        // Linux only, as FileIdentityTests is: a missing key or missing coreutils fails below rather than skipping.
+        Skip.IfNot(OperatingSystem.IsLinux(), "ctime is only available through statx on Linux (FileIdentity header)");
+    }
+
     // ── the defect, end to end, through each memo ──────────────────────────────────────────
 
     [SkippableFact]
@@ -183,12 +191,6 @@ public sealed class AppLoaderManifestMemoStableKeyTests : IDisposable
     }
 
     // ── fixture ────────────────────────────────────────────────────────────────────────────
-
-    private static void RequireLinuxStatx()
-    {
-        // Linux only, as FileIdentityTests is: a missing key or missing coreutils fails below rather than skipping.
-        Skip.IfNot(OperatingSystem.IsLinux(), "ctime is only available through statx on Linux (FileIdentity header)");
-    }
 
     private string Write(string name, byte[] bytes)
     {
