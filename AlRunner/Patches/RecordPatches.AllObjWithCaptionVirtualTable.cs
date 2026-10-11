@@ -251,73 +251,24 @@ public static partial class RecordPatches
     /// The id of the object named <paramref name="objectName"/> WITHIN the kind
     /// <paramref name="kind"/>, or -1 when this run knows no such object.
     ///
-    /// <para>Deliberately not <c>ResolveObjectIdByKindAndName</c>, which is otherwise the same
-    /// question: that one walks <see cref="EnumerateKnownAlObjects"/>, and every caller of this
-    /// method is ITSELF inside that walk — building an AllObjWithCaption row from an inventory
-    /// item. Re-entering a running iterator over the same dictionaries is what
-    /// <c>InvalidOperationException: Collection was modified</c> is made of, because
-    /// ResolveTableIdByName writes to <c>_parsedTables</c> when it faults a dependency table
-    /// in. So this reads the per-kind dictionaries directly and never the shared walk.</para>
-    /// <para>Name comparison is exact and case-insensitive, matching how the dependency page
-    /// index and BuildObjectIndexes compare — never the space-stripping NamesEqual, which
-    /// would let "Item Attribute" and a hypothetical "ItemAttribute" answer for each other.</para>
+    /// <para>Deliberately not <c>ResolveObjectIdByKindAndName</c>: that walks
+    /// <see cref="EnumerateKnownAlObjects"/>, and every caller here is ITSELF inside that walk, so
+    /// re-entering it is what <c>InvalidOperationException: Collection was modified</c> is made of
+    /// (ResolveTableIdByName writes <c>_parsedTables</c>). This reads the per-kind registries
+    /// directly (<see cref="ExtensionTargetSourceEntries"/>, <see cref="ExtensionTargetDependencyEntries"/>).</para>
+    /// <para>Name comparison is exact and case-insensitive, never the space-stripping NamesEqual,
+    /// which would let "Item Attribute" and "ItemAttribute" answer for each other.</para>
+    /// <para>Inside an inventory walk the answer comes from a per-walk name map
+    /// (<see cref="ExtensionTargetIndex"/>); outside one it is the linear scan the map is built
+    /// from, so the two cannot disagree about order (#5474).</para>
     /// </summary>
     private static int ResolveObjectIdOfKindByName(string kind, string objectName)
     {
         if (string.IsNullOrWhiteSpace(objectName)) return -1;
-
-        static bool Same(string? a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
-
-        switch (NormalizeObjectTypeName(kind))
-        {
-            case "table":
-                foreach (var t in InAppGroupScope("table", _parsedTables))
-                    if (Same(t.TableName, objectName)) return t.TableId;
-                foreach (var t in EnumerateBcAppTableSymbols())
-                    if (Same(t.TableName, objectName)) return t.TableId;
-                return -1;
-            case "page":
-                foreach (var p in InAppGroupScope("page", _parsedPages))
-                    if (Same(p.Name, objectName)) return p.Id;
-                return ResolveDependencyObjectIdByName("Page", objectName);
-            case "report":
-                foreach (var r in InAppGroupScope("report", _parsedReports))
-                    if (Same(r.Name, objectName)) return r.Id;
-                return ResolveDependencyObjectIdByName("Report", objectName);
-            case "enum":
-                // AlEnumMetadataRegistry already merges this bundle's own enums with those
-                // scanned out of dependency .apps, so it needs no dependency fallback.
-                foreach (var e in AlEnumMetadataRegistry.Snapshot())
-                    if (Same(e.Name, objectName)) return e.Id;
-                return -1;
-            case "permissionset":
-                foreach (var (declKey, declValue) in _parsedObjectDecls)
-                {
-                    var d = InAppGroupScope(declKey.Kind, declKey.Id, declValue);
-                    if (NormalizeObjectTypeName(d.Kind) == "permissionset" && Same(d.Name, objectName))
-                        return d.Id;
-                }
-                return ResolveDependencyObjectIdByName("PermissionSet", objectName);
-            default:
-                return -1;
-        }
-    }
-
-    /// <summary>
-    /// The id of a precompiled dependency object of <paramref name="kind"/> named
-    /// <paramref name="objectName"/>, read off the registered .apps' flat object lists. -1
-    /// when none matches. Used only for the kinds with no dedicated per-kind dependency index.
-    /// </summary>
-    private static int ResolveDependencyObjectIdByName(string kind, string objectName)
-    {
-        var wanted = NormalizeObjectTypeName(kind);
-        foreach (var (_, symbols) in EnumerateRegisteredBcAppSymbols("extension target (AllObjWithCaption)"))
-            foreach (var o in symbols.Objects)
-                if (o.Id > 0
-                    && NormalizeObjectTypeName(o.Kind) == wanted
-                    && string.Equals(o.Name, objectName, StringComparison.OrdinalIgnoreCase))
-                    return o.Id;
-        return -1;
+        var normalized = NormalizeObjectTypeName(kind);
+        return _listingObjectInventory > 0
+            ? (_extensionTargetIndex ??= new ExtensionTargetIndex()).Resolve(normalized, objectName)
+            : ResolveObjectIdOfKindByNameLinear(normalized, objectName);
     }
 
     private static Dictionary<string, int>? _awcObjectTypeOrdinals;

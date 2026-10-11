@@ -206,7 +206,9 @@ public static partial class RecordPatches
     {
         _listingObjectInventory++;
         try { return walk(); }
-        finally { _listingObjectInventory--; }
+        // The extension-target maps (RecordPatches.ExtensionTargetIndex.cs) live for one walk: dropped
+        // here when the outermost walk ends, so the next walk reads the registries again (#5474).
+        finally { if (--_listingObjectInventory == 0) _extensionTargetIndex = null; }
     }
 
     /// <summary>
