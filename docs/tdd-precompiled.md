@@ -114,7 +114,10 @@ What differs from the procedure case, and what a later edit gets wrong:
   another type no longer compiles and is FAILED.
 - **Ids come from the test app's `idRanges`**, as for a generated object: the extension's id is the first free for ITS object type
   (a codeunit or table with the number does not take it, `TddPrecompiledStub.FreeTableExtensionId`), a field id or an enum ordinal the
-  first of the range that the table or enum does not use (its symbol), nor a tableextension or enumextension in the test app's own files does. A value is therefore NOT
+  first of the range that the table or enum does not use (its symbol), nor a tableextension or enumextension in the test app's own files does, nor one of ANOTHER app of the run does
+  (`Compilation.GetApplicationObjectExtensionTypeSymbolsAcrossModules` of the table or enum: a package, or a source folder of the run; #5491). Otherwise the id could be one the
+  other app's extension holds, which the compile refuses (AL0206 for a field, AL0231 for a value) and drops the home file for; when the other app's ids use up the
+  whole range the member is refused like any full range (`no free field id` / `no free ordinal`). A value is therefore NOT
   numbered after the enum's highest ordinal as for an enum of the app, and an `AsInteger()` assertion on it proves nothing. Tables and enums
   are taken in name order and fields and values in name order, whichever order the compile reported them in. The runner's compiler
   also accepts a field id or an ordinal outside the range (measured); the range is used because it is the one the app may allocate
@@ -143,9 +146,9 @@ What differs from the procedure case, and what a later edit gets wrong:
 ## Not covered (reported FAILED as before)
 
 An overload of a package's procedure, a call through anything but a plain variable, a field that is only read, a table or
-enum the package does not let anyone extend, and a field id or ordinal that another app's extension of the same table or enum already
-holds (the choice does not see it: a loud AL0206 / AL0231 that drops the file, #5491). An object no app declares at all is
+enum the package does not let anyone extend. An object no app declares at all is
 [`tdd-missing-object.md`](tdd-missing-object.md).
 
 Tests: `TddPrecompiledTests` (a DLL package and a source package, end to end), `TddPrecompiledStubTests`, `TddPackageMemberTests` (a field and a
-value, a DLL package beside a source package, a twin table in another namespace, the refusals).
+value, a DLL package beside a source package, a twin table in another namespace, the refusals),
+`TddPackageMemberOtherAppExtensionTests` (another package's and a source folder's extensions in the ids the test app may allocate from: a free id, the last id of the range, a full range).

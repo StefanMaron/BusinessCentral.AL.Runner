@@ -4,7 +4,7 @@
   "publisher": "AL Runner Fixtures",
   "version": "1.0.0.0",
   "brief": "The test app of the #5491 --tdd reproducer.",
-  "description": "Depends on a package whose table and enum lack a field and a value, and on a second package whose extensions already add members to them in the ids this app may allocate from.",
+  "description": "Depends on a package whose table and enum lack a field and a value, on a second package, and on a source folder, whose extensions already add members to them in the ids this app may allocate from.",
   "dependencies": [
     {
       "id": "8a88783b-4518-4c72-bf00-f4690193d949",
@@ -15,6 +15,12 @@
     {
       "id": "9f0c2ae1-c0fa-4d6f-84e7-a2f8c2f55413",
       "name": "Tdd Member Ext Pkg2",
+      "publisher": "AL Runner Fixtures",
+      "version": "1.0.0.0"
+    },
+    {
+      "id": "e0f052da-a213-4900-8d6f-8d2bc1b949a8",
+      "name": "Tdd Member Ext Bundle",
       "publisher": "AL Runner Fixtures",
       "version": "1.0.0.0"
     }

@@ -17,8 +17,8 @@ public static partial class TddGeneration
     /// One tableextension per package table, holding every field of that table the tests assign and the table does not
     /// declare, appended to the FIRST file (in file order) that names one: an extension is one object, and two files
     /// adding the same field would clash. A field is generated only from an assignment <c>Rec.Field := &lt;expr&gt;</c>, as for a
-    /// source table; its id is the first of the app's <c>idRanges</c> that no field of the table nor of a tableextension of
-    /// the compile uses. A table that cannot get an extension id, a field no site types, or a field id is refused with
+    /// source table; its id is the first of the app's <c>idRanges</c> that no field of the table, no tableextension of the
+    /// compile's own trees and no tableextension of another app of the run (#5491) uses. A table that cannot get an extension id, a field no site types, or a field id is refused with
     /// the reason on stderr and the tests fail as before. Trap: if the home file is dropped by the compile, the other
     /// files naming the field fail with the AL0132 again (loud, as for a generated object, #5447).
     /// </summary>
@@ -179,7 +179,7 @@ public static partial class TddGeneration
     /// The same for an enum (#5430): one enumextension per package enum, holding every value the tests name that the enum does
     /// not declare, appended to the first file that names one. Refused when the enum is not <c>Extensible</c> (the
     /// compile would reject the extension and take its file down). Each value takes the first ordinal of the app's
-    /// <c>idRanges</c> that neither the enum nor an enumextension of the compile uses.
+    /// <c>idRanges</c> that neither the enum, nor an enumextension of the compile's own trees, nor an enumextension of another app of the run (#5491) uses.
     /// </summary>
     private static void GenerateValuesBesidePackageEnums(
         NavCA.Compilation compilation, NavSyntax.SyntaxTree[] originalTrees, NavSyntax.SyntaxTree[] trees, NavCA.ParseOptions parseOptions,

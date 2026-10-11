@@ -43,12 +43,12 @@ public sealed class TddPackageMemberOtherAppExtensionTests : IDisposable
 
     /// <summary>The package the test's table and enum come from: its own members are id 1 (and 65400 for the Loyalty ones) and ordinal 0 (and 65400).</summary>
     private static readonly string DepSymbols =
-        "{\"Tables\":[" + Table(65380, "Loyalty Entry", 65400) + "," + Table(65381, "Edge Entry", null) + "," + Table(65382, "Full Entry", null) + "]," +
-        "\"EnumTypes\":[" + Enum(65383, "Loyalty Tier", 65400) + "," + Enum(65384, "Edge Tier", null) + "," + Enum(65385, "Full Tier", null) + "]," +
+        "{\"Tables\":[" + Table(65380, "Loyalty Entry", 65400) + "," + Table(65381, "Edge Entry", null) + "," + Table(65382, "Full Entry", null) + "," + Table(65386, "Bundle Entry", null) + "]," +
+        "\"EnumTypes\":[" + Enum(65383, "Loyalty Tier", 65400) + "," + Enum(65384, "Edge Tier", null) + "," + Enum(65385, "Full Tier", null) + "," + Enum(65387, "Bundle Tier", null) + "]," +
         "\"AppId\":\"@APPID@\",\"Name\":\"Tdd Member Ext Dep\",\"Publisher\":\"AL Runner Fixtures\",\"Version\":\"1.0.0.0\"}";
 
     /// <summary>The second package: extensions of the dep's objects whose members hold ids of the test app's range 65400-65419
-    /// ("Loyalty": 65401; "Edge": all but 65419; "Full": all of them).</summary>
+    /// ("Loyalty": 65401; "Edge": all but 65419; "Full": all of them). The source folder (bundle/) adds 65400 to "Bundle".</summary>
     private static readonly string Pkg2Symbols = BuildPkg2Symbols();
 
     private static string BuildPkg2Symbols()
@@ -125,7 +125,11 @@ public sealed class TddPackageMemberOtherAppExtensionTests : IDisposable
         File.WriteAllBytes(Path.Combine(test, ".alpackages", "AL_Runner_Fixtures_Tdd_Member_Ext_Pkg2_1.0.0.0.app"),
             BuildApp(Pkg2AppId, "Tdd Member Ext Pkg2", 65395, 65399, Pkg2Symbols, (DepAppId, "Tdd Member Ext Dep")));
 
-        var (stdout, stderr, exit) = TddMissingObjectTests.RunRunner(null, "--tdd", $"--cache \"{Path.Combine(_scratch, "cache")}\"", "--output-json", $"\"{test}\"");
+        // The third app is a source folder of the run (layered before the test app), its dependency found in the same .alpackages.
+        var bundle = TddMissingObjectTests.CopyFolder(Path.Combine(FixtureRoot, "bundle"), Path.Combine(_scratch, "bundle"));
+
+        var (stdout, stderr, exit) = TddMissingObjectTests.RunRunner(null, "--tdd", $"--cache \"{Path.Combine(_scratch, "cache")}\"",
+            "--output-json", $"--package-cache \"{Path.Combine(test, ".alpackages")}\"", $"\"{bundle}\"", $"\"{test}\"");
 
         // The other package's extensions hold 65401 (Loyalty), 65400-65418 (Edge) and 65400-65419 (Full): a generated member takes a free id
         // of the range, with the table's / enum's own 65400 skipped as well, and the compile accepts it.
@@ -146,8 +150,10 @@ public sealed class TddPackageMemberOtherAppExtensionTests : IDisposable
         AssertPasses("NewValue_TakesAFreeOrdinal", "Loyalty Tier: enum value \"Gold\" = 65402");
         AssertPasses("EdgeField_TakesTheLastId", "Edge Entry: field \"Edged\": Integer");
         AssertPasses("EdgeValue_TakesTheLastOrdinal", "Edge Tier: enum value \"Edged\" = 65419");
-        Assert.Equal(6, doc.RootElement.GetProperty("total").GetInt32());
-        Assert.Equal(4, doc.RootElement.GetProperty("passed").GetInt32());
+        AssertPasses("BundleField_TakesAFreeId", "Bundle Entry: field \"Bundled\": Integer");
+        AssertPasses("BundleValue_TakesAFreeOrdinal", "Bundle Tier: enum value \"Bundled\" = 65401");
+        Assert.Equal(8, doc.RootElement.GetProperty("total").GetInt32());
+        Assert.Equal(6, doc.RootElement.GetProperty("passed").GetInt32());
 
         // Nothing is free for "Full": refused with the reason, and its tests are FAILED on the original AL0132, naming no stub.
         foreach (var name in new[] { "FullField_IsRefused", "FullValue_IsRefused" })
@@ -160,13 +166,15 @@ public sealed class TddPackageMemberOtherAppExtensionTests : IDisposable
         var lines = stderr.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
         Assert.Equal(new[]
         {
-            "--tdd: table extension \"TDD Table Extension 65400\" (id 65400) beside package table Edge Entry in A2Edge.Codeunit.al: \"Edged\" (field 65419)",
-            "--tdd: table extension \"TDD Table Extension 65401\" (id 65401) beside package table Loyalty Entry in A1Loyalty.Codeunit.al: \"Points\" (field 65402)",
-            "--tdd: enum extension \"TDD Enum Extension 65400\" (id 65400) beside package enum Edge Tier in A2Edge.Codeunit.al: \"Edged\" (ordinal 65419)",
-            "--tdd: enum extension \"TDD Enum Extension 65401\" (id 65401) beside package enum Loyalty Tier in A1Loyalty.Codeunit.al: \"Gold\" (ordinal 65402)",
+            "--tdd: table extension \"TDD Table Extension 65400\" (id 65400) beside package table Bundle Entry in A4Bundle.Codeunit.al: \"Bundled\" (field 65401)",
+            "--tdd: table extension \"TDD Table Extension 65401\" (id 65401) beside package table Edge Entry in A2Edge.Codeunit.al: \"Edged\" (field 65419)",
+            "--tdd: table extension \"TDD Table Extension 65402\" (id 65402) beside package table Loyalty Entry in A1Loyalty.Codeunit.al: \"Points\" (field 65402)",
+            "--tdd: enum extension \"TDD Enum Extension 65400\" (id 65400) beside package enum Bundle Tier in A4Bundle.Codeunit.al: \"Bundled\" (ordinal 65401)",
+            "--tdd: enum extension \"TDD Enum Extension 65401\" (id 65401) beside package enum Edge Tier in A2Edge.Codeunit.al: \"Edged\" (ordinal 65419)",
+            "--tdd: enum extension \"TDD Enum Extension 65402\" (id 65402) beside package enum Loyalty Tier in A1Loyalty.Codeunit.al: \"Gold\" (ordinal 65402)",
         }, lines.Where(l => l.StartsWith("--tdd: table extension") || l.StartsWith("--tdd: enum extension")).ToList());
         Assert.Contains("--tdd: not generated beside package table Full Entry: \"Fulled\" - no free field id in the app's idRanges for it", stderr);
         Assert.Contains("--tdd: not generated beside package enum Full Tier: \"Fulled\" - no free ordinal in the app's idRanges for it", stderr);
-        Assert.Contains("--tdd: generated 4 member(s) this run:", stderr);
+        Assert.Contains("--tdd: generated 6 member(s) this run:", stderr);
     }
 }
