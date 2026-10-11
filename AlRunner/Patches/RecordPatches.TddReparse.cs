@@ -48,6 +48,8 @@ public static partial class RecordPatches
     /// <c>TryParseTableExtensionFile</c> registers one found on disk, so the record engine's table shape gains the field
     /// and the emitted <c>TableExtension{id}</c> type is attached to the base table's records. Like
     /// <see cref="TddReparseAndRefreshTable"/> it runs after the registration pass, which cannot see an in-memory object.
+    /// Observably equivalent to the extension being on disk: the same registry write, from the same text a file would hold;
+    /// without it the first access to the field throws "extension field N ... not found in NCLMetaTable" (#5430).
     /// </summary>
     internal static void TddRegisterTableExtension(string extensionObjectText)
     {

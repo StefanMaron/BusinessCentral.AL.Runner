@@ -361,8 +361,12 @@ internal static partial class ProgramSupport
         w.WriteLine("  procedure is generated in a new codeunit of the test's own compile, beside the");
         w.WriteLine("  object, and each call to it through a variable is pointed there; every other call");
         w.WriteLine("  keeps running the real object. The tests that reach it are named like any other");
-        w.WriteLine("  generated member. Not covered yet, so reported as a FAILED test: a field, an enum value,");
-        w.WriteLine("  or an overload of a package's object; see docs/tdd-precompiled.md.");
+        w.WriteLine("  generated member. A field a test assigns on a record of a package's table (`E.Points := 5`)");
+        w.WriteLine("  is generated in a tableextension of the test's own compile, and an enum value it names");
+        w.WriteLine("  (`T::Gold`) in an enumextension of a package's Extensible enum, with an id from the test");
+        w.WriteLine("  app's idRanges. Not covered yet, so reported as a FAILED test: an overload of a package's");
+        w.WriteLine("  procedure, a field only read, or a table or enum the package does not let anyone extend;");
+        w.WriteLine("  see docs/tdd-precompiled.md.");
         w.WriteLine();
         w.WriteLine("  A codeunit, a table or an enum that NO app declares (`Missing: Codeunit \"No Such Codeunit\"`,");
         w.WriteLine("  `T: Record \"No Such Table\"`, `K: Enum \"No Such Enum\"`, AL0185) is generated in memory under");

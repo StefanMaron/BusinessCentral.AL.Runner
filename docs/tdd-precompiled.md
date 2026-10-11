@@ -1,4 +1,4 @@
-# `--tdd` and a codeunit that arrives as a package (#5037)
+# `--tdd` and an object that arrives as a package (#5037, #5430)
 
 `al-runner --tdd test`, where the tests call a procedure the implementing codeunit does not declare yet and
 that codeunit is not a source folder of the run but a package: a `.app` in the test folder's
@@ -78,11 +78,66 @@ the `reaches generated stub(s)` line, the closing list), so it is never silent, 
 should assert its result: that assertion is what fails (`Expected 25, got 0`). Whether to refuse or
 distinctly label a stub of a Microsoft-published object is #5437.
 
+## A field of a package's table, a value of a package's enum (#5430)
+
+```al
+[Test] procedure NewField() var E: Record "Loyalty Entry"; begin E."Points" := 5; end;
+[Test] procedure NewValue() var T: Enum "Loyalty Tier"; begin T := "Loyalty Tier"::Gold; end;
+```
+
+where "Loyalty Entry" and "Loyalty Tier" are objects of a package that do not declare `Points` and `Gold`. Before this each test
+was FAILED with `AL0132` and the run closed with `--tdd: no members were generated`. The same rule as above: new objects that
+exist for this run only, nothing of the package changed, nothing written to disk. The member goes in a `tableextension`
+or an `enumextension` appended to the test's own file:
+
+```al
+tableextension 65401 "TDD Table Extension 65401" extends "Loyalty Entry" { fields { field(65402; "Points"; Integer) { } } }
+enumextension 65402 "TDD Enum Extension 65402" extends "Loyalty Tier" { value(65402; "Gold") { } }
+```
+
+One stderr line per extension names the ids it took (`--tdd: table extension "TDD Table Extension 65401" (id 65401) beside package
+table Loyalty Entry in A1FieldTests.Codeunit.al: "Points" (field 65402)`), and a test that reaches the member is annotated like any
+other (`Loyalty Entry: field "Points": Integer`, `Loyalty Tier: enum value "Gold" = 65402`). Measured on both package shapes
+(a DLL with symbols, and symbols with the app's source): the test writes the field, inserts, reads the row back through another
+record and gets the value; the enum value formats as its name and differs from the package's own.
+
+What differs from the procedure case, and what a later edit gets wrong:
+
+- **One extension per table or enum, in one file, not one per file.** A procedure stub is reached by rewriting each call site, so it
+  can sit per file. An extension changes the table itself, and two files adding the same field clash, so it goes in the FIRST file
+  (file order) naming a missing member of that table, holding every such member, and the other files compile against it. If that
+  file is dropped (a call `--tdd` refuses in it), the other files naming the field fail with the AL0132 again: loud, the
+  same trade as a generated object (`tdd-missing-object.md`, #5447).
+- **A field is typed only by an assignment** `Rec.Field := <expression>`, from the first site (file, then position) that has one; a field
+  that is only read, or assigned a Text (no length to infer), is refused, and the run says so
+  (`--tdd: not generated beside package table X: "F" - no assignment ...`). A site of the same field in another file that assigns
+  another type no longer compiles and is FAILED.
+- **Ids come from the test app's `idRanges`**, as for a generated object: the extension's id is the first free for ITS object type
+  (a codeunit or table with the number does not take it, `TddPrecompiledStub.FreeTableExtensionId`), a field id or an enum ordinal the
+  first of the range that the table or enum does not use (its symbol), nor an extension of the compile does. A value is therefore NOT
+  numbered after the enum's highest ordinal as for an enum of the app, and an `AsInteger()` assertion on it proves nothing. Tables and enums
+  are taken in name order and fields and values in name order, whichever order the compile reported them in. The runner's compiler
+  also accepts a field id or an ordinal outside the range (measured); the range is used because it is the one the app may allocate
+  from. Whether BC enforces that was not measured: this is a runner-only development tool, and no claim about BC rests on it.
+- **Refused when the package does not let anyone extend the object.** `IsExtensible` of the table or enum symbol is read first:
+  an extension of an enum without `Extensible = true` (AL0504) or of a table with `Extensible = false` (AL0564) does not compile (measured), and
+  would take its file down with it, so it is refused with the object named and the tests are FAILED on the original AL0132. No free extension id, field id
+  or ordinal in the ranges refuses the same way.
+- **The extended object is named with its namespace.** Two packages may each declare a table of one name in different namespaces (one
+  app cannot: AL0197 whatever the namespaces). An unqualified `extends "X"` was measured to bind to the FIRST of them silently, so
+  the field would land on the wrong table and the other table would get nothing; the message and the annotation carry the namespace too
+  (`Loyalty.Data.Namespaced Entry`).
+- **The record engine needs the extension registered** (`RecordPatches.TddRegisterTableExtension`, the call a generated field of a source
+  table makes through `TddReparseAndRefreshTable`). Without it the field compiles and the first access throws `extension field N from
+  extension M not found in NCLMetaTable` (measured, both package shapes). An enum is compiled from the trees and needs nothing.
+- **Trap: nothing removes the registration.** The record engine's copy of the extension is not taken back when the tests stop naming the field.
+  What that does to a `--watch` or server run was not measured.
+
 ## Not covered (reported FAILED as before)
 
-A field of a package's table, an enum value of a package's enum, an overload of a package's procedure, and a
-call through anything but a plain variable. The first two have the same shape (a new object beside it: a table
-extension, an enum extension); they are tracked from #5037. An object no app declares at all is
+An overload of a package's procedure, a call through anything but a plain variable, a field that is only read, and a table or
+enum the package does not let anyone extend. An object no app declares at all is
 [`tdd-missing-object.md`](tdd-missing-object.md).
 
-Tests: `TddPrecompiledTests` (a DLL package and a source package, end to end), `TddPrecompiledStubTests`.
+Tests: `TddPrecompiledTests` (a DLL package and a source package, end to end), `TddPrecompiledStubTests`, `TddPackageMemberTests` (a field and a
+value, a DLL package beside a source package, a twin table in another namespace, the refusals).

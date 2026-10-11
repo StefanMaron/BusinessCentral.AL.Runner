@@ -15,7 +15,8 @@
 // source of another bundle of the same run that is compiled from source — as overlay text
 // (TddCrossBundle.cs), recompiled by re-running the cycle. A procedure of a codeunit declared by neither
 // (a package's: .app symbols, a DLL or embedded source) is stubbed BESIDE the object in a new codeunit of
-// this compile, never in it (#5037, TddPrecompiledStub.cs, docs/tdd-precompiled.md); any other symbol
+// this compile, never in it (#5037, TddPrecompiledStub.cs, docs/tdd-precompiled.md), and a field or enum value of a package's
+// table or enum in a tableextension or enumextension of this compile (#5430, TddGeneration.PackageMembers.cs); any other symbol
 // declared by neither, or one BC couldn't resolve at all, is refused for a structural reason. A codeunit, a table or an enum no app
 // declares at all (AL0185) is first added as an object of the compile (TddGeneration.MissingObject.cs,
 // docs/tdd-missing-object.md), and the members its calls need are then generated as for any object. And because
@@ -238,7 +239,7 @@ public static partial class TddGeneration
     /// it's safe to re-derive per diagnostic including repeat diagnostics for an
     /// already-generated member). Returns null for every refuse case from this file's header:
     /// unrecognized syntax shape, unresolvable qualifier, or a qualifier declared outside this
-    /// compile's own trees that is neither a source bundle's nor a package's codeunit (a Target with Precompiled set).
+    /// compile's own trees that is neither a source bundle's nor a package's codeunit, table or enum (a Target with Precompiled set).
     /// </summary>
     private static Target? ResolveTarget(
         NavCA.Compilation compilation, NavSyntax.SyntaxTree[] originalTrees, NavDiag.Diagnostic diag)
