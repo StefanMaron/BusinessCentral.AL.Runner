@@ -1,6 +1,6 @@
 namespace Other.Data;
 
-table 65385 "Namespaced Entry"
+table 65390 "Namespaced Entry"
 {
     fields
     {
