@@ -543,13 +543,15 @@ public sealed class BcCompilerLoaderLifecycleTests : IDisposable
     private static Guid IdOf(string name)
         => new(System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(name)));
 
+    // A dependency edge carries CompatibilityId as every compiled app writes it: BC 27.5's loader does not
+    // follow an edge without one (measured, #5473 CI), 28.x does.
     private Pkg WritePkg(string dir, string name, string version, string[]? deps = null,
         bool floors = true, string marker = "x")
     {
         var id = _byName.TryGetValue(name, out var prev) ? prev.AppId : IdOf(name);
         var path = Path.Combine(dir, $"Contoso_{name}_{version}.app");
         var depXml = string.Join("", (deps ?? Array.Empty<string>()).Select(d =>
-            $"""<Dependency Id="{_byName[d].AppId}" Name="{d}" Publisher="Contoso" MinVersion="{_byName[d].Version}" />"""));
+            $"""<Dependency Id="{_byName[d].AppId}" Name="{d}" Publisher="Contoso" MinVersion="{_byName[d].Version}" CompatibilityId="0.0.0.0" />"""));
         var floorAttrs = floors ? """ Platform="28.0.0.0" """ : "";
         var manifest = $"""
             <?xml version="1.0" encoding="utf-8"?>
