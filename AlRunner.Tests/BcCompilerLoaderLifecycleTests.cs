@@ -362,15 +362,7 @@ public sealed class BcCompilerLoaderLifecycleTests : IDisposable
         var path = _byName["Assert"].Path;
         var length = new FileInfo(path).Length;
         var stamp = File.GetLastWriteTimeUtc(path);
-        // Different bytes, same size: the compressed size depends on the content, so look for a marker
-        // that lands on it.
-        const string original = "abcdefgh";
-        for (var shift = 1; shift < original.Length; shift++)
-        {
-            WritePkg(dir, "Assert", "1.0.0.0", deps: new[] { "Mid" },
-                marker: original[shift..] + original[..shift]);
-            if (new FileInfo(path).Length == length) break;
-        }
+        RewriteAssertToTheSameLength(dir, dependency: "Mid");
         File.SetLastWriteTimeUtc(path, stamp);
         Assert.Equal(length, new FileInfo(path).Length);   // the premise of this test
 
@@ -510,17 +502,18 @@ public sealed class BcCompilerLoaderLifecycleTests : IDisposable
         => string.Join(",", loader.GetDependencies(SpecFor(_byName[name]), new List<Diagnostic>())
             .Select(d => d.Name + "@" + d.Version).OrderBy(x => x, StringComparer.Ordinal));
 
-    /// <summary>Rewrites Assert so that it depends on Leaf instead of Mid and its file is exactly as long
-    /// as before; the compressed size depends on the content, so look for a marker that lands on it.</summary>
-    private void RewriteAssertToTheSameLength(string dir)
+    /// <summary>Rewrites Assert so that it depends on <paramref name="dependency"/> and its file is exactly
+    /// as long as before. The compressed size depends on the content, and on the package's random AppId,
+    /// so a handful of fixed markers sometimes lands on no match; search until one does.</summary>
+    private void RewriteAssertToTheSameLength(string dir, string dependency = "Leaf")
     {
         var path = _byName["Assert"].Path;
         var length = new FileInfo(path).Length;
         var rnd = new Random(1);
         for (var i = 0; i < 20000; i++)
         {
-            var marker = new string(Enumerable.Range(0, 8 + rnd.Next(0, 4)).Select(_ => (char)('a' + rnd.Next(26))).ToArray());
-            WritePkg(dir, "Assert", "1.0.0.0", deps: new[] { "Leaf" }, marker: marker);
+            var marker = new string(Enumerable.Range(0, 6 + rnd.Next(0, 9)).Select(_ => (char)('a' + rnd.Next(26))).ToArray());
+            WritePkg(dir, "Assert", "1.0.0.0", deps: new[] { dependency }, marker: marker);
             if (new FileInfo(path).Length == length) return;
         }
         throw new InvalidOperationException("no marker gave the same file length; the premise of the test is not met");
@@ -545,10 +538,15 @@ public sealed class BcCompilerLoaderLifecycleTests : IDisposable
         for (var i = 0; i < count; i++) WritePkg(dir, $"Noise {i}", "1.0.0.0");
     }
 
+    // Fixed per name: the AppId is in the package, so a random one moves its compressed size, and the
+    // same-length rewrites below need a size that is the same on every run.
+    private static Guid IdOf(string name)
+        => new(System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(name)));
+
     private Pkg WritePkg(string dir, string name, string version, string[]? deps = null,
         bool floors = true, string marker = "x")
     {
-        var id = _byName.TryGetValue(name, out var prev) ? prev.AppId : Guid.NewGuid();
+        var id = _byName.TryGetValue(name, out var prev) ? prev.AppId : IdOf(name);
         var path = Path.Combine(dir, $"Contoso_{name}_{version}.app");
         var depXml = string.Join("", (deps ?? Array.Empty<string>()).Select(d =>
             $"""<Dependency Id="{_byName[d].AppId}" Name="{d}" Publisher="Contoso" MinVersion="{_byName[d].Version}" />"""));
