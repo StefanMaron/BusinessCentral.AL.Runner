@@ -420,6 +420,16 @@ source read by `EnumerateKnownAlObjects`, `IsHiddenFromCurrentAppGroup`, `BuildO
 or `SourceCaptionFor` needs a term in the stamp. Without one, the two tables stop listing what
 that source adds until something else changes.
 
+**Inside one walk** (#5474), an AllObjWithCaption row for a page, table, enum, report or
+permission-set extension finds its target id from a name map built on first use for each kind,
+instead of scanning every object of the kind per row. The map comes from the same enumerators, in
+the same order, that the scan outside a walk reads (`RecordPatches.ExtensionTargetIndex.cs`): the
+first object of a name wins, within the source tier and then within the dependency tier, and the
+comparison is `OrdinalIgnoreCase`. `ListingObjectInventory` drops the maps when the outermost walk
+ends, so objects registered between two walks are seen by the second. `AlRunner.Tests/AllObjWithCaptionExtensionTarget*Tests.cs`
+pin the answers on an inventory of duplicate, case-variant and cross-kind names, and the cost as a
+count of entries examined, which stays the same however many extension rows the walk resolves.
+
 The tests read the `AL_RUNNER_PERF=1` lines `<table>.Handout`, `.InventoryWalk`, `.TopUp` and
 `.Reuse`:
 
