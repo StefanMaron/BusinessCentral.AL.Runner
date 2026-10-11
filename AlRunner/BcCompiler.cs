@@ -971,6 +971,12 @@ public sealed partial class BcCompiler
     /// by the compile or not. <c>--tdd</c> asks it whether a package declares an object the compile cannot see.</summary>
     private static List<PackageScanEntry> _tddScanInventory = new();
 
+    /// <summary>The dirs the latest <see cref="GetSharedReferences"/> built (or reused) its package loader over:
+    /// the originals when nothing was dropped, else the one staging dir.</summary>
+    private static IReadOnlyList<string> _loaderScanDirs = Array.Empty<string>();
+
+    internal static IReadOnlyList<string> LoaderScanDirs { get { lock (_refSync) return _loaderScanDirs; } }
+
     /// <summary>The packages the latest compile's scan found, minus the app being compiled.</summary>
     internal static IReadOnlyList<PackageScanEntry> ScannedPackagesForTdd()
     {
@@ -1008,7 +1014,7 @@ public sealed partial class BcCompiler
     /// was excluded here. <see cref="DescribeStagedSearchSet"/> turns it back into both.
     /// </summary>
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<
-        string, (IReadOnlyList<string> Origin, IReadOnlyList<UnstagedPackage> Unstaged)> _stageProvenance =
+        string, (IReadOnlyList<string> Origin, IReadOnlyList<UnstagedPackage> Unstaged, int OutsideClosure)> _stageProvenance =
         new(StringComparer.Ordinal);
 
     /// <summary>
@@ -1034,6 +1040,8 @@ public sealed partial class BcCompiler
                     sb.Append($", and {kv.Value.Unstaged.Count - 10} more");
                 sb.Append('.');
             }
+            if (kv.Value.OutsideClosure > 0)
+                sb.Append($" {kv.Value.OutsideClosure} package(s) outside this run's dependency closure were left out of it too, as a real .alpackages would not hold them; a dependency the app does not declare is missing here (#5472).");
             return sb.ToString();
         }
         return null;
@@ -1100,6 +1108,8 @@ public sealed partial class BcCompiler
             _usePackageCacheFallback = false;
             _packageCacheFallbackExcludeId = default;
             _loaderBuildCount = 0;
+            _loaderScanDirs = Array.Empty<string>();
+            _closureSeeds.Clear();
         }
         _appMetaCache.Clear();
     }
@@ -1150,6 +1160,17 @@ public sealed partial class BcCompiler
     /// </summary>
     private static List<string> DeduplicateAppPackageDirs(
         List<string> packageDirs, Guid? excludeAppId, out List<PackageScanEntry> inventory)
+        => DeduplicateAppPackageDirs(packageDirs, excludeAppId, null, out inventory, out _);
+
+    /// <summary>
+    /// With <paramref name="closure"/> set and more than <see cref="BcManifestCacheCapacity"/> packages
+    /// surviving, only the dependency closure of those seeds is staged (#5472).
+    /// <paramref name="inventory"/> is what the loader is built over; <paramref name="fullInventory"/> is
+    /// every survivor of the dedup, for <c>--tdd</c> (#5446).
+    /// </summary>
+    private static List<string> DeduplicateAppPackageDirs(
+        List<string> packageDirs, Guid? excludeAppId, IReadOnlyCollection<ClosureSeed>? closure,
+        out List<PackageScanEntry> inventory, out List<PackageScanEntry> fullInventory)
     {
         // Collect every .app, keyed by (AppId, Version), preserving dir scan order. The key
         // MUST include the version: the same AppId legitimately ships in multiple versions
@@ -1178,6 +1199,7 @@ public sealed partial class BcCompiler
         var seen = new HashSet<(Guid, string)>();
         var picked = new List<string>();
         inventory = new List<PackageScanEntry>();
+        var manifests = new List<AppManifest>();
         // #2178: remembered, not just counted. When the staging dir is what BC ends up
         // naming in an AL1022 "could not be found in the package cache folders" message,
         // a package that was IN one of the caller's dirs and dropped here is precisely the
@@ -1246,11 +1268,26 @@ public sealed partial class BcCompiler
                 var full = Path.GetFullPath(app);
                 picked.Add(full);
                 inventory.Add(new PackageScanEntry(full, m.AppId, m.Publisher, m.Name, m.Version));
+                manifests.Add(m);
+            }
+        }
+        fullInventory = inventory;
+        var outsideClosure = 0;
+        if (closure != null && picked.Count > BcManifestCacheCapacity)
+        {
+            var keep = ComputeClosure(manifests, closure);
+            if (keep.Count < picked.Count)
+            {
+                outsideClosure = picked.Count - keep.Count;
+                changed = true;
+                picked = picked.Where((_, i) => keep.Contains(i)).ToList();
+                inventory = inventory.Where((_, i) => keep.Contains(i)).ToList();
             }
         }
         if (Environment.GetEnvironmentVariable("BCCOMPILER_TIMING") == "1")
             Console.Error.WriteLine(
-                $"[emit-timing] package scan: {scanned} apps: {scanClock.ElapsedMilliseconds}ms");
+                $"[emit-timing] package scan: {scanned} apps: {scanClock.ElapsedMilliseconds}ms"
+                + (outsideClosure > 0 ? $"; {picked.Count} of {fullInventory.Count} in the dependency closure" : ""));
         if (!changed) return packageDirs; // common case — leave the hot path untouched
 
         // Build (or reuse) a staging dir keyed by the exact picked-app set so concurrent /
@@ -1303,7 +1340,7 @@ public sealed partial class BcCompiler
                 // the fallback scratch dir is used for this entire run and nothing else ever
                 // deletes it, so without this it is exactly the shape that accumulated.
                 PkgDedupCache.MarkInUse(published);
-                _stageProvenance[published] = (packageDirs.ToList(), unstaged);
+                _stageProvenance[published] = (packageDirs.ToList(), unstaged, outsideClosure);
                 return new List<string> { published };
             }
             // The REUSE path needs the same claim as the create path above, and needs it more.
@@ -1312,7 +1349,7 @@ public sealed partial class BcCompiler
             // stamps its last-USE time. Marking only the create path would leave every
             // long-lived --watch / --server session's stage looking abandoned.
             PkgDedupCache.MarkInUse(stage);
-            _stageProvenance[stage] = (packageDirs.ToList(), unstaged);
+            _stageProvenance[stage] = (packageDirs.ToList(), unstaged, outsideClosure);
             return new List<string> { stage };
         }
     }
@@ -1433,8 +1470,12 @@ public sealed partial class BcCompiler
             // predicate. See that class for why hiding == physically dropping, and for the
             // one case (a surviving package sharing the excluded app's Name) where it is not
             // provably so and this code falls back to a physically-reduced loader.
-            var loaderScanDirs = DeduplicateAppPackageDirs(packageDirs, null, out var scanInventory);
-            _tddScanInventory = scanInventory;
+            AddClosureSeeds(_resolvedDeps);
+            var closureSeeds = CurrentClosureSeeds();
+            var loaderScanDirs = DeduplicateAppPackageDirs(
+                packageDirs, null, closureSeeds, out var scanInventory, out var fullScanInventory);
+            _tddScanInventory = fullScanInventory;
+            _loaderScanDirs = loaderScanDirs;
             Mark($"dedup-scan ({scanInventory.Count} pkgs)");
 
             // ── Two memo halves, because they cost three orders of magnitude apart (#2678) ──
@@ -1750,7 +1791,8 @@ public sealed partial class BcCompiler
     private static NavCA.ISymbolReferenceLoader GetPhysicallyExcludedPackageLoader(
         List<string> packageDirs, Guid excludeAppId)
     {
-        var reducedDirs = DeduplicateAppPackageDirs(packageDirs, excludeAppId, out var reducedInventory);
+        var reducedDirs = DeduplicateAppPackageDirs(
+            packageDirs, excludeAppId, CurrentClosureSeeds(), out var reducedInventory, out _);
         // Same #1832 rule as the shared loader: reducedDirs (which already encode the
         // exclusion) are compared for equality, the dep set for subset.
         //
