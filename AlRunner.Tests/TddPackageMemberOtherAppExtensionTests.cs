@@ -71,11 +71,14 @@ public sealed class TddPackageMemberOtherAppExtensionTests : IDisposable
     }
 
     /// <summary>A package as a compiled .app carries it: symbols only, and a dependency on <paramref name="dependsOn"/> when given
-    /// (the extensions of the second package can name the first one's objects only through it).</summary>
+    /// (the extensions of the second package can name the first one's objects only through it). Trap, measured on BC 27.5: a
+    /// <c>&lt;Dependency&gt;</c> without <c>CompatibilityId</c> (as every compiled app writes it) is not linked, so the second package's
+    /// extensions have no target, the compiler neither sees them nor reports AL0206/AL0231, and a test of this class fails
+    /// for the wrong reason. 28.5 links it either way.</summary>
     private static byte[] BuildApp(string appId, string name, int idFrom, int idTo, string symbols, (string Id, string Name)? dependsOn, string? sourceDir = null)
     {
         var dependencies = dependsOn is { } d
-            ? $"<Dependencies><Dependency Id=\"{d.Id}\" Name=\"{d.Name}\" Publisher=\"AL Runner Fixtures\" MinVersion=\"1.0.0.0\" /></Dependencies>"
+            ? $"<Dependencies><Dependency Id=\"{d.Id}\" Name=\"{d.Name}\" Publisher=\"AL Runner Fixtures\" MinVersion=\"1.0.0.0\" CompatibilityId=\"0.0.0.0\" /></Dependencies>"
             : "<Dependencies />";
         var manifest = $"""
             <?xml version="1.0" encoding="utf-8"?>
