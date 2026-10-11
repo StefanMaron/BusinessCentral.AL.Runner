@@ -38,6 +38,8 @@ public sealed class AllObjWithCaptionExtensionTargetAnswersTests : IDisposable
     public void Dispose()
     {
         RecordPatches.ResetForReload();
+        // The fixture registers enums, and the registry has no per-id removal.
+        AlEnumMetadataRegistry.Clear();
         try { Directory.Delete(_scratch, recursive: true); } catch { /* best-effort cleanup */ }
     }
 
@@ -137,8 +139,35 @@ public sealed class AllObjWithCaptionExtensionTargetAnswersTests : IDisposable
         };
         foreach (var (kind, expected) in shared)
             Assert.Equal(expected, RecordPatches.ObjectSubtypeTextFor(kind, "ET Shared Name"));
+        // All five kinds in ONE walk, where an index is shared between the lookups: it must be
+        // per kind, or the first kind asked answers for the rest. Both orders.
+        foreach (var order in new[] { shared.Keys.ToArray(), shared.Keys.Reverse().ToArray() })
+            RecordPatches.ListingObjectInventory(() =>
+            {
+                foreach (var kind in order)
+                    Assert.Equal(shared[kind], RecordPatches.ObjectSubtypeTextFor(kind, "ET Shared Name"));
+                return 0;
+            });
         // Four distinct ids, so a resolver ignoring the kind cannot satisfy this by accident.
         Assert.Equal(4, shared.Values.Where(v => v.Length > 0).Distinct().Count());
+    }
+
+    [Theory]
+    [InlineData("PageExtension", "ETDupPage")]
+    [InlineData("PageExtension", "ET  Dup Page")]
+    [InlineData("TableExtension", "ETSharedName")]
+    [InlineData("ReportExtension", "ETDepReport")]
+    [InlineData("PermissionSetExtension", "ETPermA")]
+    [InlineData("EnumExtension", "ETSharedName")]
+    public void ANameDifferingByWhitespace_IsNotTheSameName(string kind, string target)
+    {
+        // NamesEqual would strip the spaces and let these match; the scan compares exactly.
+        Assert.Equal("", RecordPatches.ObjectSubtypeTextFor(kind, target));
+        RecordPatches.ListingObjectInventory(() =>
+        {
+            Assert.Equal("", RecordPatches.ObjectSubtypeTextFor(kind, target));
+            return 0;
+        });
     }
 
     [Fact]

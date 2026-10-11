@@ -39,6 +39,8 @@ public sealed class AllObjWithCaptionExtensionTargetIndexTests : IDisposable
     public void Dispose()
     {
         RecordPatches.ResetForReload();
+        // The fixture registers enums, and the registry has no per-id removal.
+        AlEnumMetadataRegistry.Clear();
         try { Directory.Delete(_scratch, recursive: true); } catch { /* best-effort cleanup */ }
     }
 
