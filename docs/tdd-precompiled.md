@@ -114,7 +114,7 @@ What differs from the procedure case, and what a later edit gets wrong:
   another type no longer compiles and is FAILED.
 - **Ids come from the test app's `idRanges`**, as for a generated object: the extension's id is the first free for ITS object type
   (a codeunit or table with the number does not take it, `TddPrecompiledStub.FreeTableExtensionId`), a field id or an enum ordinal the
-  first of the range that the table or enum does not use (its symbol), nor an extension of the compile does. A value is therefore NOT
+  first of the range that the table or enum does not use (its symbol), nor a tableextension or enumextension in the test app's own files does. A value is therefore NOT
   numbered after the enum's highest ordinal as for an enum of the app, and an `AsInteger()` assertion on it proves nothing. Tables and enums
   are taken in name order and fields and values in name order, whichever order the compile reported them in. The runner's compiler
   also accepts a field id or an ordinal outside the range (measured); the range is used because it is the one the app may allocate
@@ -123,20 +123,28 @@ What differs from the procedure case, and what a later edit gets wrong:
   an extension of an enum without `Extensible = true` (AL0504) or of a table with `Extensible = false` (AL0564) does not compile (measured), and
   would take its file down with it, so it is refused with the object named and the tests are FAILED on the original AL0132. No free extension id, field id
   or ordinal in the ranges refuses the same way.
-- **The extended object is named with its namespace.** Two packages may each declare a table of one name in different namespaces (one
-  app cannot: AL0197 whatever the namespaces). An unqualified `extends "X"` was measured to bind to the FIRST of them silently, so
-  the field would land on the wrong table and the other table would get nothing; the message and the annotation carry the namespace too
-  (`Loyalty.Data.Namespaced Entry`).
-- **The record engine needs the extension registered** (`RecordPatches.TddRegisterTableExtension`, the call a generated field of a source
-  table makes through `TddReparseAndRefreshTable`). Without it the field compiles and the first access throws `extension field N from
-  extension M not found in NCLMetaTable` (measured, both package shapes). An enum is compiled from the trees and needs nothing.
-- **Trap: nothing removes the registration.** The record engine's copy of the extension is not taken back when the tests stop naming the field.
-  What that does to a `--watch` or server run was not measured.
+- **The extended object is named with its namespace.** Two packages may each declare a table of one name in different namespaces
+  (one app cannot: AL0197 whatever the namespaces). With both packages in the compile, an unqualified `extends "X"` was measured to be
+  `AL0275: 'X' is an ambiguous reference`, which drops the file the extension sits in; qualified, it binds to the one meant. The message
+  and the annotation carry the namespace too (`Loyalty.Data.Namespaced Entry`).
+- **The record engine is told of a table extension only after the compile settled, and only if its file survived**
+  (`TddGeneration.SettlePackageExtensions`, then `RecordPatches.TddRegisterTableExtension`, the call a generated field of a source table makes
+  through `TddReparseAndRefreshTable`). Without it the field compiles and the first access throws `extension field N from extension M not
+  found in NCLMetaTable` (measured, both package shapes). An enum is compiled from the trees and needs nothing.
+  If the home file is dropped (it also names a field that cannot be typed, say), nothing is registered, the members are taken out of the
+  generated list and the run says `--tdd: dropped with its file: ...`: otherwise the record engine kept a field nobody declares, visible to
+  a test in a file that did compile (`RecordRef.FieldCount`).
+- **A compile that registered an extension records no incremental baseline.** The registration is state the trees do not reproduce: the
+  `--watch` reset clears it, and an incremental cycle reuses the previous baseline (extension appended, nothing regenerated), so the field
+  failed with the `not found in NCLMetaTable` above. So the next `--watch` cycle is a full rebuild, which generates and registers again; the
+  reason is printed (`FULL REBUILD ... generated a field of a package's table in a tableextension`). Same gate as an excluded object
+  (`BcCompiler.Emit`). Not run: `--server` (it resets once per request, by reading).
 
 ## Not covered (reported FAILED as before)
 
-An overload of a package's procedure, a call through anything but a plain variable, a field that is only read, and a table or
-enum the package does not let anyone extend. An object no app declares at all is
+An overload of a package's procedure, a call through anything but a plain variable, a field that is only read, a table or
+enum the package does not let anyone extend, and a field id or ordinal that another app's extension of the same table or enum already
+holds (the choice does not see it: a loud AL0206 / AL0231 that drops the file, #5491). An object no app declares at all is
 [`tdd-missing-object.md`](tdd-missing-object.md).
 
 Tests: `TddPrecompiledTests` (a DLL package and a source package, end to end), `TddPrecompiledStubTests`, `TddPackageMemberTests` (a field and a
