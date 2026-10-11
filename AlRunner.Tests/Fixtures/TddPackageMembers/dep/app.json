@@ -1,0 +1,15 @@
+{
+  "id": "e2b4c6a8-1d3f-4a5b-9c7e-8f0a2b4d6e10",
+  "name": "Tdd Package Members Dep",
+  "publisher": "AL Runner Fixtures",
+  "version": "1.0.0.0",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65380,
+      "to": 65399
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

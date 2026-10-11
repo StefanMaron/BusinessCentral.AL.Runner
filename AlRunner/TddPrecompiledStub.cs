@@ -63,6 +63,28 @@ internal static class TddPrecompiledStub
         ISet<int> reserved) => FreeObjectId(trees, idRanges, reserved,
             o => o is NavSyntax.EnumTypeSyntax e ? e.ObjectId?.Value.Value as int? : null);
 
+    /// <summary>The same for a table extension (#5430): its own id space, so a table or codeunit with that number
+    /// does not take it.</summary>
+    internal static int? FreeTableExtensionId(NavSyntax.SyntaxTree[] trees, IReadOnlyList<(int From, int To)> idRanges,
+        ISet<int> reserved) => FreeObjectId(trees, idRanges, reserved,
+            o => o is NavSyntax.TableExtensionSyntax t ? t.ObjectId?.Value.Value as int? : null);
+
+    /// <summary>The same for an enum extension (#5430).</summary>
+    internal static int? FreeEnumExtensionId(NavSyntax.SyntaxTree[] trees, IReadOnlyList<(int From, int To)> idRanges,
+        ISet<int> reserved) => FreeObjectId(trees, idRanges, reserved,
+            o => o is NavSyntax.EnumExtensionTypeSyntax e ? e.ObjectId?.Value.Value as int? : null);
+
+    /// <summary>The first id of <paramref name="idRanges"/> that is in neither <paramref name="used"/> nor
+    /// <paramref name="reserved"/>: the id of a field a tableextension adds, or the ordinal an enumextension value takes (#5430), which the app may allocate
+    /// only from its own ranges. Null when none is left.</summary>
+    internal static int? FreeIdInRanges(IReadOnlyList<(int From, int To)> idRanges, ISet<int> used, ISet<int> reserved)
+    {
+        foreach (var (from, to) in idRanges)
+            for (var id = from; id <= to; id++)
+                if (!used.Contains(id) && !reserved.Contains(id)) return id;
+        return null;
+    }
+
     private static int? FreeObjectId(NavSyntax.SyntaxTree[] trees, IReadOnlyList<(int From, int To)> idRanges,
         ISet<int> reserved, Func<NavSyntax.ObjectSyntax, int?> idOfThisType)
     {

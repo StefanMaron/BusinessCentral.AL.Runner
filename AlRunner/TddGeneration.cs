@@ -324,10 +324,14 @@ public static partial class TddGeneration
             var cross = TddCrossBundle.FindObject(SyntaxTypeFor(kind), qualType.Name);
             if (cross == null)
             {
-                // A codeunit of a loaded package (#5037): nothing to add the member to, so GenerateBesidePrecompiled,
-                // which takes only AL0132 (a missing procedure), never AL0126 (a missing overload).
-                return kind == "procedure" && IsPackagedObject(qualType) && mae != null
-                    ? new Target(kind, -1, qualType.Name, memberName, mae, null, null, Precompiled: true)
+                // A codeunit or a table of a loaded package (#5037, #5430): nothing to add the member to, so
+                // GenerateBesidePrecompiled, which takes only AL0132 (a missing procedure or field), never AL0126
+                // (a missing overload).
+                if (overload) return null;
+                return (mae != null && kind == "procedure" && IsPackagedObject(qualType))
+                    || (mae != null && kind == "field" && IsPackagedTable(qualType))
+                    || (kind == "enum-value" && IsPackagedEnum(qualType))
+                    ? new Target(kind, -1, qualType.Name, memberName, mae, null, null, Precompiled: true, TargetType: qualType)
                     : null;
             }
             return new Target(kind, -1, qualType.Name, memberName, mae, cross.Value.FilePath, overloadKey);
@@ -343,7 +347,7 @@ public static partial class TddGeneration
     private readonly record struct Target(
         string Kind, int TargetTreeIdx, string TargetObjectName, string MemberName,
         NavSyntax.MemberAccessExpressionSyntax? Mae, string? CrossFile, string? OverloadKey = null,
-        bool Precompiled = false)
+        bool Precompiled = false, NavCA.ITypeSymbol? TargetType = null)
     {
         public bool IsOverload => OverloadKey != null;
         public string MemberKey => OverloadKey == null ? MemberName : $"{MemberName}({OverloadKey})";

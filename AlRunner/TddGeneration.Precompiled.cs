@@ -13,6 +13,15 @@ public static partial class TddGeneration
     private static bool IsPackagedObject(NavCA.ITypeSymbol type)
         => type.NavTypeKind == NavCA.NavTypeKind.Codeunit && !string.IsNullOrEmpty(type.Name);
 
+    /// <summary>A table the compile reads from a loaded package (#5430), by the same reasoning as
+    /// <see cref="IsPackagedObject"/>: no tree of the compile declares it and no source bundle of the run does.</summary>
+    private static bool IsPackagedTable(NavCA.ITypeSymbol type)
+        => type.NavTypeKind == NavCA.NavTypeKind.Record && !string.IsNullOrEmpty(type.Name);
+
+    /// <summary>An enum the compile reads from a loaded package (#5430); see <see cref="IsPackagedObject"/>.</summary>
+    private static bool IsPackagedEnum(NavCA.ITypeSymbol type)
+        => type.NavTypeKind == NavCA.NavTypeKind.Enum && !string.IsNullOrEmpty(type.Name);
+
     private static (List<string> ParamTypes, string ReturnType)? InferProcedureShape(
         NavCA.Compilation compilation, NavSyntax.InvocationExpressionSyntax inv,
         Func<NavCA.ITypeSymbol, bool>? typeAllowed)
@@ -44,6 +53,8 @@ public static partial class TddGeneration
         Dictionary<string, TddGeneratedMember> generatedByKey, Dictionary<string, List<NavDiag.Diagnostic>> diagsByKey)
     {
         var byKey = new Dictionary<string, List<(NavDiag.Diagnostic Diag, Target Target)>>(StringComparer.Ordinal);
+        var fieldEntries = new List<(NavDiag.Diagnostic Diag, Target Target)>();
+        var valueEntries = new List<(NavDiag.Diagnostic Diag, Target Target)>();
         // Test seam: AL_RUNNER_TDD_DIAG_ORDER=reverse feeds the diagnostics in the opposite order, so a test can
         // show that nothing below depends on the order the emit happens to report them in (it varies between runs).
         IEnumerable<NavDiag.Diagnostic> diagnostics = emitResult.Diagnostics;
@@ -57,6 +68,8 @@ public static partial class TddGeneration
             {
                 var target = ResolveTarget(compilation, originalTrees, diag);
                 if (target is not { Precompiled: true } t) continue;
+                if (t.Kind == "field") { fieldEntries.Add((diag, t)); continue; }
+                if (t.Kind == "enum-value") { valueEntries.Add((diag, t)); continue; }
                 var key = $"beside|{t.TargetObjectName.ToLowerInvariant()}|{t.MemberName.ToLowerInvariant()}";
                 if (!byKey.TryGetValue(key, out var list)) byKey[key] = list = new();
                 list.Add((diag, t));
@@ -67,6 +80,21 @@ public static partial class TddGeneration
                 Console.Error.WriteLine($"--tdd: not generated beside a precompiled object ({diag.Location.GetLineSpan()}): {ex.GetType().Name}: {FirstLine(ex.Message)}");
             }
         }
+        // The procedure stubs edit the trees by offset, so they go first; the table extensions only append (#5430).
+        StubProceduresBesidePrecompiled(compilation, originalTrees, trees, parseOptions, manifestAppJsonPath,
+            byKey, generatedByKey, diagsByKey);
+        GenerateFieldsBesidePackageTables(compilation, originalTrees, trees, parseOptions, manifestAppJsonPath,
+            fieldEntries, generatedByKey, diagsByKey);
+        GenerateValuesBesidePackageEnums(originalTrees, trees, parseOptions, manifestAppJsonPath,
+            valueEntries, generatedByKey, diagsByKey);
+    }
+
+    private static void StubProceduresBesidePrecompiled(
+        NavCA.Compilation compilation, NavSyntax.SyntaxTree[] originalTrees, NavSyntax.SyntaxTree[] trees,
+        NavCA.ParseOptions parseOptions, string? manifestAppJsonPath,
+        Dictionary<string, List<(NavDiag.Diagnostic Diag, Target Target)>> byKey,
+        Dictionary<string, TddGeneratedMember> generatedByKey, Dictionary<string, List<NavDiag.Diagnostic>> diagsByKey)
+    {
         if (byKey.Count == 0) return;
 
         var idRanges = TddPrecompiledStub.ReadIdRanges(manifestAppJsonPath);
