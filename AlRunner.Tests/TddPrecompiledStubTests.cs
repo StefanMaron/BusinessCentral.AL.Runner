@@ -70,6 +70,47 @@ public sealed class TddPrecompiledStubTests
         Assert.Null(TddPrecompiledStub.FreeEnumId(trees, ranges, new HashSet<int> { 65321, 65322, 65323 }));
     }
 
+    /// <summary>#5430: a tableextension's and an enumextension's id spaces are their own, in both directions - a codeunit, a
+    /// table or an enum with the number does not take it from the extension, and an extension does not take theirs.</summary>
+    [Fact]
+    public void FreeTableExtensionId_AndFreeEnumExtensionId_ArePerObjectType_InBothDirections()
+    {
+        var trees = new[]
+        {
+            Parse("codeunit 65320 \"A\" { } table 65321 \"T\" { fields { field(1; \"K\"; Integer) { } } } enum 65322 \"E\" { }"),
+            Parse("tableextension 65320 \"TX\" extends \"T\" { fields { field(65320; \"F\"; Integer) { } } }"),
+            Parse("enumextension 65321 \"EX\" extends \"E\" { value(65321; V) { } }"),
+        };
+        var ranges = new[] { (65320, 65323) };
+
+        Assert.Equal(65321, TddPrecompiledStub.FreeTableExtensionId(trees, ranges, new HashSet<int>()));
+        Assert.Equal(65320, TddPrecompiledStub.FreeEnumExtensionId(trees, ranges, new HashSet<int>()));
+        Assert.Equal(65322, TddPrecompiledStub.FreeEnumExtensionId(trees, ranges, new HashSet<int> { 65320, 65321 }));
+        Assert.Equal(65323, TddPrecompiledStub.FreeTableExtensionId(trees, ranges, new HashSet<int> { 65321, 65322 }));
+        Assert.Null(TddPrecompiledStub.FreeTableExtensionId(trees, ranges, new HashSet<int> { 65321, 65322, 65323 }));
+        // The other direction: the extensions hold 65320 (table) and 65321 (enum), which a codeunit, table or enum may still take.
+        Assert.Equal(65321, TddPrecompiledStub.FreeCodeunitId(trees, ranges, new HashSet<int>()));
+        Assert.Equal(65320, TddPrecompiledStub.FreeTableId(trees, ranges, new HashSet<int>()));
+        Assert.Equal(65320, TddPrecompiledStub.FreeEnumId(trees, ranges, new HashSet<int>()));
+    }
+
+    /// <summary>#5430: the id of a field or the ordinal of a value is taken from the app's ranges, skipping what the
+    /// object already uses and what was already handed out, and runs out rather than guessing.</summary>
+    [Fact]
+    public void FreeIdInRanges_SkipsUsedAndReserved_ThenRunsOut_AndNeverGuessesOutsideTheRanges()
+    {
+        var ranges = new[] { (65400, 65402), (65410, 65411) };
+        var used = new HashSet<int> { 1, 2, 65400 };
+
+        Assert.Equal(65401, TddPrecompiledStub.FreeIdInRanges(ranges, used, new HashSet<int>()));
+        Assert.Equal(65402, TddPrecompiledStub.FreeIdInRanges(ranges, used, new HashSet<int> { 65401 }));
+        // The second range is used once the first has none left.
+        Assert.Equal(65410, TddPrecompiledStub.FreeIdInRanges(ranges, used, new HashSet<int> { 65401, 65402 }));
+        Assert.Null(TddPrecompiledStub.FreeIdInRanges(ranges, used, new HashSet<int> { 65401, 65402, 65410, 65411 }));
+        // No range at all: nothing to allocate from. Ids 1 and 2 are free of the object but are not the app's to give.
+        Assert.Null(TddPrecompiledStub.FreeIdInRanges(Array.Empty<(int, int)>(), new HashSet<int>(), new HashSet<int>()));
+    }
+
     [Fact]
     public void ReadIdRanges_ReadsTheManifest_AndNothingFromAnUnreadableOne()
     {

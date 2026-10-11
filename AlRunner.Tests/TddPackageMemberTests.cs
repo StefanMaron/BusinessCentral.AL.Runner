@@ -58,7 +58,7 @@ public sealed class TddPackageMemberTests : IDisposable
             ],
             "EnumTypes":[
               {"Id":65381,"Name":"Loyalty Tier","Values":[
-                {"Ordinal":0,"Name":"Bronze","Properties":[]},{"Ordinal":1,"Name":"Silver","Properties":[]}
+                {"Ordinal":0,"Name":"Bronze","Properties":[]},{"Ordinal":1,"Name":"Silver","Properties":[]},{"Ordinal":65400,"Name":"Legacy","Properties":[]}
               ],"ReferenceSourceFileName":"LoyaltyTier.Enum.al","Properties":[{"Name":"Extensible","Value":"true"}]},
               {"Id":65382,"Name":"Closed Tier","Values":[
                 {"Ordinal":0,"Name":"Alpha","Properties":[]}
@@ -162,8 +162,8 @@ public sealed class TddPackageMemberTests : IDisposable
         AssertPasses("NewField_RoundTripsThroughTheTable", PointsStub);
         AssertPasses("SameField_InASecondFile", PointsStub);
         AssertPasses("ExistingField_IsThePackagesOwn");
-        AssertPasses("NewValue_IsItsOwnValue", "Loyalty Tier: enum value \"Gold\" = 65400");
-        AssertPasses("TwoNewValues_AreTwoValues", "Loyalty Tier: enum value \"Gold\" = 65400", "Loyalty Tier: enum value \"Platinum\" = 65401");
+        AssertPasses("NewValue_IsItsOwnValue", "Loyalty Tier: enum value \"Gold\" = 65402");
+        AssertPasses("TwoNewValues_AreTwoValues", "Loyalty Tier: enum value \"Gold\" = 65402", "Loyalty Tier: enum value \"Platinum\" = 65403");
         AssertPasses("ExistingValue_IsThePackagesOwn");
         AssertPasses("NamespacedTable_GetsItsFieldFromAnExtension", "Namespaced Entry: field \"Bonus\": Integer");
 
@@ -176,15 +176,17 @@ public sealed class TddPackageMemberTests : IDisposable
         Assert.Equal(7, doc.RootElement.GetProperty("passed").GetInt32());
         Assert.Equal(3, doc.RootElement.GetProperty("failed").GetInt32());
 
-        // One extension per table or enum, in the first file (file order) that names a missing member of it, with ids from the
-        // test app's range free for THAT object type (codeunits hold 65400-65406) and field ids that skip the one the package
-        // table's "Existing Points" uses (65400). Tables and enums are taken in name order, whatever order the compile reported.
+        // One extension per table or enum, in the first file (file order) that names a missing member of it. The test app's range
+        // is 65400-65419 and the ids are free for THAT object type: the seven codeunits hold 65400-65406 and do not matter, the
+        // app's own tableextension and enumextension (A0Existing.al) hold 65400 and do. A field id also skips the package
+        // table's own "Existing Points" (65400) and the app's extension field (65401); an ordinal skips the package enum's
+        // "Legacy" (65400) and the app's extension value (65401). Tables and enums are taken in name order.
         var lines = stderr.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
         Assert.Equal(new[]
         {
-            "--tdd: table extension \"TDD Table Extension 65400\" (id 65400) beside package table Loyalty Entry in A1FieldTests.Codeunit.al: \"Points\" (field 65401)",
-            "--tdd: table extension \"TDD Table Extension 65401\" (id 65401) beside package table Namespaced Entry in A4NamespaceTests.Codeunit.al: \"Bonus\" (field 65400)",
-            "--tdd: enum extension \"TDD Enum Extension 65400\" (id 65400) beside package enum Loyalty Tier in A2ValueTests.Codeunit.al: \"Gold\" (ordinal 65400), \"Platinum\" (ordinal 65401)",
+            "--tdd: table extension \"TDD Table Extension 65401\" (id 65401) beside package table Loyalty Entry in A1FieldTests.Codeunit.al: \"Points\" (field 65402)",
+            "--tdd: table extension \"TDD Table Extension 65402\" (id 65402) beside package table Namespaced Entry in A4NamespaceTests.Codeunit.al: \"Bonus\" (field 65400)",
+            "--tdd: enum extension \"TDD Enum Extension 65401\" (id 65401) beside package enum Loyalty Tier in A2ValueTests.Codeunit.al: \"Gold\" (ordinal 65402), \"Platinum\" (ordinal 65403)",
         }, lines.Where(l => l.StartsWith("--tdd: table extension") || l.StartsWith("--tdd: enum extension")).ToList());
         Assert.Contains("--tdd: not generated beside package table Loyalty Entry: \"Unassigned\" - no assignment `Rec.Field := <expression>` fixes its type", stderr);
         Assert.Contains("--tdd: not generated beside package table Sealed Entry: \"Extra\" - the table is not extensible", stderr);
@@ -240,7 +242,7 @@ public sealed class TddPackageMemberTests : IDisposable
         var manifest = Path.Combine(test, "app.json");
         File.WriteAllText(manifest, File.ReadAllText(manifest).Replace("\"to\": 65419", "\"to\": 65406"));
         var fillers = new StringBuilder();
-        for (var id = 65400; id <= 65406; id++)
+        for (var id = 65401; id <= 65406; id++) // 65400 is A0Existing.al's
         {
             fillers.AppendLine($"tableextension {id} \"Filler Table {id}\" extends \"Loyalty Entry\" {{ fields {{ field({id + 100}; \"Filler {id}\"; Integer) {{ }} }} }}");
             fillers.AppendLine($"enumextension {id} \"Filler Enum {id}\" extends \"Loyalty Tier\" {{ value({id + 100}; \"Filler {id}\") {{ }} }}");
