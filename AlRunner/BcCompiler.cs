@@ -3151,7 +3151,8 @@ public sealed partial class BcCompiler
         IReadOnlyList<string> PreprocessorSymbols,
         NavCA.CompilerFeatures CompilerFeatures,
         string ContextSensitiveHelpUrl,
-        NavCA.CompilationTarget? Target = null)
+        NavCA.CompilationTarget? Target = null,
+        Version? Runtime = null)
     {
         public static readonly ManifestCompilerInputs Empty =
             new(Array.Empty<string>(), NavCA.CompilerFeatures.None, "");
@@ -3183,7 +3184,8 @@ public sealed partial class BcCompiler
         public string CacheKeyFragment =>
             string.Join(",", PreprocessorSymbols.OrderBy(s => s, StringComparer.Ordinal)) +
             "|" + (int)CompilerFeatures + "|" + ContextSensitiveHelpUrl +
-            "|" + (int)EffectiveTarget;
+            "|" + (int)EffectiveTarget +
+            "|" + (Runtime?.ToString() ?? "");
     }
 
     /// <summary>
@@ -3204,7 +3206,10 @@ public sealed partial class BcCompiler
     /// once derived its own set and chose different <c>#if</c> branches than a cold build (#4064).
     /// </summary>
     internal static NavCA.ParseOptions BuildParseOptions(ManifestCompilerInputs manifestInputs) => new(
-        runtimeVersion: null!,
+        // The manifest's own `runtime`, null (the compiler's current release) when it declares none.
+        // BC gates diagnostics on it: a report global shared with a reportextension is AL0155 up to
+        // runtime 15.0 and legal from 16.0 (#5471).
+        runtimeVersion: manifestInputs.Runtime!,
         preprocessorSymbols: Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}")
             .Concat(GetExtraPreprocessorSymbols())
             .Concat(manifestInputs.PreprocessorSymbols)
@@ -3271,7 +3276,15 @@ public sealed partial class BcCompiler
                 && Enum.TryParse<NavCA.CompilationTarget>(targetEl.GetString(), ignoreCase: true, out var parsedTarget))
                 target = parsedTarget;
 
-            return new ManifestCompilerInputs(symbols, features, helpUrl, target);
+            // `runtime` is "major.minor" ("14.0"). Absent or unparseable stays null: the compiler's
+            // current release, which is what every compile used before the manifest was read.
+            Version? runtime = null;
+            if (root.TryGetProperty("runtime", out var runtimeEl)
+                && runtimeEl.ValueKind == System.Text.Json.JsonValueKind.String
+                && Version.TryParse(runtimeEl.GetString(), out var parsedRuntime))
+                runtime = parsedRuntime;
+
+            return new ManifestCompilerInputs(symbols, features, helpUrl, target, runtime);
         }
         catch { return ManifestCompilerInputs.Empty; }
     }
