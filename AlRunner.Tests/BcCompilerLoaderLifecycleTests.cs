@@ -225,6 +225,99 @@ public sealed class BcCompilerLoaderLifecycleTests : IDisposable
         Assert.Equal(2, BcCompiler.ReferenceLoaderBuildCount);
     }
 
+    /// <summary>A scanned package that was never a dependency, rewritten to the same length with a new
+    /// timestamp, is a different package: a check on length alone would reuse a loader that has
+    /// memoized the old one.</summary>
+    [Fact]
+    public void ANeverDependencyRewrittenToTheSameLengthWithANewTimestamp_RebuildsWhenItBecomesADependency()
+    {
+        var dir = MakeDir("cache");
+        WriteGraph(dir);
+        WritePkg(dir, "Assert", "1.0.0.0", deps: new[] { "Mid" }, marker: "abcdefgh");   // as long as the rewrite below
+        SetDeps(dir, "Greeter");
+        InvokeGetSharedReferences(new[] { dir });
+        var stamp = File.GetLastWriteTimeUtc(_byName["Assert"].Path);
+
+        RewriteAssertToTheSameLength(dir);
+        File.SetLastWriteTimeUtc(_byName["Assert"].Path, stamp.AddSeconds(5));
+        SetDeps(dir, "Greeter", "Assert");
+        var loader = InvokeGetSharedReferences(new[] { dir }).Loader!;
+
+        Assert.Equal(2, BcCompiler.ReferenceLoaderBuildCount);
+        Assert.Equal("Leaf@1.0.0.0,System@28.0.0.0", DependenciesOf(loader, "Assert"));
+    }
+
+    /// <summary>The same rewrite with the timestamp put back (<c>cp -p</c>, <c>rsync -t</c>). BC's manifest
+    /// memo is keyed by path alone, so a reused loader would answer the old dependency list; the check
+    /// has to use what the writer cannot set back (ctime, #5409). Main rebuilds here, because the key of
+    /// a package that becomes a dependency is new. The in-process test pins the loader; the runner's own
+    /// manifest memo (AppLoader.ReadManifest, #5499) is a separate one.</summary>
+    [SkippableFact]
+    public void ANeverDependencyRewrittenToTheSameLengthWithTheTimestampPutBack_RebuildsWhenItBecomesADependency()
+    {
+        var dir = MakeDir("cache");
+        WriteGraph(dir);
+        WritePkg(dir, "Assert", "1.0.0.0", deps: new[] { "Mid" }, marker: "abcdefgh");   // as long as the rewrite below
+        SetDeps(dir, "Greeter");
+        InvokeGetSharedReferences(new[] { dir });
+        var path = _byName["Assert"].Path;
+        Skip.If(AlRunner.Infrastructure.FileIdentity.Probe(Path.GetFullPath(path)).Key == null,
+            "this platform gives no ctime, so only length and mtime can be compared (FileIdentity header)");
+        var stamp = File.GetLastWriteTimeUtc(path);
+
+        RewriteAssertToTheSameLength(dir);
+        File.SetLastWriteTimeUtc(path, stamp);
+        SetDeps(dir, "Greeter", "Assert");
+        var loader = InvokeGetSharedReferences(new[] { dir }).Loader!;
+
+        Assert.Equal(2, BcCompiler.ReferenceLoaderBuildCount);
+        Assert.Equal("Leaf@1.0.0.0,System@28.0.0.0", DependenciesOf(loader, "Assert"));
+    }
+
+    /// <summary>A dependency added by reuse is remembered with its path, so a later rewrite of it is a
+    /// changed key at a known path and not a new package.</summary>
+    [Fact]
+    public void ADependencyAddedByReuse_IsRememberedByPath()
+    {
+        var dir = MakeDir("cache");
+        WriteGraph(dir);
+        SetDeps(dir, "Greeter");
+        InvokeGetSharedReferences(new[] { dir });
+        SetDeps(dir, "Greeter", "Assert");
+        InvokeGetSharedReferences(new[] { dir });
+
+        Assert.Equal(1, BcCompiler.ReferenceLoaderBuildCount);
+        var remembered = BcCompiler.LoaderDepPathsForTests();
+        Assert.Contains(Path.GetFullPath(_byName["Assert"].Path), remembered, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains(Path.GetFullPath(_byName["Greeter"].Path), remembered, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>After a rebuild the loader is warm for the new keys only: a dependency put back to its
+    /// earlier bytes is not a key it was warmed for, and its path was seen with other bytes.</summary>
+    [Fact]
+    public void ADependencyPutBackToItsEarlierBytes_AfterARebuild_RebuildsAgain()
+    {
+        var dir = MakeDir("cache");
+        WriteGraph(dir);
+        var path = _byName["Assert"].Path;
+        var original = path + ".original";
+        File.Copy(path, original);
+
+        SetDeps(dir, "Assert");
+        InvokeGetSharedReferences(new[] { dir });
+        WritePkg(dir, "Assert", "1.0.0.0", deps: new[] { "Leaf" }, marker: "second bytes");
+        SetDeps(dir, "Assert");
+        InvokeGetSharedReferences(new[] { dir });
+        Assert.Equal(2, BcCompiler.ReferenceLoaderBuildCount);
+
+        File.Copy(original, path, overwrite: true);
+        SetDeps(dir, "Assert");
+        var loader = InvokeGetSharedReferences(new[] { dir }).Loader!;
+
+        Assert.Equal(3, BcCompiler.ReferenceLoaderBuildCount);
+        Assert.Equal("Mid@2.0.0.0,System@28.0.0.0", DependenciesOf(loader, "Assert"));
+    }
+
     /// <summary>The key of a dependency the loader has seen must outlive another bundle's
     /// dependencies: a package rewritten to the same length and timestamp is still a different
     /// package, and only the key from the earlier bundle can say so.</summary>
@@ -387,6 +480,26 @@ public sealed class BcCompilerLoaderLifecycleTests : IDisposable
     }
 
     // ── helpers ────────────────────────────────────────────────────────────────────────
+
+    private string DependenciesOf(ISymbolReferenceLoader loader, string name)
+        => string.Join(",", loader.GetDependencies(SpecFor(_byName[name]), new List<Diagnostic>())
+            .Select(d => d.Name + "@" + d.Version).OrderBy(x => x, StringComparer.Ordinal));
+
+    /// <summary>Rewrites Assert so that it depends on Leaf instead of Mid and its file is exactly as long
+    /// as before; the compressed size depends on the content, so look for a marker that lands on it.</summary>
+    private void RewriteAssertToTheSameLength(string dir)
+    {
+        var path = _byName["Assert"].Path;
+        var length = new FileInfo(path).Length;
+        var rnd = new Random(1);
+        for (var i = 0; i < 20000; i++)
+        {
+            var marker = new string(Enumerable.Range(0, 8 + rnd.Next(0, 4)).Select(_ => (char)('a' + rnd.Next(26))).ToArray());
+            WritePkg(dir, "Assert", "1.0.0.0", deps: new[] { "Leaf" }, marker: marker);
+            if (new FileInfo(path).Length == length) return;
+        }
+        throw new InvalidOperationException("no marker gave the same file length; the premise of the test is not met");
+    }
 
     private static int BcCompilerPackageClosureBound() => BcCompiler.BcManifestCacheCapacity;
 

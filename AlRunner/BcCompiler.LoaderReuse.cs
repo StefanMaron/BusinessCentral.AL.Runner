@@ -14,7 +14,7 @@ public sealed partial class BcCompiler
     internal sealed class LoaderBuild
     {
         internal readonly HashSet<string> DepPaths = new(StringComparer.OrdinalIgnoreCase);
-        internal readonly Dictionary<string, (long Length, long Ticks)> InventoryStat = new(StringComparer.OrdinalIgnoreCase);
+        internal readonly Dictionary<string, string> InventoryStat = new(StringComparer.OrdinalIgnoreCase);
         internal readonly HashSet<string> WarmedSpecs = new(StringComparer.OrdinalIgnoreCase);
 
         internal static LoaderBuild For(IReadOnlyList<ServedDep> deps, IEnumerable<PackageScanEntry> scanInventory)
@@ -32,14 +32,26 @@ public sealed partial class BcCompiler
         }
     }
 
-    private static (long Length, long Ticks)? StatOf(string path)
+    // The file's identity as the filesystem states it, ctime included (#5409): BC's manifest memo is keyed
+    // by path alone, and a timestamp the writer can set back would let a rewrite keep its stat. Where the
+    // platform cannot say, length and mtime; where it declined ctime, nothing, so the loader is rebuilt.
+    private static string? StatOf(string path)
     {
         try
         {
-            var f = new FileInfo(path);
-            return f.Exists ? (f.Length, f.LastWriteTimeUtc.Ticks) : null;
+            var full = Path.GetFullPath(path);
+            var (key, declined) = AlRunner.Infrastructure.FileIdentity.Probe(full);
+            if (key != null) return key;
+            if (declined) return null;
+            var f = new FileInfo(full);
+            return f.Exists ? f.Length + "|" + f.LastWriteTimeUtc.Ticks : null;
         }
         catch { return null; }
+    }
+
+    internal static IReadOnlyCollection<string> LoaderDepPathsForTests()
+    {
+        lock (_refSync) return _loaderBuild?.DepPaths.ToArray() ?? Array.Empty<string>();
     }
 
     // The loader answers from a directory enumeration at lookup time and never sees the dependency
