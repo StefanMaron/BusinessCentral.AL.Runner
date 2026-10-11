@@ -214,6 +214,87 @@ public sealed class BcCompilerPackageClosureTests : IDisposable
         Assert.Null(loader.LoadModule(SpecFor(_byName["Noise 7"]), new List<Diagnostic>()));
     }
 
+    // ── Each arm of the closure walk, pinned on its own ────────────────────────────────
+
+    /// <summary>The identity BC can ask for under an old name: the dependency entry carries the
+    /// AppId and a Name the package no longer has. BC's IsSatisfiedBy accepts it on the AppId, and
+    /// FindMatchingPackageFile takes the highest satisfying version, so that package must be staged.</summary>
+    [Fact]
+    public void ADependencyNamedUnderAnOldName_StagesThePackageByItsAppId()
+    {
+        var dir = MakeDir("cache");
+        var id = Guid.NewGuid();
+        WritePkg(dir, "Renamed Now", "Contoso", "2.0.0.0", appId: id);
+        WritePkg(dir, "Root", "Contoso", "1.0.0.0",
+            deps: new[] { new Pkg(id, "Called This Before", "Contoso", "1.0.0.0", "") });
+        WriteNoise(dir, BcManifestCacheCapacity + 30);
+
+        SetDeps(dir, "Root");
+        InvokeGetSharedReferences(new[] { dir });
+
+        var names = StagedNames(Assert.Single(BcCompiler.LoaderScanDirs));
+        Assert.Equal(new[] { "Contoso_Renamed Now_2.0.0.0.app", "Contoso_Root_1.0.0.0.app" }, names.OrderBy(x => x, StringComparer.Ordinal));
+    }
+
+    /// <summary>A dependency entry without an AppId is matched on its name, and BC compares names
+    /// ignoring case (IsSatisfiedBy: StringComparison.OrdinalIgnoreCase).</summary>
+    [Fact]
+    public void ADependencyWithoutAnAppId_IsMatchedOnItsNameIgnoringCase()
+    {
+        var dir = MakeDir("cache");
+        WritePkg(dir, "Leaf", "Contoso", "1.0.0.0");
+        WritePkg(dir, "Root", "Contoso", "1.0.0.0",
+            deps: new[] { new Pkg(Guid.Empty, "lEAF", "Contoso", "1.0.0.0", "") });
+        WriteNoise(dir, BcManifestCacheCapacity + 30);
+
+        SetDeps(dir, "Root");
+        InvokeGetSharedReferences(new[] { dir });
+
+        var names = StagedNames(Assert.Single(BcCompiler.LoaderScanDirs));
+        Assert.Equal(new[] { "Contoso_Leaf_1.0.0.0.app", "Contoso_Root_1.0.0.0.app" }, names.OrderBy(x => x, StringComparer.Ordinal));
+    }
+
+    /// <summary>The Application / Platform floors of a package reached through a dependency, not
+    /// only of a seed: nothing else in this scan set names Application or System.</summary>
+    [Fact]
+    public void TheFloorsOfAPackageReachedThroughADependency_AreFollowed()
+    {
+        var dir = MakeDir("cache");
+        WritePkg(dir, "Base Application", "Microsoft", "28.0.0.0");
+        WritePkg(dir, "Application", "Microsoft", "28.0.0.0", deps: new[] { _byName["Base Application"] });
+        WritePkg(dir, "System", "Microsoft", "28.0.0.0");
+        var mid = WritePkg(dir, "Mid", "Contoso", "1.0.0.0", floors: true);
+        WritePkg(dir, "Root", "Contoso", "1.0.0.0", deps: new[] { mid });   // Root itself declares no floor
+        WriteNoise(dir, BcManifestCacheCapacity + 30);
+
+        SetDeps(dir, "Root");
+        InvokeGetSharedReferences(new[] { dir });
+
+        var names = StagedNames(Assert.Single(BcCompiler.LoaderScanDirs));
+        Assert.Equal(5, names.Count);
+        Assert.Contains("Microsoft_Application_28.0.0.0.app", names);
+        Assert.Contains("Microsoft_System_28.0.0.0.app", names);
+    }
+
+    /// <summary>Seeds remembered from an earlier bundle must not narrow a call that resolved no
+    /// dependencies: that path (the --precompile fallback) needs every package in the scan set.</summary>
+    [Fact]
+    public void ACallWithNoResolvedDependencies_IsNotNarrowedBySeedsOfAnEarlierOne()
+    {
+        var dir = MakeDir("cache");
+        WriteClosure(dir);
+        WriteNoise(dir, BcManifestCacheCapacity + 30);
+
+        SetDeps(dir, "Root");
+        InvokeGetSharedReferences(new[] { dir });
+        Assert.NotEqual(dir, Assert.Single(BcCompiler.LoaderScanDirs));
+
+        BcCompiler.SetResolvedDeps(new List<(AppManifest, string)>(), new[] { dir });
+        InvokeGetSharedReferences(new[] { dir });
+
+        Assert.Equal(new[] { dir }, BcCompiler.LoaderScanDirs);
+    }
+
     // ── helpers ────────────────────────────────────────────────────────────────────────
 
     /// <summary>Root -> Mid (two versions) -> Leaf by declared dependency, plus Application (which
@@ -241,10 +322,10 @@ public sealed class BcCompilerPackageClosureTests : IDisposable
     }
 
     private Pkg WritePkg(string dir, string name, string publisher, string version,
-        Pkg[]? deps = null, bool floors = false)
+        Pkg[]? deps = null, bool floors = false, Guid? appId = null)
     {
         // A second version of the same app keeps its AppId, as a real package cache does.
-        var id = _byName.TryGetValue(name, out var prev) && prev.Publisher == publisher ? prev.AppId : Guid.NewGuid();
+        var id = appId ?? (_byName.TryGetValue(name, out var prev) && prev.Publisher == publisher ? prev.AppId : Guid.NewGuid());
         var path = Path.Combine(dir, $"{publisher}_{name}_{version}.app");
         var depXml = string.Join("", (deps ?? Array.Empty<Pkg>()).Select(d =>
             $"""<Dependency Id="{d.AppId}" Name="{d.Name}" Publisher="{d.Publisher}" MinVersion="{d.Version}" />"""));

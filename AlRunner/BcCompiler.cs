@@ -1041,7 +1041,7 @@ public sealed partial class BcCompiler
                 sb.Append('.');
             }
             if (kv.Value.OutsideClosure > 0)
-                sb.Append($" {kv.Value.OutsideClosure} package(s) outside this run's dependency closure were left out of it too, as a real .alpackages would not hold them; a dependency the app does not declare is missing here (#5472).");
+                sb.Append($" {kv.Value.OutsideClosure} package(s) outside this run's dependency closure were left out of it too, as a real .alpackages would not hold them (#5472).");
             return sb.ToString();
         }
         return null;
