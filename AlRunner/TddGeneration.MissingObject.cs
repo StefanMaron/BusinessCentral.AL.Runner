@@ -105,9 +105,9 @@ public static partial class TddGeneration
         if (byName.Count == 0) return Array.Empty<TddMissingObject>();
 
         var idRanges = TddPrecompiledStub.ReadIdRanges(manifestAppJsonPath);
-        var reservedCodeunits = new HashSet<int>();
-        var reservedTables = new HashSet<int>();
-        var reservedEnums = new HashSet<int>();
+        var reservedCodeunits = IdsAcrossModules(compilation, NavCA.SymbolKind.Codeunit);
+        var reservedTables = IdsAcrossModules(compilation, NavCA.SymbolKind.Table);
+        var reservedEnums = IdsAcrossModules(compilation, NavCA.SymbolKind.Enum);
         var tablesToRefresh = new List<(int Id, string Text)>();
         var appended = new Dictionary<int, System.Text.StringBuilder>();
         var result = new List<TddMissingObject>();

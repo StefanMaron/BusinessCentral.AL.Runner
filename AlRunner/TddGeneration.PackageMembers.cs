@@ -30,7 +30,7 @@ public static partial class TddGeneration
     {
         if (entries.Count == 0) return;
         var idRanges = TddPrecompiledStub.ReadIdRanges(manifestAppJsonPath);
-        var reservedExtensions = new HashSet<int>();
+        var reservedExtensions = IdsAcrossModules(compilation, NavCA.SymbolKind.TableExtension);
         var appended = new Dictionary<int, StringBuilder>();
         var pending = new List<(string Key, TddGeneratedMember Member, List<NavDiag.Diagnostic> Diags)>();
 
@@ -217,7 +217,7 @@ public static partial class TddGeneration
     {
         if (entries.Count == 0) return;
         var idRanges = TddPrecompiledStub.ReadIdRanges(manifestAppJsonPath);
-        var reservedExtensions = new HashSet<int>();
+        var reservedExtensions = IdsAcrossModules(compilation, NavCA.SymbolKind.EnumExtension);
         var appended = new Dictionary<int, StringBuilder>();
         var pending = new List<(string Key, TddGeneratedMember Member, List<NavDiag.Diagnostic> Diags)>();
 
@@ -323,6 +323,27 @@ public static partial class TddGeneration
         var written = baseObject?.ToString().Trim() ?? "";
         var lastPart = Unquote(written.Contains('"') ? written[written.IndexOf('"')..] : written.Split('.').Last());
         return string.Equals(lastPart, name, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The ids of the objects of <paramref name="kind"/> that the compile's modules declare (#5498): the app's own, the packages' and the other source
+    /// bundles' of the run. Ids are per object type, and the generated object must not take one a module the compile reads already holds
+    /// (AL0264), so this seeds the ids a generator treats as taken. Throws when the compile cannot enumerate them: choosing an id without them is a guess.
+    /// </summary>
+    internal static HashSet<int> IdsAcrossModules(NavCA.Compilation compilation, NavCA.SymbolKind kind)
+    {
+        var ids = new HashSet<int>();
+        // Internal to the compiler, bound as required (guards-need-a-third-state.md): a null here would read as "no module declares any".
+        var bySymbolKind = Infrastructure.BcShape.RequiredMethod(typeof(NavCA.Compilation), "GetObjectSymbolsByKindAcrossModules",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic,
+            "tdd-generated-object-id", "Compilation.GetObjectSymbolsByKindAcrossModules",
+            "--tdd chooses a generated object's id among those no module of the compile uses", new[] { typeof(NavCA.SymbolKind), typeof(bool) });
+        if (bySymbolKind.Invoke(compilation, new object[] { kind, false }) is not System.Collections.IEnumerable symbols)
+            throw new Infrastructure.BcShapeGapException("tdd-generated-object-id", "Compilation.GetObjectSymbolsByKindAcrossModules",
+                "returned nothing enumerable, so the ids the compile's modules use are unknown");
+        foreach (var symbol in symbols)
+            if (symbol is NavCA.ISymbolWithId { Id: > 0 } obj) ids.Add(obj.Id);
+        return ids;
     }
 
     /// <summary>Name first, so tables and enums are taken (and take their ids) in name order whichever namespace they are in.</summary>

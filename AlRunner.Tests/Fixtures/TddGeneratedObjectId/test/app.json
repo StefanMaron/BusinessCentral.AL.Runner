@@ -1,0 +1,19 @@
+{
+  "id": "6a1b2c3d-9405-4fb6-a027-e18394a5b156",
+  "name": "Runner Tests Fixture - Tdd Generated Object Id",
+  "publisher": "AL Runner Fixtures",
+  "version": "1.0.0.0",
+  "brief": "The #5498 --tdd reproducer.",
+  "description": "Every kind of object --tdd generates is needed once, in a range whose first id a package's object of that kind already holds.",
+  "dependencies": [
+    {
+      "id": "7b2c3d4e-a516-40c7-b138-f294a5b6c267",
+      "name": "Tdd Generated Object Id Pkg",
+      "publisher": "AL Runner Fixtures",
+      "version": "1.0.0.0"
+    }
+  ],
+  "idRanges": [ { "from": 65400, "to": 65419 } ],
+  "runtime": "14.0",
+  "features": []
+}

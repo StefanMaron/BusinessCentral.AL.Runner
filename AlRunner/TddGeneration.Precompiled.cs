@@ -98,7 +98,7 @@ public static partial class TddGeneration
         if (byKey.Count == 0) return;
 
         var idRanges = TddPrecompiledStub.ReadIdRanges(manifestAppJsonPath);
-        var reserved = new HashSet<int>();
+        var reserved = IdsAcrossModules(compilation, NavCA.SymbolKind.Codeunit);
         var groups = new Dictionary<string, TddPrecompiledStub.Group>(StringComparer.OrdinalIgnoreCase);
         var pending = new List<(string Key, TddGeneratedMember Member, List<NavDiag.Diagnostic> Diags)>();
         // Members in key order, and each member's sites in file then position order: the emit reports
