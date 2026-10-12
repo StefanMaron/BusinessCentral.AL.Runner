@@ -81,4 +81,60 @@ public sealed partial class WatchNewFolderTests
                 File.Move(Path.Combine(root, "solo", "T.Codeunit.al"), Path.Combine(root, "solo", "T.Codeunit.bak"))),
             "renaming an .al file away started no cycle.");
     }
+
+    // The ".git" rule is whole path SEGMENTS below the watched root: .github, a.git, .gitx and .gitignore are
+    // not git's folders, so a folder created under them is still a hint; a ".git" at any depth is.
+    private static async Task<bool> FolderHintRaised(string root, string parent, string child, bool assertQuietThenControl)
+    {
+        Directory.CreateDirectory(Path.Combine(root, parent));
+        var armed = AlRunner.WatchSource.ArmSourceWatch(new List<string> { root });
+        var (signal, watchers, _) = armed!.Value;
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, parent, child));
+            if (!assertQuietThenControl)
+                return await Task.Run(() => signal.Wait(TimeSpan.FromSeconds(10)));
+            await Task.Delay(1000);
+            var raised = signal.IsSet;
+            // A quiet run proves nothing unless this watch can hear: the control must arrive.
+            Directory.CreateDirectory(Path.Combine(root, "control"));
+            Assert.True(await Task.Run(() => signal.Wait(TimeSpan.FromSeconds(10))), "the control folder raised no signal: the watch was deaf.");
+            return raised;
+        }
+        finally
+        {
+            AlRunner.WatchSource.DisposeWatch(signal, watchers);
+        }
+    }
+
+    [Theory]
+    [InlineData(".github", "workflows")]
+    [InlineData("a.git", "b")]
+    [InlineData(".gitx", "b")]
+    [InlineData(".gitignore", "b")]
+    public async Task AFolderUnderANameThatOnlyLooksLikeGit_IsStillAHint(string parent, string child)
+    {
+        Assert.True(await FolderHintRaised(NewDir(), parent, child, assertQuietThenControl: false),
+            $"a folder created under '{parent}' raised no signal: '.git' must match a whole path segment.");
+    }
+
+    [Theory]
+    [InlineData(".git", "objects")]
+    [InlineData("sub/.git", "objects")]
+    [InlineData("sub", ".git")]
+    public async Task AFolderInsideGitAtAnyDepth_IsNotAHint(string parent, string child)
+    {
+        Assert.False(await FolderHintRaised(NewDir(), parent, child, assertQuietThenControl: true),
+            $"a folder created at '{parent}/{child}' raised a signal: git's own folders must be ignored.");
+    }
+
+    // The rule is judged BELOW the watched root: a root that itself sits inside a ".git" folder still hears its folders.
+    [Fact]
+    public async Task ARootInsideAGitFolder_StillHearsItsFolders()
+    {
+        var root = Path.Combine(NewDir(), ".git", "work");
+        Directory.CreateDirectory(root);
+        Assert.True(await FolderHintRaised(root, "solo", "later", assertQuietThenControl: false),
+            "a folder created under a watched root that sits inside '.git' raised no signal: the rule must judge the path below the root.");
+    }
 }
