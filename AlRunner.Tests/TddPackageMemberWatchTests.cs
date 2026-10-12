@@ -120,7 +120,7 @@ public class TddPackageMemberWatchTests
             Assert.Contains("--tdd: generated 5 member(s) this run:", cycle2);
             // A full rebuild, and the reason names the extension: the compile of cycle 1 recorded no baseline.
             await WaitForStderrContains("FULL REBUILD", TimeSpan.FromSeconds(10));
-            await WaitForStderrContains("generated a field of a package's table in a tableextension", TimeSpan.FromSeconds(10));
+            await WaitForStderrContains("generated a member or an object", TimeSpan.FromSeconds(10));
         }
         finally
         {

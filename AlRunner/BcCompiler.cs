@@ -2631,6 +2631,9 @@ public sealed partial class BcCompiler
         // (the watch reset clears it), so a compile that made one is no incremental baseline.
         var tddRegisteredPackageExtension = _tddMode
             && TddGeneration.SettleGeneratedMembers(trees, caught == null && outputter.Captured.Count > 0, tddGeneratedMembers);
+        // #5494: nor is a compile that generated anything. The baseline holds the trees with the generated text in them, and an incremental cycle
+        // runs no generation, so the test would keep running against the member while its annotation and the closing list said none was generated.
+        var tddGeneratedAnything = _tddMode && tddGeneratedMembers.Count > 0;
 
         // #5161: a clean compile of a bundle that calls into one --tdd generated a member into. The
         // compile that generated into ANOTHER bundle is skipped: its own diagnostics already named the tests.
@@ -2669,7 +2672,7 @@ public sealed partial class BcCompiler
         // as a RAD baseline — a module that only compiled after dropping broken objects must
         // not let a later incremental cycle silently treat those objects as "still there".
         if (trackIncrementalBaseline && caught == null && excludedObjects.Count == 0 && outputter.Captured.Count > 0
-            && !tddRegisteredPackageExtension)
+            && !tddRegisteredPackageExtension && !tddGeneratedAnything)
         {
             try
             {

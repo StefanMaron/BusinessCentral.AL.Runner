@@ -685,10 +685,10 @@ public sealed partial class BcCompiler
             // #1994's precedent for surfacing full-rebuild causes at default verbosity).
             fallbackReason = _tddMode
                 ? "no incremental baseline yet for this bundle (first --watch cycle, or --tdd reported " +
-                  "a synthetic FAILED test for a missing symbol on a previous cycle, or generated a field of a " +
-                  "package's table in a tableextension (#5430) — a baseline is only recorded on a clean compile " +
-                  "with nothing excluded and no such extension, so cycles stay a full rebuild until the missing " +
-                  "symbol is implemented and the module compiles clean again)"
+                  "a synthetic FAILED test for a missing symbol on a previous cycle, or generated a member or an object " +
+                  "(a field of a package's table in a tableextension, #5430, or any other, #5494) — a baseline is only " +
+                  "recorded on a clean compile with nothing excluded and nothing generated, so cycles stay a full rebuild " +
+                  "until the missing symbol is implemented and the module compiles clean again)"
                 : "no incremental baseline yet for this bundle (first --watch cycle, or the previous cycle fell back)";
             return null;
         }
