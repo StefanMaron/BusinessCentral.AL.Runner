@@ -242,18 +242,20 @@ public sealed class TddPrecompiledTests : IDisposable
         Assert.Equal(8, root.GetProperty("passed").GetInt32());
         Assert.Equal(9, root.GetProperty("failed").GetInt32());
 
-        Assert.Contains("--tdd: generated 5 member(s) this run:", stderr);
+        // "Ranked" is stubbed in the one file that calls it, and that file no longer compiles (the Boolean assignment after the Integer one): the
+        // stub went with the file, so it is said so and not listed beside the four that a file the compile kept declares (#5493).
+        Assert.Contains("--tdd: not reported as generated: Precompiled Points: procedure \"Ranked\"(Arg1: Integer): Integer - the compile did not keep A8SameFileOrderTests.Codeunit.al", stderr);
+        Assert.Contains("--tdd: generated 4 member(s) this run:", stderr);
         Assert.Contains("--tdd: 7 test(s) reach generated stubs this run:", stderr);
         // The generated list is in ordinal member order, and the stub codeunits took their ids in that order:
         // the first member's file got the first free id, and so on (nothing follows the diagnostics' order).
         var lines = stderr.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
-        var listed = lines.SkipWhile(l => !l.StartsWith("--tdd: generated 5 member(s)")).Skip(1).Take(5).Select(l => l.Trim()).ToList();
+        var listed = lines.SkipWhile(l => !l.StartsWith("--tdd: generated 4 member(s)")).Skip(1).Take(4).Select(l => l.Trim()).ToList();
         Assert.Equal(new[]
         {
             "Precompiled Points: procedure \"Bonus\"(Arg1: Boolean): Integer",
             "Precompiled Points: procedure \"CalcPoints\"(Arg1: Integer): Integer",
             "Precompiled Points: procedure \"Pick\"(Arg1: Integer): Integer",
-            "Precompiled Points: procedure \"Ranked\"(Arg1: Integer): Integer",
             "Precompiled Points: procedure \"Shaped\"(Arg1: Integer): Integer",
         }, listed);
         Assert.Equal(new[]
