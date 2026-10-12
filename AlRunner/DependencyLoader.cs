@@ -70,7 +70,10 @@ public sealed class DependencyLoader
         string? SourceFingerprint = null,
         bool TddCompiled = false,
         // #5118: compiled with a test codeunit dropped, which only the compile that dropped it reports.
-        bool DroppedObjects = false)
+        bool DroppedObjects = false,
+        // #5520: registered from an app folder (not a package file). Only such a module can be
+        // told that its source moved: a package path can vanish when a workspace is rewritten.
+        bool FromSourceDirectory = false)
     {
         /// <summary>Every assembly of this app, primary first; never empty.</summary>
         internal IReadOnlyList<Assembly> AllAssemblies => Assemblies ?? new[] { Asm };
@@ -91,6 +94,21 @@ public sealed class DependencyLoader
 
     // An earlier request's module, which only the source it was compiled from may reuse.
     private static bool FromEarlierEpoch(LoadedAppEntry entry) => entry.Epoch != CurrentEpoch;
+
+    // #5520: the app folder this module was compiled from no longer holds an app.json, and the ask
+    // is for another folder: the same app at a new path, not another bundle's copy of it (#1683).
+    private static bool SourceMoved(LoadedAppEntry entry, string askedSourcePath)
+        => entry.FromSourceDirectory
+           && !string.Equals(entry.SourcePath, askedSourcePath, StringComparison.OrdinalIgnoreCase)
+           && !File.Exists(Path.Combine(entry.SourcePath, "app.json"));
+
+    /// <summary>#5520: the folder the module registered for <paramref name="appId"/> was compiled
+    /// from when <paramref name="askedSourcePath"/> is that app at a new path (see
+    /// <c>SourceMoved</c>), else null. For the message; <see cref="TryGetByAppId"/> and
+    /// <see cref="RegisterLoaded"/> apply the rule themselves.</summary>
+    internal static string? MovedSourcePath(Guid appId, string askedSourcePath)
+        => _cache.TryGetValue(appId, out var entry) && SourceMoved(entry, askedSourcePath) ? entry.SourcePath : null;
+
     private static readonly ConcurrentDictionary<string, Assembly> _byName =
         new(StringComparer.OrdinalIgnoreCase);
     private static int _resolverInstalled;
@@ -1676,6 +1694,9 @@ public sealed class DependencyLoader
         // distinct directories, which is the only situation #1850's guard was written for.
         if (string.Equals(entry.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase))
             return null;
+        // #5520: asked before identity, like the path above: a moved app with a bumped version is
+        // not a collision either.
+        if (SourceMoved(entry, sourcePath)) return null;
         if (!IdentityMatches(entry, name, publisher, version))
             throw new AlRunner.Infrastructure.AppIdCollisionException(
                 appId, entry.Name, entry.Publisher, entry.Version, entry.SourcePath,
@@ -1737,7 +1758,7 @@ public sealed class DependencyLoader
         var newEntry = new LoadedAppEntry(asm, name, publisher, version, sourcePath,
             VisibilitySignature: BcCompiler.DeclaredVisibilitySignature(appId),
             Epoch: CurrentEpoch, SourceFingerprint: sourceFingerprint, TddCompiled: BcCompiler.IsTddMode(),
-            DroppedObjects: droppedObjects);
+            DroppedObjects: droppedObjects, FromSourceDirectory: Directory.Exists(sourcePath));
         if (_cache.TryAdd(appId, newEntry)) return;
         var existing = _cache[appId];
         // #2556: SourcePath first, for the same reason as TryGetByAppId above — this is the
@@ -1749,7 +1770,11 @@ public sealed class DependencyLoader
         // next lookup does not keep finding the stale one and recompiling.
         // #5079: an earlier request's module that TryGetByAppId refused is replaced the same way,
         // so this request's siblings resolve the module compiled from this request's source.
+        // #5520: a module whose app folder moved is replaced by the compile at the new folder, whatever
+        // its identity says now, so the next lookup does not keep finding the one that no longer
+        // has a source.
         if (string.Equals(existing.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase)
+            || SourceMoved(existing, sourcePath)
             || (IdentityMatches(existing, name, publisher, version)
                 && (FromEarlierEpoch(existing)
                     || !string.Equals(existing.VisibilitySignature, newEntry.VisibilitySignature, StringComparison.Ordinal))))
