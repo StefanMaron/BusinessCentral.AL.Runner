@@ -169,7 +169,8 @@ public static partial class TddGeneration
                     group.MemberNames.Add(first.MemberName);
                     group.Sites.AddRange(treeSites);
                 }
-                pending.Add((key, new TddGeneratedMember(first.TargetObjectName, "procedure", sig),
+                pending.Add((key, new TddGeneratedMember(first.TargetObjectName, "procedure", sig)
+                    { HomeFiles = perTree.Select(g => trees[g.Key].FilePath).ToList() },
                     entries.Select(e => e.Diag).ToList()));
             }
             catch (Exception ex)

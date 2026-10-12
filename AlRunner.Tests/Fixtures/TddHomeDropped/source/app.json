@@ -1,0 +1,12 @@
+{
+  "id": "1b7c2d3e-4f50-4a61-8b72-9c83d4e5f601",
+  "name": "Runner Tests Fixture - Tdd Home Dropped Source",
+  "publisher": "AL Runner Fixtures",
+  "version": "1.0.0.0",
+  "brief": "The source shape of the #5493 --tdd reproducer.",
+  "description": "A test calls a procedure its library does not declare, and the library's file does not compile.",
+  "dependencies": [],
+  "idRanges": [ { "from": 65400, "to": 65419 } ],
+  "runtime": "14.0",
+  "features": []
+}

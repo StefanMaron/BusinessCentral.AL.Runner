@@ -1,0 +1,19 @@
+{
+  "id": "2c8d3e4f-5061-4b72-9c83-ad94e5f60712",
+  "name": "Runner Tests Fixture - Tdd Home Dropped One File",
+  "publisher": "AL Runner Fixtures",
+  "version": "1.0.0.0",
+  "brief": "The one-file shape of the #5493 --tdd reproducer.",
+  "description": "The only file of the test app names a field a package table lacks and does not compile, so the compile drops every file.",
+  "dependencies": [
+    {
+      "id": "e2b4c6a8-1d3f-4a5b-9c7e-8f0a2b4d6e10",
+      "name": "Tdd Package Members Dep",
+      "publisher": "AL Runner Fixtures",
+      "version": "1.0.0.0"
+    }
+  ],
+  "idRanges": [ { "from": 65400, "to": 65419 } ],
+  "runtime": "14.0",
+  "features": []
+}

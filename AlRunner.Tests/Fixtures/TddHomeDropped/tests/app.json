@@ -1,0 +1,19 @@
+{
+  "id": "4eaf5061-7283-4d94-be05-cf1607182934",
+  "name": "Runner Tests Fixture - Tdd Home Dropped Tests",
+  "publisher": "AL Runner Fixtures",
+  "version": "1.0.0.0",
+  "brief": "The test bundle of the cross-bundle shape of the #5493 --tdd reproducer.",
+  "description": "Depends on the bundle whose generated field was dropped with its file, and reads the table's field count.",
+  "dependencies": [
+    {
+      "id": "3d9e4f50-6172-4c83-ad94-be05f6071823",
+      "name": "Runner Tests Fixture - Tdd Home Dropped Bundle",
+      "publisher": "AL Runner Fixtures",
+      "version": "1.0.0.0"
+    }
+  ],
+  "idRanges": [ { "from": 65460, "to": 65469 } ],
+  "runtime": "14.0",
+  "features": []
+}

@@ -163,7 +163,7 @@ public static partial class TddGeneration
                 foreach (var s in sites) uses.AddRange(UseSitesOf(originalTrees, s.TreeIdx, s.Node));
                 Console.Error.WriteLine($"--tdd: generated {kind.Word} {Quote(name)} (id {id.Value}) in {Path.GetFileName(trees[home].FilePath)}: no app of the run and no package it can read declares it" +
                     (isTable ? $"; its only field is the placeholder primary key {Quote(PlaceholderKeyField)}: Integer (AutoIncrement)" : ""));
-                result.Add(new TddMissingObject(new TddGeneratedMember(name, kind.Word, id.Value.ToString()), uses));
+                result.Add(new TddMissingObject(new TddGeneratedMember(name, kind.Word, id.Value.ToString()) { HomeFiles = new[] { trees[home].FilePath } }, uses));
             }
             catch (Exception ex)
             {

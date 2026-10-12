@@ -2630,7 +2630,7 @@ public sealed partial class BcCompiler
         // the compile settled and its file is known to have survived. The registration is state the trees do not reproduce
         // (the watch reset clears it), so a compile that made one is no incremental baseline.
         var tddRegisteredPackageExtension = _tddMode
-            && TddGeneration.SettlePackageExtensions(trees, caught == null && outputter.Captured.Count > 0, tddGeneratedMembers);
+            && TddGeneration.SettleGeneratedMembers(trees, caught == null && outputter.Captured.Count > 0, tddGeneratedMembers);
 
         // #5161: a clean compile of a bundle that calls into one --tdd generated a member into. The
         // compile that generated into ANOTHER bundle is skipped: its own diagnostics already named the tests.

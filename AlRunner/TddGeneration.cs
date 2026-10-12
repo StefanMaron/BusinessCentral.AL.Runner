@@ -59,6 +59,11 @@ public sealed record TddGeneratedMember(string ObjectDisplayName, string MemberK
     /// <summary>Set for a field or enum value generated in a tableextension or enumextension beside a PACKAGE object (#5430):
     /// the extension it lives in. Settled after the compile (<see cref="TddGeneration.SettlePackageExtensions"/>).</summary>
     public TddPackageExtension? PackageExtension { get; init; }
+
+    /// <summary>The files of THIS compile the member was written into (#5493): it is declared only if one of them is among the trees the compile
+    /// kept (<see cref="TddGeneration.SettleGeneratedMembers"/>). Empty for a member generated into another bundle (that bundle's compile settles it)
+    /// and for a package extension (settled by the extension).</summary>
+    public IReadOnlyList<string> HomeFiles { get; init; } = Array.Empty<string>();
 }
 
 /// <summary>An extension --tdd appended to a file of the compile for a package's table or enum (#5430). <see cref="RecordEngineText"/>
@@ -442,7 +447,7 @@ public static partial class TddGeneration
         var newObjects = objects.Replace(targetObj, result.Value.NewObj);
         var newRoot = currentRoot.WithObjects(newObjects);
         trees[target.TargetTreeIdx] = trees[target.TargetTreeIdx].WithRootAndOptions(newRoot, trees[target.TargetTreeIdx].Options);
-        return result.Value.Member;
+        return result.Value.Member with { HomeFiles = new[] { trees[target.TargetTreeIdx].FilePath } };
     }
 
     private static (NavSyntax.ObjectSyntax, TddGeneratedMember)? TryGenerateField(

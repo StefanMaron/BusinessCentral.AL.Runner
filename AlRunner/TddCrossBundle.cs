@@ -372,6 +372,24 @@ public static class TddCrossBundle
         lock (Sync) GeneratedHere.Add(member);
     }
 
+    /// <summary>The compile settled (#5493) and dropped the file <paramref name="gone"/> were written into: nothing declares them, so the run's list
+    /// (<see cref="AllGenerated"/>) and what a bundle compiled later reads to name the stubs its tests reach (<see cref="Reaching"/>) must not hold
+    /// them. By what <see cref="TddReport.Describe"/> says, because a member recorded before its dependents were known is another instance.</summary>
+    internal static void Unrecord(IReadOnlyCollection<TddGeneratedMember> gone)
+    {
+        if (gone.Count == 0) return;
+        var described = new HashSet<string>(gone.Select(TddReport.Describe), StringComparer.Ordinal);
+        lock (Sync)
+        {
+            GeneratedHere.RemoveAll(m => described.Contains(TddReport.Describe(m)));
+            foreach (var key in Reaching.Keys.ToList())
+            {
+                Reaching[key].RemoveAll(m => described.Contains(TddReport.Describe(m)));
+                if (Reaching[key].Count == 0) Reaching.Remove(key);
+            }
+        }
+    }
+
     /// <summary>Every member generated into another bundle for <paramref name="dependentModule"/>
     /// this cycle.</summary>
     public static IReadOnlyList<TddGeneratedMember> GeneratedFor(string dependentModule)

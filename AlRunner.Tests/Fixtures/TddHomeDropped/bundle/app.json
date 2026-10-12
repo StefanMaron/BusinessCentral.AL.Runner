@@ -1,0 +1,19 @@
+{
+  "id": "3d9e4f50-6172-4c83-ad94-be05f6071823",
+  "name": "Runner Tests Fixture - Tdd Home Dropped Bundle",
+  "publisher": "AL Runner Fixtures",
+  "version": "1.0.0.0",
+  "brief": "The cross-bundle shape of the #5493 --tdd reproducer.",
+  "description": "A source bundle another bundle depends on: its file generates a field of a package table and does not compile.",
+  "dependencies": [
+    {
+      "id": "e2b4c6a8-1d3f-4a5b-9c7e-8f0a2b4d6e10",
+      "name": "Tdd Package Members Dep",
+      "publisher": "AL Runner Fixtures",
+      "version": "1.0.0.0"
+    }
+  ],
+  "idRanges": [ { "from": 65450, "to": 65459 } ],
+  "runtime": "14.0",
+  "features": []
+}

@@ -143,7 +143,8 @@ public static partial class TddGeneration
     /// recorded for this compile (<c>BcCompiler.Emit</c>; #5430).
     /// Observably equivalent to the extension being on disk: registered only if compiled, from the text a file would hold.
     /// </summary>
-    internal static bool SettlePackageExtensions(NavSyntax.SyntaxTree[] compiledTrees, bool compiled, List<TddGeneratedMember> members)
+    internal static bool SettlePackageExtensions(NavSyntax.SyntaxTree[] compiledTrees, bool compiled, List<TddGeneratedMember> members,
+        List<TddGeneratedMember>? removed = null)
     {
         var registered = false;
         foreach (var ext in members.Where(m => m.PackageExtension != null).Select(m => m.PackageExtension!).Distinct().ToList())
@@ -159,8 +160,36 @@ public static partial class TddGeneration
             Console.Error.WriteLine(
                 $"--tdd: dropped with its file: {ext.Word} extension {Quote(ext.Name)} beside package {ext.Word} {ext.ObjectName}, which the compile dropped, so it is not " +
                 $"declared: {string.Join(", ", dropped.Select(m => m.Signature))} is not reported as generated and the record engine was not told of it");
+            removed?.AddRange(dropped);
             members.RemoveAll(m => m.PackageExtension == ext);
         }
+        return registered;
+    }
+
+    /// <summary>
+    /// Run once the compile has settled (#5493), on the trees that were COMPILED: <see cref="SettlePackageExtensions"/>, and then every other member
+    /// generated into a file of this compile (<see cref="TddGeneratedMember.HomeFiles"/>) whose files the compile all dropped. Such a member is declared
+    /// by nothing, so it is taken out of <paramref name="members"/> (the closing list and the tests' annotations must not claim it), out of what
+    /// <see cref="TddCrossBundle"/> kept of it for the bundles compiled after this one, and the run says so. Returns what
+    /// <see cref="SettlePackageExtensions"/> returns. Observably equivalent to the member being on disk: reported only if its file was compiled.
+    /// When nothing compiled (<paramref name="compiled"/> false) no file survived, whatever <paramref name="compiledTrees"/> still holds.
+    /// </summary>
+    internal static bool SettleGeneratedMembers(NavSyntax.SyntaxTree[] compiledTrees, bool compiled, List<TddGeneratedMember> members)
+    {
+        var removed = new List<TddGeneratedMember>();
+        var registered = SettlePackageExtensions(compiledTrees, compiled, members, removed);
+        var kept = compiled
+            ? compiledTrees.Select(t => t.FilePath).ToHashSet(StringComparer.Ordinal)
+            : new HashSet<string>(StringComparer.Ordinal);
+        foreach (var m in members.Where(m => m.HomeFiles.Count > 0 && !m.HomeFiles.Any(kept.Contains)).ToList())
+        {
+            Console.Error.WriteLine(
+                $"--tdd: not reported as generated: {TddReport.Describe(m)} - the compile did not keep {string.Join(", ", m.HomeFiles.Select(Path.GetFileName))}, " +
+                "so nothing declares it");
+            members.Remove(m);
+            removed.Add(m);
+        }
+        TddCrossBundle.Unrecord(removed);
         return registered;
     }
 
