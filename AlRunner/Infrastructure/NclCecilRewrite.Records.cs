@@ -1248,33 +1248,25 @@ public static partial class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Replaced ALNavApp.GetDataVersionForUpgrade → return null (no skeleton upgrade)");
         }
 
-        // ── NavRecord.InsertAsync(DataError, bool, bool, bool) — AutoIncrement prepend ──
-        // InsertAsync(4) is the data layer's single insert funnel: `Rec.Insert()` reaches it
-        // through ALInsertAsync(3), and a PAGE save reaches it through NavForm.SaveRecordAsync,
-        // which calls it directly and never touches ALInsertAsync (#4142; the same finding as
-        // #4121, whose companion-row prepend sits on this method for the same reason). A
-        // prepend here stamps any registered AI field on `this`'s table with the next counter
-        // value before the storage layer's duplicate-key check, on both routes.
+        // ── Insert: AutoIncrement key + system stamps, written BELOW the table triggers (#5509) ──
+        // Real BC writes both in the data layer under NavRecord.InsertAsync(4), after OnBeforeInsert
+        // subscribers, OnInsert and NavGlobalTriggers, so `Rec` holds key 0 and default stamps
+        // inside the trigger (corpus 67812, ten cloud legs + Windows). They sat on InsertAsync(4)
+        // itself (#4142, #4324) and so ran before the trigger. Two prepends now:
+        //   1. NavRecord.InsertAsync(4): BcRuntime.NoteInsertFunnel(this) marks the record.
+        //   2. RecordImplementation.InsertRecordAsync: BcRuntime.WriteStorageFieldsOnInsert(parentRecord)
+        //      assigns the key and stamps, once per mark. InsertAsync(4) is where AL Rec.Insert and a
+        //      page save (NavForm.SaveRecordAsync) both arrive (#4142), and it always reaches
+        //      InsertRecordAsync after the triggers.
+        // The mark exists because NavForm.SyncTempTableWithSourceTableAsync calls InsertRecordAsync
+        // directly on a page's temp copy of a row that already carries its source's stamps.
+        // Equivalence: helpers as before (no-op without a registered AI field / non-zero AI value /
+        // on a temporary table); only the point in time moves. See docs/page-save-data-layer-prepends.md.
         //
-        // See docs/page-save-data-layer-prepends.md for the measured call graph and the xRec
-        // ordering consequence of moving off ALInsertAsync.
-        //
-        // Why Cecil and not JmpHook: the method is `async ValueTask<bool>` and
-        // JmpHook on async ValueTask entry points causes SIGSEGV under R2R (see
-        // RecordWritePatches.cs:245 historical comment and feedback_r2r_inlining_traps.md).
-        // Cecil prepend leaves the async state-machine intact; we just inject a
-        // single static call ahead of the existing IL with no stack-balance impact.
-        //
-        // Equivalence: AssignAutoIncrement is a no-op when the table has no registered
-        // AI field, when the AI field is already non-zero (AL caller pre-assigned),
-        // or when reflection on MetaTable throws. So tables outside the AI registry
-        // see byte-identical behaviour. For registered tables, the field gets the
-        // next counter value just as the real BC server would have assigned at SQL
-        // INSERT time — observably equivalent under the in-memory store.
-        //
-        // Closes the 18 al-language InsertRecordAsync DuplicateKey failures rooted
-        // in `ALT Trigger Log` insertions from table-trigger code that doesn't set
-        // Entry No. itself.
+        // Why Cecil and not JmpHook: the methods are `async ValueTask<bool>` and JmpHook on async
+        // ValueTask entry points causes SIGSEGV under R2R. A prepend leaves the state machine intact.
+        // Token-shift: `ldarg.0; call` and `ldarg.0; ldfld parentRecord; call` add only a method
+        // reference to our own assembly (parentRecord is a field of this module).
         {
             var navRecord = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord")
                 ?? throw new InvalidOperationException("NavRecord type not found in Ncl");
@@ -1286,56 +1278,39 @@ public static partial class NclCecilRewrite
                 && m.Parameters[2].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean
                 && m.Parameters[3].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean)
                 ?? throw new InvalidOperationException("NavRecord.InsertAsync(DataError,bool,bool,bool) not found");
+            var recImpl = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.RecordImplementation")
+                ?? throw new InvalidOperationException("RecordImplementation type not found in Ncl");
+            var parentRecord = recImpl.Fields.FirstOrDefault(f => f.Name == "parentRecord"
+                    && f.FieldType.FullName == "Microsoft.Dynamics.Nav.Runtime.NavRecord")
+                ?? throw new InvalidOperationException(
+                    "RecordImplementation.parentRecord (NavRecord) not found — the AutoIncrement key and "
+                    + "system stamps could not be written at the storage layer.");
+            var insertRecord = recImpl.Methods.FirstOrDefault(m =>
+                m.Name == "InsertRecordAsync"
+                && m.Parameters.Count == 1
+                && m.Parameters[0].ParameterType.Name == "DataError")
+                ?? throw new InvalidOperationException("RecordImplementation.InsertRecordAsync(DataError) not found");
 
-            var helperMi = typeof(AlRunner.BcRuntime).GetMethod(
-                nameof(AlRunner.BcRuntime.AssignAutoIncrement),
-                BindingFlags.Public | BindingFlags.Static)
-                ?? throw new InvalidOperationException("BcRuntime.AssignAutoIncrement not found");
-            var helperRef = asm.MainModule.ImportReference(helperMi);
+            var noteRef = asm.MainModule.ImportReference(typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.NoteInsertFunnel), BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("BcRuntime.NoteInsertFunnel not found"));
+            var writeRef = asm.MainModule.ImportReference(typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.WriteStorageFieldsOnInsert), BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("BcRuntime.WriteStorageFieldsOnInsert not found"));
 
-            var body = insert4.Body;
-            var il = body.GetILProcessor();
-            var firstOriginal = body.Instructions[0];
-            il.InsertBefore(firstOriginal, il.Create(OpCodes.Ldarg_0));
-            il.InsertBefore(firstOriginal, il.Create(OpCodes.Call, helperRef));
-            // The helper consumes the ldarg.0 and pushes nothing. MaxStackSize only
-            // grows if our prepended call needs more than the existing budget; one
-            // extra slot covers it. Bump conservatively to be safe.
-            if (body.MaxStackSize < 1) body.MaxStackSize = 1;
-            Console.Error.WriteLine("[Cecil] Prepended AssignAutoIncrement → NavRecord.InsertAsync(DataError,bool,bool,bool)");
-        }
+            var il4 = insert4.Body.GetILProcessor();
+            var first4 = insert4.Body.Instructions[0];
+            il4.InsertBefore(first4, il4.Create(OpCodes.Ldarg_0));
+            il4.InsertBefore(first4, il4.Create(OpCodes.Call, noteRef));
+            if (insert4.Body.MaxStackSize < 1) insert4.Body.MaxStackSize = 1;
 
-        // ── NavRecord.InsertAsync(DataError, bool, bool, bool) — SystemFields stamp prepend ──
-        // Stamps SystemCreatedAt/SystemCreatedBy/SystemModifiedAt/SystemModifiedBy on
-        // `self` before the storage layer persists the record. Same funnel, and for the same
-        // reason, as the AutoIncrement prepend above: real BC stamps these in the data layer,
-        // so a page save gets them too (#4142). Non-stamp tables (no system fields registered)
-        // become no-op via TryGetFieldByNo miss. Closes 4 al-language fails in Codeunit60152.
-        {
-            var navRecord = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord")
-                ?? throw new InvalidOperationException("NavRecord type not found in Ncl");
-            var insert4 = navRecord.Methods.FirstOrDefault(m =>
-                m.Name == "InsertAsync"
-                && m.Parameters.Count == 4
-                && m.Parameters[0].ParameterType.Name == "DataError"
-                && m.Parameters[1].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean
-                && m.Parameters[2].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean
-                && m.Parameters[3].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean)
-                ?? throw new InvalidOperationException("NavRecord.InsertAsync(DataError,bool,bool,bool) not found");
-
-            var helperMi = typeof(AlRunner.BcRuntime).GetMethod(
-                nameof(AlRunner.BcRuntime.StampSystemFieldsOnInsert),
-                BindingFlags.Public | BindingFlags.Static)
-                ?? throw new InvalidOperationException("BcRuntime.StampSystemFieldsOnInsert not found");
-            var helperRef = asm.MainModule.ImportReference(helperMi);
-
-            var body = insert4.Body;
-            var il = body.GetILProcessor();
-            var firstOriginal = body.Instructions[0];
-            il.InsertBefore(firstOriginal, il.Create(OpCodes.Ldarg_0));
-            il.InsertBefore(firstOriginal, il.Create(OpCodes.Call, helperRef));
-            if (body.MaxStackSize < 1) body.MaxStackSize = 1;
-            Console.Error.WriteLine("[Cecil] Prepended StampSystemFieldsOnInsert → NavRecord.InsertAsync(DataError,bool,bool,bool)");
+            var ilR = insertRecord.Body.GetILProcessor();
+            var firstR = insertRecord.Body.Instructions[0];
+            ilR.InsertBefore(firstR, ilR.Create(OpCodes.Ldarg_0));
+            ilR.InsertBefore(firstR, ilR.Create(OpCodes.Ldfld, parentRecord));
+            ilR.InsertBefore(firstR, ilR.Create(OpCodes.Call, writeRef));
+            if (insertRecord.Body.MaxStackSize < 1) insertRecord.Body.MaxStackSize = 1;
+            Console.Error.WriteLine("[Cecil] Prepended NoteInsertFunnel → NavRecord.InsertAsync(DataError,bool,bool,bool); WriteStorageFieldsOnInsert → RecordImplementation.InsertRecordAsync(DataError)");
         }
 
         // ── RecordImplementation.InsertRecordAsync(DataError) — User system-table insert arm ──
@@ -1425,21 +1400,25 @@ public static partial class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Prepended OnAfterUserDelete → RecordImplementation.DeleteRecordAsync(DataError)");
         }
 
-        // ── NavRecord.ModifyAsync(DataError, bool, bool, bool) — SystemModified stamp prepend ──
+        // ── Modify: SystemModified stamp, written BELOW the table triggers (#5509) ──
         // Stamps only SystemModifiedAt + SystemModifiedBy. NEVER touches
         // SystemCreatedAt / SystemCreatedBy (BC semantics: created fields are
-        // immutable after insert). Closes 2 al-language fails in Codeunit60152.
-        // SystemCreatedAt_Does_Not_Change_On_Modify must remain passing.
+        // immutable after insert). SystemCreatedAt_Does_Not_Change_On_Modify must remain passing.
+        //
+        // Same two-prepend shape as the insert block above: NavRecord.ModifyAsync(4) carries
+        // BcRuntime.NoteModifyFunnel(this) (the Feature Key read-only guard plus the mark), and
+        // RecordImplementation.ModifyRecordAsync carries WriteStorageFieldsOnModify(parentRecord),
+        // so `Rec.SystemModifiedAt` inside OnModify is still the stored value (corpus 67812).
         //
         // ModifyAsync(4), NOT ALModifyAsync — the modify half of #4142, and its funnel is a
         // DIFFERENT shape from insert's, which is the trap here. AL `Rec.Modify()` reaches
         // ALModifyAsync(3) → ModifyAsync(4). A page save reaches ModifyAsync(**3**) from
         // NavForm.SaveRecordAsync, and ModifyAsync(3) is a two-line forwarder to ModifyAsync(4)
         // (`ldarg.0..3; ldc.i4.0; callvirt ModifyAsync(4)`) — so the 4-arg is where the two
-        // routes meet and the 3-arg must NOT also be prepended, or an AL modify stamps twice.
+        // routes meet and the 3-arg must NOT also be prepended, or an AL modify is marked twice.
         // Measured on Ncl 28.1.49838.53910; see docs/page-save-data-layer-prepends.md.
         //
-        // The refusal below is loud rather than a warning: without this prepend SystemModifiedAt
+        // The refusals below are loud rather than a warning: without them SystemModifiedAt
         // silently freezes, which is a green-looking wrong answer on every modify in the run.
         {
             var navRecord = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord")
@@ -1454,20 +1433,41 @@ public static partial class NclCecilRewrite
                 ?? throw new InvalidOperationException(
                     "[Cecil] NavRecord.ModifyAsync(DataError,bool,bool,bool) not found — "
                     + "SystemModifiedAt/By would silently stop moving on every Modify in the run.");
+            var recImpl = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.RecordImplementation")
+                ?? throw new InvalidOperationException("RecordImplementation type not found in Ncl");
+            var parentRecord = recImpl.Fields.FirstOrDefault(f => f.Name == "parentRecord"
+                    && f.FieldType.FullName == "Microsoft.Dynamics.Nav.Runtime.NavRecord")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] RecordImplementation.parentRecord (NavRecord) not found — "
+                    + "SystemModifiedAt/By would silently stop moving on every Modify in the run.");
+            var modifyRecord = recImpl.Methods.FirstOrDefault(m =>
+                m.Name == "ModifyRecordAsync"
+                && m.Parameters.Count == 1
+                && m.Parameters[0].ParameterType.Name == "DataError")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] RecordImplementation.ModifyRecordAsync(DataError) not found — "
+                    + "SystemModifiedAt/By would silently stop moving on every Modify in the run.");
 
-            var helperMi = typeof(AlRunner.BcRuntime).GetMethod(
-                nameof(AlRunner.BcRuntime.StampSystemFieldsOnModify),
-                BindingFlags.Public | BindingFlags.Static)
-                ?? throw new InvalidOperationException("BcRuntime.StampSystemFieldsOnModify not found");
-            var helperRef = asm.MainModule.ImportReference(helperMi);
+            var noteRef = asm.MainModule.ImportReference(typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.NoteModifyFunnel), BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("BcRuntime.NoteModifyFunnel not found"));
+            var writeRef = asm.MainModule.ImportReference(typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.WriteStorageFieldsOnModify), BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("BcRuntime.WriteStorageFieldsOnModify not found"));
 
-            var body = modify4.Body;
-            var il = body.GetILProcessor();
-            var firstOriginal = body.Instructions[0];
-            il.InsertBefore(firstOriginal, il.Create(OpCodes.Ldarg_0));
-            il.InsertBefore(firstOriginal, il.Create(OpCodes.Call, helperRef));
-            if (body.MaxStackSize < 1) body.MaxStackSize = 1;
-            Console.Error.WriteLine("[Cecil] Prepended StampSystemFieldsOnModify → NavRecord.ModifyAsync(DataError,bool,bool,bool)");
+            var il4 = modify4.Body.GetILProcessor();
+            var first4 = modify4.Body.Instructions[0];
+            il4.InsertBefore(first4, il4.Create(OpCodes.Ldarg_0));
+            il4.InsertBefore(first4, il4.Create(OpCodes.Call, noteRef));
+            if (modify4.Body.MaxStackSize < 1) modify4.Body.MaxStackSize = 1;
+
+            var ilR = modifyRecord.Body.GetILProcessor();
+            var firstR = modifyRecord.Body.Instructions[0];
+            ilR.InsertBefore(firstR, ilR.Create(OpCodes.Ldarg_0));
+            ilR.InsertBefore(firstR, ilR.Create(OpCodes.Ldfld, parentRecord));
+            ilR.InsertBefore(firstR, ilR.Create(OpCodes.Call, writeRef));
+            if (modifyRecord.Body.MaxStackSize < 1) modifyRecord.Body.MaxStackSize = 1;
+            Console.Error.WriteLine("[Cecil] Prepended NoteModifyFunnel → NavRecord.ModifyAsync(DataError,bool,bool,bool); WriteStorageFieldsOnModify → RecordImplementation.ModifyRecordAsync(DataError)");
         }
 
         // ── RecordImplementation.RenameRecordAsync(DataError, NavRecord) — SystemModified stamp prepend ──

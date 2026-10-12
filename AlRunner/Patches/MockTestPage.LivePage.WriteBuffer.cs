@@ -892,21 +892,13 @@ internal partial class LiveNavTestPage
         // SourceTable). A page-variable-bound field (PageVariableTestField) never calls it.
         var record = _record!;
 
-        // SystemModifiedAt/By are stamped by a Cecil prepend on
-        // NavRecord.ModifyAsync(DataError,bool,bool,bool) — reached from the 3-arg call below,
-        // which forwards to it — so as of #4142 this call is REDUNDANT rather than the only
-        // cover it used to be when the prepend sat on ALModifyAsync alone.
-        //
-        // Kept deliberately, and the duplication is observably equivalent: the helper writes
-        // SystemModifiedAt/By from the clock and the session user, so running it twice a few
-        // microseconds apart leaves the same two fields holding the later of two instants, and
-        // its one refusal (the Feature Key read-only guard) is a pure read that throws on the
-        // same input either time. What it buys is that the guard and the stamp still happen
-        // BEFORE EnterRunTransaction/NoteRecordWrite below rather than inside the write —
-        // removing it would move a throwing guard to after the write-transaction note was
-        // taken. Trap for a later editor: if you remove this line, check that ordering rather
-        // than only that the fields are still stamped.
-        BcRuntime.StampSystemFieldsOnModify(record);
+        // SystemModifiedAt/By are written by the storage layer under NavRecord.ModifyAsync(4),
+        // after OnModify (#5509), so nothing is stamped here. The Feature Key read-only guard also
+        // runs there (NavRecord.ModifyAsync(4) opens with it); it is called here too so a refusal
+        // still happens BEFORE EnterRunTransaction/NoteRecordWrite below rather than inside the
+        // write. Pure read, so running it twice is observably the same. Trap: removing this call
+        // moves a throwing guard to after the write-transaction note was taken.
+        BcRuntime.GuardFeatureKeyOnModify(record);
 
         // ModifyAsync, NOT ALModifyAsync — and the difference is the whole xRec contract.
         //

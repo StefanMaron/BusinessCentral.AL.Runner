@@ -661,8 +661,8 @@ public static partial class BcRuntime
         => NextAutoIncrementValue(tableId, fieldNo);
 
     /// <summary>
-    /// AutoIncrement assignment helper, called via Cecil-prepended IL at the start
-    /// of NavRecord.ALInsertAsync(DataError, bool, bool). Pure side-effect:
+    /// AutoIncrement assignment helper, called from <see cref="WriteStorageFieldsOnInsert"/>
+    /// (Cecil-prepended to RecordImplementation.InsertRecordAsync). Pure side-effect:
     /// if the table has a registered AutoIncrement field and that field is currently
     /// zero/empty on `self`, advance the per-table counter and stamp the new value
     /// into the field. Any exception is swallowed — the real async body then runs
@@ -718,12 +718,10 @@ public static partial class BcRuntime
     }
 
     // ── System fields (2000000001-2000000004) stamping helpers ──────────────────────
-    // Called via Cecil-prepended IL at the start of NavRecord.InsertAsync(DataError,bool,
-    // bool,bool) and NavRecord.ModifyAsync(DataError,bool,bool,bool) — the DATA-LAYER
-    // funnels, not the AL entry points, because a page save reaches only the funnels
-    // (#4142; docs/page-save-data-layer-prepends.md). Both helpers are (NavRecord)→void so
-    // the Cecil prepend is the same minimal `ldarg.0; call` pair as AssignAutoIncrement
-    // above.
+    // Written from RecordImplementation.InsertRecordAsync / ModifyRecordAsync, the storage
+    // layer BELOW the table triggers, gated on the NavRecord.InsertAsync(4) / ModifyAsync(4)
+    // funnels having been entered (see "Storage-layer field writes" below). Both helpers are
+    // (NavRecord)→void.
 
     // SystemCreatedBy / SystemModifiedBy are the writing session's user. Observably equivalent
     // to BC because this IS the call AL's UserSecurityId() compiles to
@@ -792,9 +790,8 @@ public static partial class BcRuntime
     }
 
     /// <summary>
-    /// Stamps SystemCreatedAt/By/ModifiedAt/By on Insert. Called via Cecil prepend
-    /// on NavRecord.InsertAsync(DataError,bool,bool,bool) — the funnel both AL's
-    /// Rec.Insert() and NavForm.SaveRecordAsync reach (#4142).
+    /// Stamps SystemCreatedAt/By/ModifiedAt/By on Insert. Called from
+    /// <see cref="WriteStorageFieldsOnInsert"/>, after the table triggers (#5509).
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void StampSystemFieldsOnInsert(Microsoft.Dynamics.Nav.Runtime.NavRecord self)
@@ -817,22 +814,25 @@ public static partial class BcRuntime
 
     /// <summary>
     /// Stamps only SystemModifiedAt/By on Modify. NEVER touches SystemCreatedAt/By.
-    /// Called via Cecil prepend on NavRecord.ModifyAsync(DataError,bool,bool,bool) — the
-    /// funnel both AL's Rec.Modify() and NavForm.SaveRecordAsync reach (#4142). Not the
-    /// 3-arg ModifyAsync, which forwards to the 4-arg: prepending both stamps twice.
+    /// Called from <see cref="WriteStorageFieldsOnModify"/>, after the table triggers (#5509).
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void StampSystemFieldsOnModify(Microsoft.Dynamics.Nav.Runtime.NavRecord self)
+        => StampModifiedPair(self);
+
+    /// <summary>
+    /// Feature Key (2000000211) is populated READ-ONLY from BC's own FeatureKeyDataProvider
+    /// (RecordPatches.FeatureKeyVirtualTable.cs, #2585 / #2636). Real BC's provider rejects
+    /// a Modify that changes any of its nine read-only fields, BY NAME, before it ever
+    /// reaches the table-2000000210 write-through — see
+    /// AlRunner.Patches.RecordPatches.GuardFeatureKeyReadOnlyFieldsOnModify for the
+    /// corresponding BC error text this reproduces via BC's own resource string.
+    /// Runs at the start of NavRecord.ModifyAsync(4) (via <see cref="NoteModifyFunnel"/>) and
+    /// from the TestPage write path; a pure read that throws on the same input either time.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void GuardFeatureKeyOnModify(Microsoft.Dynamics.Nav.Runtime.NavRecord self)
     {
-        // Feature Key (2000000211) is populated READ-ONLY from BC's own FeatureKeyDataProvider
-        // (RecordPatches.FeatureKeyVirtualTable.cs, #2585 / #2636). Real BC's provider rejects
-        // a Modify that changes any of its nine read-only fields, BY NAME, before it ever
-        // reaches the table-2000000210 write-through — see
-        // AlRunner.Patches.RecordPatches.GuardFeatureKeyReadOnlyFieldsOnModify for the
-        // corresponding BC error text this reproduces via BC's own resource string.
-        //
-        // Deliberately here rather than in the provider: this is the one prepend site every
-        // NavRecord.ALModifyAsync already routes through, so it costs no new Cecil rewrite.
         bool isFeatureKeyTable;
         try
         {
@@ -844,8 +844,69 @@ public static partial class BcRuntime
         }
         if (isFeatureKeyTable)
             AlRunner.Patches.RecordPatches.GuardFeatureKeyReadOnlyFieldsOnModify(self);
+    }
 
-        StampModifiedPair(self);
+    // ── Storage-layer field writes (#5509) ───────────────────────────────────────────
+    // Claim: the AutoIncrement key and the four system stamps are written BELOW the table
+    // triggers, so inside OnInsert / OnModify `Rec` still holds the pre-write values and only
+    // OnAfter* subscribers and the caller see the written ones. In BC the writer is the data
+    // layer under NavRecord.InsertAsync(4) / ModifyAsync(4): both call
+    // RecordImplementation.InsertRecordAsync / ModifyRecordAsync AFTER OnBefore* subscribers,
+    // OnInsert / OnModify, and NavGlobalTriggers (decompiled on Ncl 28.4.53241.54346).
+    // Citation: corpus codeunit 67812 "Test xRec Stamp Fields" (corpus PR 564) measured it on
+    // ten cloud legs and the Windows container; AlRunner#5509.
+    // The runner's storage layer is not BC's, so the writes sit on a prepend to those two
+    // methods (the nearest point above it, as the User and Company arms do).
+    // Trap: InsertRecordAsync / ModifyRecordAsync are ALSO called directly by
+    // NavForm.SyncTempTableWithSourceTableAsync on a page's temp copy of a row that already
+    // carries the source row's stamps. Writing there would overwrite them, so the write is gated
+    // on the record having entered InsertAsync(4) / ModifyAsync(4) (Note*Funnel, consumed once).
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Microsoft.Dynamics.Nav.Runtime.NavRecord, object> _insertFunnelEntered = new();
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Microsoft.Dynamics.Nav.Runtime.NavRecord, object> _modifyFunnelEntered = new();
+    private static readonly object _funnelMark = new();
+
+    /// <summary>Prepended to NavRecord.InsertAsync(DataError,bool,bool,bool): records that the
+    /// storage write which follows is an insert the table triggers have had their turn on.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void NoteInsertFunnel(Microsoft.Dynamics.Nav.Runtime.NavRecord self)
+    {
+        try { _insertFunnelEntered.AddOrUpdate(self, _funnelMark); }
+        catch { /* never block insert */ }
+    }
+
+    /// <summary>Prepended to NavRecord.ModifyAsync(DataError,bool,bool,bool): the Feature Key
+    /// read-only guard, then the funnel mark (see <see cref="NoteInsertFunnel"/>).</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void NoteModifyFunnel(Microsoft.Dynamics.Nav.Runtime.NavRecord self)
+    {
+        GuardFeatureKeyOnModify(self);
+        try { _modifyFunnelEntered.AddOrUpdate(self, _funnelMark); }
+        catch { /* never block modify */ }
+    }
+
+    /// <summary>Prepended to RecordImplementation.InsertRecordAsync on its parentRecord:
+    /// assigns the AutoIncrement key and stamps the system fields, once per funnel entry.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void WriteStorageFieldsOnInsert(Microsoft.Dynamics.Nav.Runtime.NavRecord self)
+    {
+        bool entered;
+        try { entered = self != null && _insertFunnelEntered.Remove(self); }
+        catch { return; }
+        if (!entered) return;
+        AssignAutoIncrement(self);
+        StampSystemFieldsOnInsert(self);
+    }
+
+    /// <summary>Prepended to RecordImplementation.ModifyRecordAsync on its parentRecord:
+    /// stamps SystemModifiedAt/By, once per funnel entry.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void WriteStorageFieldsOnModify(Microsoft.Dynamics.Nav.Runtime.NavRecord self)
+    {
+        bool entered;
+        try { entered = self != null && _modifyFunnelEntered.Remove(self); }
+        catch { return; }
+        if (!entered) return;
+        StampSystemFieldsOnModify(self);
     }
 
     /// <summary>
