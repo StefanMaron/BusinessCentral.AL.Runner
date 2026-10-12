@@ -77,6 +77,7 @@ internal static class WatchSource
         private readonly Func<long> _now;
         private long _lastEventTicks;
         private int _overflowed;
+        private int _sourceEvent;
 
         internal WatchActivity(Func<long>? nowTicks = null)
         {
@@ -99,10 +100,25 @@ internal static class WatchSource
 
         internal void Touch() => System.Threading.Volatile.Write(ref _lastEventTicks, _now());
 
+        /// <summary>An <c>.al</c> file event, an overflow or a startup difference: a cycle is due, no question asked.</summary>
+        internal bool SawSourceEvent => System.Threading.Volatile.Read(ref _sourceEvent) != 0;
+
+        /// <summary>The <c>.al</c> files at arm time, the oracle a directory hint is checked against (#5526).</summary>
+        internal SourceSnapshot? Baseline { get; set; }
+
+        /// <summary>The watched roots <see cref="Baseline"/> was captured over.</summary>
+        internal IReadOnlyCollection<string> Dirs { get; set; } = Array.Empty<string>();
+
+        internal void TouchSource()
+        {
+            System.Threading.Volatile.Write(ref _sourceEvent, 1);
+            Touch();
+        }
+
         internal void MarkOverflow()
         {
             System.Threading.Interlocked.Exchange(ref _overflowed, 1);
-            Touch(); // an overflow is itself activity — it must not let quiescence release early
+            TouchSource(); // an overflow is itself activity — it must not let quiescence release early
         }
     }
 
@@ -134,13 +150,25 @@ internal static class WatchSource
         var activity = new WatchActivity();
         void OnChanged(object _, FileSystemEventArgs e)
         {
-            if (!e.FullPath.EndsWith(".al", StringComparison.OrdinalIgnoreCase)) return;
+            if (!IsAlFile(e.FullPath)) return;
+            activity.TouchSource();
+            signal.Set();
+        }
+        // #5526: a folder that appears, is renamed or leaves the tree raises one event for the FOLDER and,
+        // measured on Linux, none for the files inside it (the watch on a new folder is added after the event).
+        // It is a hint only: SettleChange asks the .al snapshot whether it means anything.
+        void OnEntry(object _, FileSystemEventArgs e)
+        {
+            if (IsAlFile(e.FullPath)) { activity.TouchSource(); signal.Set(); return; }
+            if (IsUnderGitDirectory(e.FullPath, dirs)) return;
+            if (e.ChangeType == WatcherChangeTypes.Created && !Directory.Exists(e.FullPath)) return;
             activity.Touch();
             signal.Set();
         }
         void OnRenamed(object _, RenamedEventArgs e)
         {
-            if (!e.FullPath.EndsWith(".al", StringComparison.OrdinalIgnoreCase)) return;
+            if (IsAlFile(e.FullPath) || IsAlFile(e.OldFullPath)) { activity.TouchSource(); signal.Set(); return; }
+            if (IsUnderGitDirectory(e.FullPath, dirs) || !Directory.Exists(e.FullPath)) return;
             activity.Touch();
             signal.Set();
         }
@@ -166,8 +194,9 @@ internal static class WatchSource
             var w = new FileSystemWatcher(d)
             {
                 IncludeSubdirectories = true,
-                Filter = "*.al",
-                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size,
+                // Not "*.al": a folder's own name never matches it (#5526). The handlers filter instead.
+                Filter = "*",
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.Size,
                 // 64KB is the practical ceiling FileSystemWatcher accepts without editing
                 // the OS's inotify/registry limits (values above it are silently clamped on
                 // Windows; Linux's inotify backing has no such cap but there is no harm in
@@ -176,19 +205,22 @@ internal static class WatchSource
                 InternalBufferSize = 65536,
                 EnableRaisingEvents = true,
             };
-            w.Changed += OnChanged; w.Created += OnChanged; w.Deleted += OnChanged; w.Renamed += OnRenamed;
+            w.Changed += OnChanged; w.Created += OnEntry; w.Deleted += OnEntry; w.Renamed += OnRenamed;
             w.Error += OnError;
             watchers.Add(w);
         }
 
         // #4706: compare only AFTER the watchers are live, so an edit landing during the
         // comparison is seen by one or the other — never by neither.
+        var armedSnapshot = SourceSnapshot.CaptureDirs(dirs);
+        activity.Dirs = dirs.ToList();
+        activity.Baseline = armedSnapshot;
         if (cycleStart != null)
         {
-            var changedPath = cycleStart.FirstDifference(SourceSnapshot.CaptureDirs(dirs));
+            var changedPath = cycleStart.FirstDifference(armedSnapshot);
             if (changedPath != null)
             {
-                activity.Touch();
+                activity.TouchSource();
                 signal.Set();
                 Console.Error.WriteLine(
                     "[watch] " + changedPath + " changed while the last cycle was running; re-running.");
@@ -242,6 +274,28 @@ internal static class WatchSource
     }
 
     /// <summary>
+    /// Called once <paramref name="signal"/> is set: wait for quiescence (#1904), then say whether a cycle
+    /// is due. An <c>.al</c> event, an overflow or a startup difference always is. A signal raised only by
+    /// a folder event (#5526) is checked against the arm-time snapshot, because a created, renamed or
+    /// deleted folder says nothing about whether it holds <c>.al</c> source (<c>mkdir bin</c>, a folder
+    /// moved out); false means "nothing changed": the signal is reset and the caller waits again. With no
+    /// snapshot to ask the answer is true: a cycle that finds nothing is cheaper than a change not seen.
+    /// </summary>
+    internal static bool SettleChange(
+        System.Threading.ManualResetEventSlim signal, WatchActivity activity, int? quietMs = null,
+        int? maxWaitMs = null, Func<long>? nowTicks = null, Action<int>? sleep = null)
+    {
+        WaitForQuiescence(activity, quietMs, maxWaitMs, nowTicks, sleep);
+        var baseline = activity.Baseline;
+        if (baseline == null) return true;
+        // Reset BEFORE reading the flag and taking the snapshot: an event after this point sets the signal
+        // again, one before it is in the flag or in the snapshot.
+        signal.Reset();
+        if (activity.SawSourceEvent) return true;
+        return baseline.FirstDifference(SourceSnapshot.CaptureDirs(activity.Dirs)) != null;
+    }
+
+    /// <summary>
     /// Block until an .al file changes under any watched bundle's bucket root. Returns
     /// true on a change (loop again), false if there is nothing to watch. <paramref
     /// name="onArmed"/> runs after arming succeeds and before the blocking wait — pass
@@ -254,9 +308,11 @@ internal static class WatchSource
         var (signal, watchers, activity) = armed.Value;
         try
         {
-            signal.Wait();                  // block until the first .al change
-            WaitForQuiescence(activity);     // #1904: quiescence, not a fixed post-first-event sleep
-            return true;
+            while (true)
+            {
+                signal.Wait();                              // block until the first .al change
+                if (SettleChange(signal, activity)) return true;
+            }
         }
         finally
         {
@@ -268,6 +324,17 @@ internal static class WatchSource
     {
         foreach (var w in watchers) { w.EnableRaisingEvents = false; w.Dispose(); }
         signal.Dispose();
+    }
+
+    private static bool IsAlFile(string path) => path.EndsWith(".al", StringComparison.OrdinalIgnoreCase);
+
+    // .git holds no .al source and churns on every commit; SourceSnapshot prunes it for the same reason.
+    // Judged below the watched root, so a root that itself sits under a ".git" folder still hears its folders.
+    private static bool IsUnderGitDirectory(string path, IEnumerable<string> roots)
+    {
+        var root = roots.FirstOrDefault(r => path.StartsWith(r, StringComparison.OrdinalIgnoreCase));
+        var below = root == null ? path : path.Substring(root.Length);
+        return below.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Contains(".git");
     }
 
     private static HashSet<string> WatchedDirs(List<string> bundles)

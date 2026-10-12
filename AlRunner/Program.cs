@@ -5029,7 +5029,8 @@ if (watchUi)
             // #1904: quiescence, not a fixed sleep after only the first event — a branch
             // switch/bulk rewrite keeps this re-armed until the tree actually stops
             // changing, instead of starting a cycle against a half-applied checkout.
-            if (signal.IsSet) { WatchSource.WaitForQuiescence(watchActivity); changed = true; break; }
+            // #5526: a signal raised only by a folder event is checked against the snapshot first.
+            if (signal.IsSet && WatchSource.SettleChange(signal, watchActivity)) { changed = true; break; }
 
             if (keyboard && SafeKeyAvailable())
             {
