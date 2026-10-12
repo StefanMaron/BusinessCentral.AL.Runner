@@ -6671,6 +6671,12 @@ return strictExitCode ? computedExitCode : 0;
         {
             try
             {
+                // #5528: the app folder moved between requests: no reuse and no collision, see SourceMoved.
+                if (DependencyLoader.MovedSourcePath(bundleId.AppId, bundleAbs) is { } movedFrom)
+                    Console.Error.WriteLine(
+                        $"  [server] {moduleName}: AppId {bundleId.AppId} was loaded earlier in this process " +
+                        $"from {movedFrom}, which no longer holds this app; compiling {bundleAbs} afresh " +
+                        "instead of reusing that module (see issue #5528).");
                 reusedAsm = DependencyLoader.TryGetByAppId(
                     bundleId.AppId, bundleId.Name, bundleId.Publisher,
                     bundleId.Version.ToString(), bundleAbs, sourceFingerprint);

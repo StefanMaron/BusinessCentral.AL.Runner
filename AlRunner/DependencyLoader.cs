@@ -71,10 +71,11 @@ public sealed class DependencyLoader
         bool TddCompiled = false,
         // #5118: compiled with a test codeunit dropped, which only the compile that dropped it reports.
         bool DroppedObjects = false,
-        // #5520: registered from a folder that itself held the app.json (not a package file, and not
-        // a subfolder below it, as --server's bundleAbs can be). Only such a module can be told that
-        // its source moved: a package path can vanish when a workspace is rewritten.
-        bool FromSourceDirectory = false)
+        // #5520/#5528: the folder holding the app.json this module was registered under: the registered
+        // folder itself, or the one FindBucketRoot climbs to from a subfolder below it (--server's
+        // bundleAbs can be one). Null for a package file or a path under no app.json: only an app
+        // folder can be told that it moved, a package path can vanish when a workspace is rewritten.
+        string? AppRoot = null)
     {
         /// <summary>Every assembly of this app, primary first; never empty.</summary>
         internal IReadOnlyList<Assembly> AllAssemblies => Assemblies ?? new[] { Asm };
@@ -98,17 +99,18 @@ public sealed class DependencyLoader
 
     // #5520: the app folder this module was compiled from no longer holds an app.json, and the ask
     // is for another folder: the same app at a new path, not another bundle's copy of it (#1683).
+    // #5528: that folder is the entry's AppRoot, not its SourcePath, which can be a subfolder below it.
     private static bool SourceMoved(LoadedAppEntry entry, string askedSourcePath)
-        => entry.FromSourceDirectory
+        => entry.AppRoot is { } root
            && !string.Equals(entry.SourcePath, askedSourcePath, StringComparison.OrdinalIgnoreCase)
-           && !File.Exists(Path.Combine(entry.SourcePath, "app.json"));
+           && !File.Exists(Path.Combine(root, "app.json"));
 
-    /// <summary>#5520: the folder the module registered for <paramref name="appId"/> was compiled
-    /// from when <paramref name="askedSourcePath"/> is that app at a new path (see
-    /// <c>SourceMoved</c>), else null. For the message; <see cref="TryGetByAppId"/> and
-    /// <see cref="RegisterLoaded"/> apply the rule themselves.</summary>
+    /// <summary>#5520/#5528: the app folder that no longer holds the app.json the module registered
+    /// for <paramref name="appId"/> was compiled under, when <paramref name="askedSourcePath"/> is
+    /// that app at a new path (see <c>SourceMoved</c>), else null. For the message;
+    /// <see cref="TryGetByAppId"/> and <see cref="RegisterLoaded"/> apply the rule themselves.</summary>
     internal static string? MovedSourcePath(Guid appId, string askedSourcePath)
-        => _cache.TryGetValue(appId, out var entry) && SourceMoved(entry, askedSourcePath) ? entry.SourcePath : null;
+        => _cache.TryGetValue(appId, out var entry) && SourceMoved(entry, askedSourcePath) ? entry.AppRoot : null;
 
     private static readonly ConcurrentDictionary<string, Assembly> _byName =
         new(StringComparer.OrdinalIgnoreCase);
@@ -1727,6 +1729,11 @@ public sealed class DependencyLoader
     internal static OwnBundleRegistryReplay? TryGetOwnBundleReplay(Guid appId, Assembly asm)
         => _cache.TryGetValue(appId, out var entry) && ReferenceEquals(entry.Asm, asm) ? entry.OwnBundleReplay : null;
 
+    // #5528: a package file has none, whatever app.json sits above its folder; a path that is not an
+    // existing folder has none either. The climb is the one the server's own bundle identity uses.
+    private static string? AppRootOf(string sourcePath)
+        => Directory.Exists(sourcePath) ? WatchSource.FindBucketRoot(sourcePath) : null;
+
     /// <summary>
     /// Record that <paramref name="asm"/> is the loaded module for AL app identity
     /// <paramref name="appId"/> — used by the bundle loop's own-AppGroup compile path
@@ -1759,7 +1766,7 @@ public sealed class DependencyLoader
         var newEntry = new LoadedAppEntry(asm, name, publisher, version, sourcePath,
             VisibilitySignature: BcCompiler.DeclaredVisibilitySignature(appId),
             Epoch: CurrentEpoch, SourceFingerprint: sourceFingerprint, TddCompiled: BcCompiler.IsTddMode(),
-            DroppedObjects: droppedObjects, FromSourceDirectory: File.Exists(Path.Combine(sourcePath, "app.json")));
+            DroppedObjects: droppedObjects, AppRoot: AppRootOf(sourcePath));
         if (_cache.TryAdd(appId, newEntry)) return;
         var existing = _cache[appId];
         // #2556: SourcePath first, for the same reason as TryGetByAppId above — this is the

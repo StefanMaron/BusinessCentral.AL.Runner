@@ -439,4 +439,109 @@ public class AppIdCollisionLoudFailureTests
         }
         finally { try { Directory.Delete(root, recursive: true); } catch { } }
     }
+
+    // #5528: --server registers bundleAbs, which can sit below the folder holding the app.json
+    // (FindBucketRoot climbs). "Moved" is asked of that app root, not of the registered folder.
+    private static string SubOf(string appRoot, string name)
+    {
+        var dir = Path.Combine(appRoot, name);
+        Directory.CreateDirectory(dir);
+        return dir;
+    }
+
+    [Fact]
+    public void MovedApp_RegisteredFromASubfolder_IsMovedWithItsAppRoot()
+    {
+        var root = TestScratch.Dir("al-runner-moved-5528");
+        try
+        {
+            var appId = Guid.NewGuid();
+            var one = AppDir(root, "one");
+            DependencyLoader.RegisterLoaded(appId, Dynamic("Moved5528V1"), "Moved 5528", "Repro5528", "1.0.0.0", SubOf(one, "test"));
+            Directory.Delete(one, recursive: true);
+            var twoTest = SubOf(AppDir(root, "two"), "test");
+
+            // The version is bumped as well: asked before identity, so no collision (#5520).
+            Assert.Null(DependencyLoader.TryGetByAppId(appId, "Moved 5528", "Repro5528", "2.0.0.0", twoTest));
+            Assert.Equal(one, DependencyLoader.MovedSourcePath(appId, twoTest));
+
+            var asmNew = Dynamic("Moved5528V2");
+            DependencyLoader.RegisterLoaded(appId, asmNew, "Moved 5528", "Repro5528", "2.0.0.0", twoTest);
+            Assert.Equal(twoTest, DependencyLoader.LoadedSourcePath(appId));
+            Assert.Same(asmNew, DependencyLoader.TryGetByAppId(appId, "Moved 5528", "Repro5528", "2.0.0.0", AppDir(root, "three")));
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
+
+    [Fact]
+    public void MovedApp_SubfolderRegistration_AppRootStillHoldsTheApp_IsReuseWhicheverWasRegisteredFirst()
+    {
+        // #1683/#1892: [appA/test, appB] share an id and both roots still hold the app: reuse. The
+        // order must not matter: appB registered first, then appA/test asks, and the other way round.
+        var root = TestScratch.Dir("al-runner-moved-5528");
+        try
+        {
+            var a = AppDir(root, "a");
+            var b = AppDir(root, "b");
+            var aTest = SubOf(a, "test");
+
+            var first = Guid.NewGuid();
+            var asmFirst = Dynamic("Moved5528AFirst");
+            DependencyLoader.RegisterLoaded(first, asmFirst, "Moved 5528", "Repro5528", "1.0.0.0", aTest);
+            Assert.Same(asmFirst, DependencyLoader.TryGetByAppId(first, "Moved 5528", "Repro5528", "1.0.0.0", b));
+            Assert.Null(DependencyLoader.MovedSourcePath(first, b));
+
+            var second = Guid.NewGuid();
+            var asmSecond = Dynamic("Moved5528BFirst");
+            DependencyLoader.RegisterLoaded(second, asmSecond, "Moved 5528", "Repro5528", "1.0.0.0", b);
+            Assert.Same(asmSecond, DependencyLoader.TryGetByAppId(second, "Moved 5528", "Repro5528", "1.0.0.0", aTest));
+            Assert.Null(DependencyLoader.MovedSourcePath(second, aTest));
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
+
+    [Fact]
+    public void MovedApp_SubfolderRegistration_RootNamedByTheNearestAppJson()
+    {
+        // <ws>/app.json and <ws>/tests/app.json are two apps. A module registered from
+        // <ws>/tests/src belongs to <ws>/tests: losing the outer app.json does not move it.
+        var root = TestScratch.Dir("al-runner-moved-5528");
+        try
+        {
+            var appId = Guid.NewGuid();
+            var asm = Dynamic("Moved5528Nested");
+            var ws = AppDir(root, "ws");
+            var inner = AppDir(ws, "tests");
+            DependencyLoader.RegisterLoaded(appId, asm, "Moved 5528", "Repro5528", "1.0.0.0", SubOf(inner, "src"));
+            File.Delete(Path.Combine(ws, "app.json"));
+            var other = AppDir(root, "other");
+
+            Assert.Null(DependencyLoader.MovedSourcePath(appId, other));
+            Assert.Same(asm, DependencyLoader.TryGetByAppId(appId, "Moved 5528", "Repro5528", "1.0.0.0", other));
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
+
+    [Fact]
+    public void MovedApp_APackageFileUnderAnAppFolder_IsNeverMoved()
+    {
+        // The climb applies to a folder only: a package file sitting under a workspace that holds an
+        // app.json has no app root, so that workspace's app.json going away moves nothing.
+        var root = TestScratch.Dir("al-runner-moved-5528");
+        try
+        {
+            var appId = Guid.NewGuid();
+            var asm = Dynamic("Moved5528Pkg");
+            var ws = AppDir(root, "ws");
+            var pkg = Path.Combine(SubOf(ws, ".alpackages"), "dep.app");
+            File.WriteAllText(pkg, "x");
+            DependencyLoader.RegisterLoaded(appId, asm, "Moved 5528", "Repro5528", "1.0.0.0", pkg);
+            File.Delete(Path.Combine(ws, "app.json"));
+            var two = AppDir(root, "two");
+
+            Assert.Null(DependencyLoader.MovedSourcePath(appId, two));
+            Assert.Same(asm, DependencyLoader.TryGetByAppId(appId, "Moved 5528", "Repro5528", "1.0.0.0", two));
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
 }
