@@ -203,7 +203,7 @@ public static partial class RecordPatches
     private static string? _fkInvalidFieldMessage;      // "...{0}..." from Lang.InvalidFeatureKeyField
 
     /// <summary>
-    /// Prepended (via StampSystemFieldsOnModify) ahead of any Feature Key Modify. Throws BC's
+    /// Called (via BcRuntime.GuardFeatureKeyOnModify, from NoteModifyFunnel) ahead of any Feature Key Modify. Throws BC's
     /// own NavCSideException, naming the field, the moment a read-only column's value differs
     /// from what is currently stored. A Modify that only touches "Enabled" is not blocked here
     /// — this guard makes no claim about the write-through path itself.

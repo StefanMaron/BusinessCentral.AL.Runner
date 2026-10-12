@@ -43,13 +43,13 @@ rewritten IL, including the two "must not also be on" directions.
 
 ## Which prepends moved, and which did not
 
-Moved to the funnels by #4142:
+Moved to the funnels by #4142, and **again by #5509 to the storage layer below the triggers**
+(next section):
 
-| helper | now prepended to |
-|---|---|
-| `BcRuntime.AssignAutoIncrement` | `NavRecord.InsertAsync(DataError,bool,bool,bool)` |
-| `BcRuntime.StampSystemFieldsOnInsert` | `NavRecord.InsertAsync(DataError,bool,bool,bool)` |
-| `BcRuntime.StampSystemFieldsOnModify` | `NavRecord.ModifyAsync(DataError,bool,bool,bool)` |
+| helper | #4142 | now |
+|---|---|---|
+| `BcRuntime.AssignAutoIncrement`, `StampSystemFieldsOnInsert` | `NavRecord.InsertAsync(DataError,bool,bool,bool)` | called by `WriteStorageFieldsOnInsert`, prepended to `RecordImplementation.InsertRecordAsync`; `InsertAsync(4)` carries `NoteInsertFunnel` |
+| `BcRuntime.StampSystemFieldsOnModify` | `NavRecord.ModifyAsync(DataError,bool,bool,bool)` | called by `WriteStorageFieldsOnModify`, prepended to `RecordImplementation.ModifyRecordAsync`; `ModifyAsync(4)` carries `NoteModifyFunnel` (the Feature Key read-only guard, then the mark) |
 
 `UserTableTriggerPatches.OnBeforeUserInsert` was moved to `InsertAsync(4)` earlier, by #4121,
 for the same reason — it is the precedent this change follows. Since #4701 it and
@@ -64,6 +64,42 @@ Deliberately **not** moved, and tracked separately (#4325):
 | `ALDatabasePatches.NoteRecordInsertWrite` / `NoteRecordWrite` | `ALInsertAsync`, `ALModifyAsync`, `ALDeleteAsync`, `ALRenameAsync`, `DeleteAllAsync`, `ModifyAllAsync` | bookkeeping, not a field write: its observables are `Database.IsInWriteTransaction()`, the rowversion clock and the rollback snapshot, and each needs its own corpus arm and its own double-count analysis against the bulk entry points |
 | `AllProfileWritePatches.GuardAllProfileInsert` | `ALInsertAsync` | a refusal policy, not a stamp; moving it changes which writes are refused |
 | `PageBackgroundTaskWritePatches.Guard*` | the four `AL*` entry points | same |
+
+## Written below the triggers (#5509)
+
+In BC the AutoIncrement key and the four system stamps are contributed by the storage layer under
+`NavRecord.InsertAsync(4)` / `ModifyAsync(4)`: both call `RecordImplementation.InsertRecordAsync` /
+`ModifyRecordAsync` only after the `OnBeforeInsert/Modify` subscribers, the table trigger and
+`NavGlobalTriggers` (decompiled on Ncl 28.4.53241.54346). So inside `OnInsert` `Rec."Entry No."` is `0`
+and the stamps are default, and inside `OnModify` `Rec.SystemModifiedAt` is still the stored value;
+`OnAfterInsert/Modify` subscribers and the caller see the written ones. The corpus measured it on
+ten cloud legs and the Windows container (codeunit 67812, `Rec` side:
+`XRecStamp_Insert_RecSystemStampsNotYetWrittenInOnInsert`,
+`XRecStamp_Insert_RecAutoIncrementKeyNotYetAssignedInOnInsert`,
+`XRecStamp_Modify_RecModifiedAtNotYetRestampedInOnModify`).
+
+The #4142 placement ran the writers at the *start* of the funnel, ahead of all of that. Now:
+
+```
+InsertAsync(4)   : NoteInsertFunnel(this)                       <- marks the record
+   ... OnBeforeInsert subscribers, OnInsert, NavGlobalTriggers ...
+InsertRecordAsync: WriteStorageFieldsOnInsert(parentRecord)     <- consumes the mark, writes key + stamps
+(ModifyAsync(4) / ModifyRecordAsync the same with NoteModifyFunnel / WriteStorageFieldsOnModify)
+```
+
+Page saves reach the same two methods (`InsertAsync(4)` directly, `ModifyAsync(3)` forwarding to
+`ModifyAsync(4)`), so #4142's page arms still hold. The mark exists because
+`NavForm.SyncTempTableWithSourceTableAsync` calls `InsertRecordAsync` / `ModifyRecordAsync` directly,
+on a page's temp copy of a row that already carries its source's stamps; writing there would overwrite
+them. No corpus or `tests/runner-extras` test reaches that route (checked by logging every unmarked
+write across both suites: none), so the gate is pinned by `StorageLayerFieldWriteGateTests` rather than
+by an AL arm. The mark is keyed by record identity and consumed once, so a funnel call that throws
+before its storage write leaves a stale mark that only matters if the same `NavRecord` object is then
+fed to the direct route.
+
+Not touched: `Rename` (already stamped at `RenameRecordAsync`, storage level), and temporary
+records, which still get stamps (and no AutoIncrement assignment; `AssignAutoIncrement` returns for
+them) on the funnel route exactly as before, now after the trigger.
 
 ## What a page DELETE does was not measured
 
@@ -124,8 +160,8 @@ passed against the unfixed runner too, because its row was seeded by `Record.Ins
 stamped — and BC's datetime granularity makes `SystemModifiedAt >= previous` true whether or not
 the modify re-stamped. The corpus therefore adjudicates the page-modify **rule** on real BC but
 does not discriminate the runner's modify-funnel binding; what does is
-`AlRunner.Tests/PageSaveDataLayerPrependBindingTests.ModifyFunnel_CarriesTheSystemModifiedStamp`,
-which reads the rewritten IL and goes red under two independent mutations.
+`AlRunner.Tests/PageSaveDataLayerPrependBindingTests.ModifyRecordAsync_StampsTheModifiedPair_BelowTheTriggers`,
+which reads the rewritten IL.
 
 That limit was taken up as #4330 and is **partly resolved**, in corpus PR
 [#392](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/392). The section
