@@ -25,7 +25,7 @@ public sealed class SiblingSurfaceRecordTests
     public void WhyNotReplayable_AnAppWithNoSuchDependency_IsAlwaysReplayable()
     {
         var memory = new SiblingSurfaceMemory();
-        Assert.Null(memory.WhyNotReplayable("/suites/a", Array.Empty<DependencyTerm>()));
+        Assert.Null(memory.WhyNotReplayable("RQ Tests", Array.Empty<DependencyTerm>()));
     }
 
     [Fact]
@@ -34,22 +34,66 @@ public sealed class SiblingSurfaceRecordTests
         var memory = new SiblingSurfaceMemory();
         var s1 = new[] { T("sibling:a:1", "Lib"), T("sibling:b:1", "Mid") };
 
-        Assert.Contains("no whole-module compile", memory.WhyNotReplayable("/suites/a", s1));
-        memory.Built("/suites/a", s1);
-        Assert.Null(memory.WhyNotReplayable("/suites/a", s1));
-        Assert.Null(memory.WhyNotReplayable("/suites/a/", s1));   // the same suite spelled with a trailing slash
+        Assert.Contains("no whole-module compile of it has recorded", memory.WhyNotReplayable("RQ Tests", s1));
+        memory.Built("RQ Tests", s1);
+        Assert.Null(memory.WhyNotReplayable("RQ Tests", s1));
 
         // The surface the baseline was built against is not the current one, whatever happened in between.
         var s2 = new[] { T("sibling:a:2", "Lib"), T("sibling:b:1", "Mid") };
-        Assert.Contains("'Lib'", memory.WhyNotReplayable("/suites/a", s2));
-        Assert.DoesNotContain("'Mid'", memory.WhyNotReplayable("/suites/a", s2)!);
+        Assert.Contains("'Lib'", memory.WhyNotReplayable("RQ Tests", s2));
+        Assert.DoesNotContain("'Mid'", memory.WhyNotReplayable("RQ Tests", s2)!);
         // ...still true on the next cycle, and an undo to the old terms is replayable again.
-        Assert.Contains("'Lib'", memory.WhyNotReplayable("/suites/a", s2));
-        Assert.Null(memory.WhyNotReplayable("/suites/a", s1));
+        Assert.Contains("'Lib'", memory.WhyNotReplayable("RQ Tests", s2));
+        Assert.Null(memory.WhyNotReplayable("RQ Tests", s1));
 
         // A dependency gained or lost is a difference too.
-        Assert.NotNull(memory.WhyNotReplayable("/suites/a", s1.Take(1).ToArray()));
-        Assert.NotNull(memory.WhyNotReplayable("/suites/a", s1.Append(T("sibling:c:1", "Extra")).ToArray()));
+        Assert.NotNull(memory.WhyNotReplayable("RQ Tests", s1.Take(1).ToArray()));
+        Assert.NotNull(memory.WhyNotReplayable("RQ Tests", s1.Append(T("sibling:c:1", "Extra")).ToArray()));
+    }
+
+    // The baseline is keyed by module name (BcCompiler._radBaselines[moduleName]), so the record is too: the same
+    // name in another directory reaches the same baseline, and another name in the same directory does not.
+    [Fact]
+    public void KeyOf_IsTheModuleName_NotTheDirectory()
+    {
+        AppGroup In(string name, string dir) => new(name, A, "AL Runner", new Version(1, 0, 0, 0), new List<string>(), Array.Empty<Guid>(), dir);
+        Assert.Equal(SiblingSurfaceMemory.KeyOf(In("Tests", "/suites/a")), SiblingSurfaceMemory.KeyOf(In("Tests", "/elsewhere/b")));
+        Assert.NotEqual(SiblingSurfaceMemory.KeyOf(In("Tests", "/suites/a")), SiblingSurfaceMemory.KeyOf(In("TestsRenamed", "/suites/a")));
+    }
+
+    // A rename and a rename back: what the old name's baseline was built against is still what is recorded for it,
+    // however many compiles the other name had in between.
+    [Fact]
+    public void WhyNotReplayable_ARenamedAppKeepsTheRecordOfEachName()
+    {
+        var memory = new SiblingSurfaceMemory();
+        var s1 = new[] { T("sibling:a:1") };
+        var s2 = new[] { T("sibling:a:2") };
+        memory.Built("Tests", s1);
+        memory.Forget("TestsRenamed");
+        memory.Built("TestsRenamed", s2);
+        Assert.Null(memory.WhyNotReplayable("TestsRenamed", s2));
+        // Back under the first name, against the surface the second name last saw.
+        Assert.NotNull(memory.WhyNotReplayable("Tests", s2));
+        Assert.Null(memory.WhyNotReplayable("Tests", s1));
+    }
+
+    [Fact]
+    public void Terms_DoNotDependOnTheOrderTheSiblingsWereCompiledIn_AndFollowTheAppId()
+    {
+        var a = Group("Lib", A);
+        var b = Group("Lib2", B);
+        var c = Group("Tests", C, A, B);
+        var groups = new Dictionary<Guid, AppGroup> { [A] = a, [B] = b, [C] = c };
+        var one = new SiblingSurfaces(new Dictionary<Guid, string> { [A] = "fa", [B] = "fb" }, groups);
+        var other = new SiblingSurfaces(new Dictionary<Guid, string> { [B] = "fb", [A] = "fa" }, groups);
+        Assert.Equal(one.CacheTerms(c), other.CacheTerms(c));
+        // The same content under another app id is another dependency.
+        var reId = new SiblingSurfaces(new Dictionary<Guid, string> { [A] = "fa", [External] = "fb" },
+            new Dictionary<Guid, AppGroup> { [A] = a, [External] = Group("Lib2", External), [C] = Group("Tests", C, A, External) });
+        Assert.NotEqual(one.CacheTerms(c), reId.CacheTerms(Group("Tests", C, A, External)));
+        // A sibling added or removed changes the set.
+        Assert.NotEqual(one.CacheTerms(c).Count, one.CacheTerms(Group("Tests", C, A)).Count);
     }
 
     [Fact]
@@ -57,14 +101,14 @@ public sealed class SiblingSurfaceRecordTests
     {
         var memory = new SiblingSurfaceMemory();
         var s1 = new[] { T("sibling:a:1") };
-        memory.Built("/suites/a", s1);
-        memory.Built("/suites/other", s1);
+        memory.Built("RQ Tests", s1);
+        memory.Built("RQ Other", s1);
 
-        memory.Forget("/suites/a");   // a compile started and may not finish
-        Assert.NotNull(memory.WhyNotReplayable("/suites/a", s1));
-        Assert.Null(memory.WhyNotReplayable("/suites/other", s1));   // each suite keeps its own
-        memory.Built("/suites/a", s1);
-        Assert.Null(memory.WhyNotReplayable("/suites/a", s1));
+        memory.Forget("RQ Tests");   // a compile started and may not finish
+        Assert.NotNull(memory.WhyNotReplayable("RQ Tests", s1));
+        Assert.Null(memory.WhyNotReplayable("RQ Other", s1));   // each suite keeps its own
+        memory.Built("RQ Tests", s1);
+        Assert.Null(memory.WhyNotReplayable("RQ Tests", s1));
     }
 
     [Fact]

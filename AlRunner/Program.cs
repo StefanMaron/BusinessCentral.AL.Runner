@@ -4106,7 +4106,7 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
             var dependencyTerms = siblingSurfaces.Terms(appGroup)
                 .Concat(DeclaredImplTerms(appGroup.SuiteDir, previousImplAppPaths)).ToList();
             var staleBaseline = watchMode && changedDependency == null
-                ? siblingSurfaceMemory.WhyNotReplayable(appGroup.SuiteDir, dependencyTerms) : null;
+                ? siblingSurfaceMemory.WhyNotReplayable(AlRunner.Infrastructure.SiblingSurfaceMemory.KeyOf(appGroup), dependencyTerms) : null;
             if (watchMode && changedDependency != null && watchCycleIndex > 0)
             {
                 watchFullRebuildReasons.Add((moduleName, $"dependency '{changedDependency}' changed this cycle"));
@@ -4160,7 +4160,7 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
             // Whatever this whole-module compile does, the baseline it replaces is gone: only a compile
             // that succeeds records what it was built against.
             var wholeModule = watchMode && incrementalOutput == null && dependencyTerms.Count > 0;
-            if (wholeModule) siblingSurfaceMemory.Forget(appGroup.SuiteDir);
+            if (wholeModule) siblingSurfaceMemory.Forget(AlRunner.Infrastructure.SiblingSurfaceMemory.KeyOf(appGroup));
             var radGenerationBefore = wholeModule ? emitter.RadBaselineGeneration(moduleName) : null;
             var emitTask = incrementalOutput != null
                 ? Task.FromResult(incrementalOutput)
@@ -4184,7 +4184,7 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                     if (wholeModule && emitOutput.Diagnostics.Count == 0 && emitOutput.ExcludedObjects.Count == 0
                         && emitOutput.Sources.Count > 0
                         && emitter.RadBaselineGeneration(moduleName) is { } radGenerationAfter && radGenerationAfter != radGenerationBefore)
-                        siblingSurfaceMemory.Built(appGroup.SuiteDir, dependencyTerms);
+                        siblingSurfaceMemory.Built(AlRunner.Infrastructure.SiblingSurfaceMemory.KeyOf(appGroup), dependencyTerms);
                     sources = emitOutput.Sources;
                     emitManifestAppJsonPath = emitOutput.ManifestAppJsonPath;
                     alDiagnostics = emitOutput.Diagnostics;

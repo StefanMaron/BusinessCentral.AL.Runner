@@ -18,33 +18,38 @@ internal readonly record struct DependencyTerm(string Term, string Name);
 
 /// <summary>
 /// For each --watch app, the dependency terms its last SUCCESSFUL whole-module compile was built
-/// against. The incremental path replays the app's unchanged files from that compile, so it may run
-/// only while the terms are still the current ones. A whole-module compile forgets the entry when it
-/// starts and records it only on success, so a failed one (AL0132 in two files, one then fixed) and
-/// an AL-output cache HIT (which compiles nothing) both leave the app without a replayable baseline
-/// until a whole-module compile succeeds against the current surface.
+/// against. The incremental path replays the app's unchanged files from the RAD baseline of that
+/// compile, so it may run only while the terms are still the current ones. A whole-module compile
+/// forgets the entry when it starts and records it only on success AND only if it replaced the
+/// baseline, so a failed one (AL0132 in two files, one then fixed), an AL-output cache HIT (which
+/// compiles nothing) and a --tdd compile that recorded no baseline all leave the app without a
+/// replayable baseline until a whole-module compile succeeds against the current surface.
+/// Keyed exactly as the baseline is: by <see cref="KeyOf"/>, the module name, not the directory.
 /// </summary>
 internal sealed class SiblingSurfaceMemory
 {
     private readonly Dictionary<string, IReadOnlyList<string>> _builtAgainst = new();
 
-    private static string Key(string suiteDir) => Path.TrimEndingDirectorySeparator(suiteDir);
+    /// <summary>What <c>BcCompiler</c> keys an app's RAD baseline by (<c>_radBaselines[moduleName]</c>): the
+    /// name, so a rename and a rename back reach the baseline the old name left, whatever directory
+    /// holds the app.</summary>
+    internal static string KeyOf(AppGroup group) => group.ModuleName;
 
-    internal void Forget(string suiteDir) => _builtAgainst.Remove(Key(suiteDir));
+    internal void Forget(string key) => _builtAgainst.Remove(key);
 
-    internal void Built(string suiteDir, IReadOnlyList<DependencyTerm> terms) =>
-        _builtAgainst[Key(suiteDir)] = terms.Select(t => t.Term).ToList();
+    internal void Built(string key, IReadOnlyList<DependencyTerm> terms) =>
+        _builtAgainst[key] = terms.Select(t => t.Term).ToList();
 
     /// <summary>
-    /// Null when the baseline of <paramref name="suiteDir"/> may be replayed; otherwise the reason,
+    /// Null when the baseline under <paramref name="key"/> may be replayed; otherwise the reason,
     /// naming the first dependency whose term differs. An app with no such dependency is always
     /// replayable: nothing here concerns it.
     /// </summary>
-    internal string? WhyNotReplayable(string suiteDir, IReadOnlyList<DependencyTerm> current)
+    internal string? WhyNotReplayable(string key, IReadOnlyList<DependencyTerm> current)
     {
         if (current.Count == 0) return null;
-        if (!_builtAgainst.TryGetValue(Key(suiteDir), out var built))
-            return "no whole-module compile of it has succeeded against its dependencies' current state";
+        if (!_builtAgainst.TryGetValue(key, out var built))
+            return "no whole-module compile of it has recorded a replayable baseline against its dependencies' current state";
         var known = built.ToHashSet(StringComparer.Ordinal);
         var changed = current.FirstOrDefault(t => !known.Contains(t.Term));
         if (changed.Term == null && built.Count == current.Count) return null;
