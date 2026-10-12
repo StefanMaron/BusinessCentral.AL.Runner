@@ -548,16 +548,10 @@ public sealed class MsBucketWorkflowTests
     }
 
     /// <summary>
-    /// #3433: the reader tag is pinned once, in .github/backup-reader.json. The nightly header
-    /// said ".github/backup-reader.json pins reader v0.1.2" after the pin had moved on, which
-    /// is the #3433 shape again in prose: a second copy of the tag that nothing updates.
-    ///
-    /// Judged on every release tag in the file, not on one phrasing: a phrase-level match
-    /// passes any reflow, rewording or backticked tag. The file may name only the tags in
-    /// <c>HistoricalReaderTags</c> (they appear as history, "v0.1.1 could not open 28.2+"), and
-    /// the pinned tag, read from the pin file, must never be one of them or appear in the
-    /// file at all. So a restatement of today's tag fails now, and a stale one fails after the
-    /// next bump because it is no longer in the historical set.
+    /// #3433: the reader tag lives only in .github/backup-reader.json. Two checks on the
+    /// nightly: it names no release tag outside the historical set, and no sentence that
+    /// mentions the pin file or "pin" carries a tag at all (history such as "v0.1.2 was the
+    /// first to read 28.2+" stays legal; "the pin is v0.1.2" does not).
     /// </summary>
     [Fact]
     public void NightlyHeader_NamesNoReaderTagButHistoricalOnes_AndNeverThePinnedTag()
@@ -578,9 +572,22 @@ public sealed class MsBucketWorkflowTests
             + $" that are not historical ({string.Join(", ", historical)}); the pin holds {pinnedTag}. "
             + "A tag in prose is a second copy of the pin and goes stale on the next bump; name "
             + "the file and what it does, never the tag it holds today.");
-        // A tag spelled without its "v" ("0.2.1") is the same restatement.
-        Assert.False(header.Contains(pinnedTag.TrimStart('v'), StringComparison.Ordinal),
-            $"ms-bucket-nightly.yml contains the pinned reader version {pinnedTag}, spelled without its 'v'.");
+        // The pinned version spelled without its "v" is the same restatement; bounded so that
+        // it does not match inside a longer number such as 10.2.13.
+        var bare = System.Text.RegularExpressions.Regex.Escape(pinnedTag.TrimStart('v', 'V'));
+        Assert.DoesNotMatch(new System.Text.RegularExpressions.Regex($@"(?<!\d)(?<!\d\.){bare}(?!\d)(?!\.\d)"), header);
+
+        // A historical tag is allowed as history, never as the pin: judge sentences, with
+        // wrapped comment lines joined and backticks dropped.
+        var joined = System.Text.RegularExpressions.Regex.Replace(header, @"\s*\n\s*#\s*", " ").Replace("`", "");
+        var pinSentences = System.Text.RegularExpressions.Regex.Split(joined, @"(?<=\.)\s+")
+            .Where(sentence => System.Text.RegularExpressions.Regex.IsMatch(
+                    sentence, @"backup-reader\.json|\bpin", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+                && System.Text.RegularExpressions.Regex.IsMatch(sentence, @"\bv\d+\.\d+\.\d+"))
+            .ToArray();
+        Assert.True(pinSentences.Length == 0,
+            "ms-bucket-nightly.yml states a reader tag in a sentence about the pin: "
+            + string.Join(" | ", pinSentences));
     }
 
     /// <summary>
