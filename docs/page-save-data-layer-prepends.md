@@ -106,8 +106,7 @@ them) on the funnel route exactly as before, now after the trigger.
 `AssignAutoIncrement` runs after `OnInsert` (above), so a key that the caller, the table's `OnInsert` or an
 `OnBeforeInsertEvent` subscriber put into the AutoIncrement field reaches it as a non-zero value. It used to leave
 that alone and never move the counter, so the next zero-key `Insert` handed out a value the table already held.
-BC's AutoIncrement is a SQL IDENTITY column written with `IDENTITY_INSERT` for an explicit key, and the corpus
-(codeunit 67822, `AutoInc_*`, measured on the cloud legs of corpus PR 566) shows the effect: an explicit
+The corpus (codeunit 67822, `AutoInc_*`, measured on the cloud legs of corpus PR 566) shows the effect: an explicit
 key above the counter raises it, so the next zero-key `Insert` gets explicit + 1; a key at or below the counter,
 a negative key, a refused duplicate and a `DeleteAll` leave it alone. The helper now does
 `counter = max(counter, explicit key)` (`RaiseAutoIncrementCounterTo`), seeding a counter that has not started from
@@ -138,10 +137,9 @@ value differs between the record and the renamed clone. Corpus 67822 `AutoInc_Re
 
 ## A Truncate is part of the transaction (#5522)
 
-BC keeps the AutoIncrement counter in a SQL sequence: taking a value is not transactional, but `Truncate` restarts the
-sequence inside the transaction, so a rollback to the last `Commit` undoes the restart and brings the removed rows back.
-Corpus 67826 (ten cloud legs; the probe is corpus PR 567) measured, with an `Insert` refused by `OnInsert` and caught by
-`asserterror` as the rollback:
+The measured shapes fit a `Truncate` whose effect on the counter rolls back with the transaction, and whose removed rows
+come back with it. The mechanism behind that is not known. Corpus 67826 (ten cloud legs; the probe is corpus PR 567)
+measured, with an `Insert` refused by `OnInsert` and caught by `asserterror` as the rollback:
 
 | shape | next zero-key `Insert` after the rollback |
 |---|---|
@@ -155,7 +153,9 @@ Corpus 67826 (ten cloud legs; the probe is corpus PR 567) measured, with an `Ins
 `DataProvider_TruncateAsync` (`HelperShims.cs`) therefore snapshots the table for the rollback and journals the counter
 (`RecordPatches.NoteIdentityRestart`) before it clears the store, for a stored table only, never a temporary record.
 `RollbackToCommitPoint` puts each journaled counter back and `MarkCommitPoint` forgets the journal. Not modelled, and
-unmeasured: a rollback of a guarded `Codeunit.Run` scope does not consult the journal. The same clear is
+unmeasured on BC: a rollback of a guarded `Codeunit.Run` scope does not consult the journal, so a guarded run that
+truncates, inserts and fails gets its rows back but not its counter, and the caller's next Insert can hit a duplicate
+key (#5527). The same clear is
 `ClearProviderInPlace`, the provider's own "no rows yet" state; the earlier in-place `Clear()` of each tree left a
 `FindSet` one row short of `Count()` in a test following a passing one (#5516).
 
@@ -165,7 +165,8 @@ A BigInteger AutoIncrement field takes the whole counter (`BcRuntime.AutoIncreme
 5000000001 to 705032705, corpus 67826 `AutoInc_BigIntegerKey_*`). An Integer field cannot pass 2147483647 in BC: the
 first `Insert` past it ends the transaction (`Transaction was rolled back by the server.`) and the test fails, on all ten
 cloud legs, so no passing corpus test can pin it. The runner refuses by name (`docs/scope.md` §4) instead of storing a
-wrapped, negative key.
+wrapped, negative key. Residual: `asserterror` catches that refusal (#2871), so a test whose only statement under
+`asserterror` is the overflowing Insert passes here and fails on BC.
 
 ## What a page DELETE does was not measured
 

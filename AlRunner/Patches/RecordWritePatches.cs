@@ -699,8 +699,8 @@ public static partial class BcRuntime
                 if (!currentVal.IsZeroOrEmpty)
                 {
                     // #5513: a key the AL code assigned itself (caller, OnInsert, an OnBeforeInsertEvent
-                    // subscriber) raises the counter and the next zero-key Insert follows it, as BC's
-                    // IDENTITY_INSERT does (corpus 67822). A key at or below the
+                    // subscriber) raises the counter and the next zero-key Insert follows it, as measured
+                    // on BC (corpus 67822). A key at or below the
                     // counter, or negative, leaves it. Trap: this runs after OnInsert (#5509), so a
                     // trigger-assigned key must be read here, not before the trigger.
                     if (AlRunner.Patches.RecordPatches.TryToLong(currentVal, out long explicitKey))

@@ -111,9 +111,9 @@ public static partial class RecordPatches
     }
 
     // AutoIncrement counters a Truncate touched since the last commit point, with the value each held before the FIRST
-    // one (null: no counter yet). BC restarts the sequence behind the counter inside the transaction, so a rollback to
-    // the commit point puts the counter back with the rows (corpus 67826 AutoInc_Truncate*, AlRunner#5522; Truncate(false)
-    // too, which does not reseed). Taking a value is NOT transactional, which is why only a Truncate is journaled.
+    // one (null: no counter yet). Measured (corpus 67826 AutoInc_Truncate*, AlRunner#5522): after a rollback to the commit
+    // point the counter is where it stood before the Truncate, with Truncate(false) too, and the rows are back; a value
+    // taken after a refused Insert is not given back when nothing was truncated, which is why only a Truncate is journaled.
     // Trap: a rollback of a guarded Codeunit.Run scope does not consult this (unmeasured); the journal waits for the
     // top-level rollback or the next commit point.
     private static readonly Dictionary<int, long?> _txIdentityRestarts = new();
