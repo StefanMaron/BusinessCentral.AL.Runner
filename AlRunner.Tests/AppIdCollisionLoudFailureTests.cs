@@ -344,6 +344,8 @@ public class AppIdCollisionLoudFailureTests
             var one = AppDir(root, "one");
             DependencyLoader.RegisterLoaded(appId, Dynamic("Moved5520Own"), "Moved 5520", "Repro5520", "1.0.0.0", one);
 
+            // The folder itself is never "moved", even once it has lost its app.json: it is the ask.
+            File.Delete(Path.Combine(one, "app.json"));
             Assert.Null(DependencyLoader.MovedSourcePath(appId, one));
             Assert.Null(DependencyLoader.TryGetByAppId(appId, "Moved 5520", "Repro5520", "1.0.0.0", one)); // #2594: same folder recompiles
         }
@@ -411,6 +413,29 @@ public class AppIdCollisionLoudFailureTests
 
             Assert.Null(DependencyLoader.MovedSourcePath(appId, two));
             Assert.Same(asm, DependencyLoader.TryGetByAppId(appId, "Moved 5520", "Repro5520", "1.0.0.0", two));
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
+
+    [Fact]
+    public void MovedApp_RegisteredFromASubfolderBelowTheAppJson_IsStillCrossBundleReuse()
+    {
+        // --server registers bundleAbs, which can be a folder BELOW the one holding app.json
+        // (FindBucketRoot climbs). That folder never holds an app.json itself, so it must not read
+        // as "moved": a second folder asking for the id shares the module (#1892).
+        var root = TestScratch.Dir("al-runner-moved-5520");
+        try
+        {
+            var appId = Guid.NewGuid();
+            var asm = Dynamic("Moved5520Sub");
+            var app = AppDir(root, "app");
+            var sub = Path.Combine(app, "src");
+            Directory.CreateDirectory(sub);
+            var other = AppDir(root, "other");
+            DependencyLoader.RegisterLoaded(appId, asm, "Moved 5520", "Repro5520", "1.0.0.0", sub);
+
+            Assert.Null(DependencyLoader.MovedSourcePath(appId, other));
+            Assert.Same(asm, DependencyLoader.TryGetByAppId(appId, "Moved 5520", "Repro5520", "1.0.0.0", other));
         }
         finally { try { Directory.Delete(root, recursive: true); } catch { } }
     }

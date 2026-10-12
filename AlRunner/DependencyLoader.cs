@@ -71,8 +71,9 @@ public sealed class DependencyLoader
         bool TddCompiled = false,
         // #5118: compiled with a test codeunit dropped, which only the compile that dropped it reports.
         bool DroppedObjects = false,
-        // #5520: registered from an app folder (not a package file). Only such a module can be
-        // told that its source moved: a package path can vanish when a workspace is rewritten.
+        // #5520: registered from a folder that itself held the app.json (not a package file, and not
+        // a subfolder below it, as --server's bundleAbs can be). Only such a module can be told that
+        // its source moved: a package path can vanish when a workspace is rewritten.
         bool FromSourceDirectory = false)
     {
         /// <summary>Every assembly of this app, primary first; never empty.</summary>
@@ -1758,7 +1759,7 @@ public sealed class DependencyLoader
         var newEntry = new LoadedAppEntry(asm, name, publisher, version, sourcePath,
             VisibilitySignature: BcCompiler.DeclaredVisibilitySignature(appId),
             Epoch: CurrentEpoch, SourceFingerprint: sourceFingerprint, TddCompiled: BcCompiler.IsTddMode(),
-            DroppedObjects: droppedObjects, FromSourceDirectory: Directory.Exists(sourcePath));
+            DroppedObjects: droppedObjects, FromSourceDirectory: File.Exists(Path.Combine(sourcePath, "app.json")));
         if (_cache.TryAdd(appId, newEntry)) return;
         var existing = _cache[appId];
         // #2556: SourcePath first, for the same reason as TryGetByAppId above — this is the
