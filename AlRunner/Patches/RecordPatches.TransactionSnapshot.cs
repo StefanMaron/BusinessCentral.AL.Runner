@@ -110,12 +110,12 @@ public static partial class RecordPatches
         _txIdentityRestarts.Clear();
     }
 
-    // AutoIncrement counters Truncate(true) restarted since the last commit point, with the value each held before
-    // the FIRST restart (null: no counter yet). BC restarts the SEQUENCE under the AutoIncrement field inside the
-    // transaction, so a rollback to the commit point undoes the restart together with whatever the counter handed
-    // out afterwards (corpus 67826 AutoInc_Truncate_*, AlRunner#5522). Taking a value from a counter is NOT
-    // transactional, which is why only a restart is journaled. Trap: a rollback of a guarded Codeunit.Run scope
-    // does not consult this (unmeasured); the journal waits for the top-level rollback or the next commit point.
+    // AutoIncrement counters a Truncate touched since the last commit point, with the value each held before the FIRST
+    // one (null: no counter yet). BC restarts the sequence behind the counter inside the transaction, so a rollback to
+    // the commit point puts the counter back with the rows (corpus 67826 AutoInc_Truncate*, AlRunner#5522; Truncate(false)
+    // too, which does not reseed). Taking a value is NOT transactional, which is why only a Truncate is journaled.
+    // Trap: a rollback of a guarded Codeunit.Run scope does not consult this (unmeasured); the journal waits for the
+    // top-level rollback or the next commit point.
     private static readonly Dictionary<int, long?> _txIdentityRestarts = new();
 
     /// <summary>True when <paramref name="provider"/> is the provider of a session-company store of <paramref name="tableId"/>,
@@ -128,7 +128,7 @@ public static partial class RecordPatches
         return false;
     }
 
-    /// <summary>Journal that <paramref name="tableId"/>'s counter is being restarted; the first restart since the commit wins.</summary>
+    /// <summary>Journal that <paramref name="tableId"/> is being truncated; the first Truncate since the commit wins.</summary>
     internal static void NoteIdentityRestart(int tableId, long? counterBefore)
         => _txIdentityRestarts.TryAdd(tableId, counterBefore);
 

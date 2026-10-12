@@ -114,9 +114,58 @@ a negative key, a refused duplicate and a `DeleteAll` leave it alone. The helper
 the table's stored high-water mark first. An explicit key refused by an error in `OnInsert` never reaches the
 helper, and one refused on a unique secondary key has raised the counter by then, both as in BC.
 
-Known differences are tracked, not fixed here: Rename of an AutoIncrement key is not refused (#5517) and a refused
-zero-key Insert keeps the taken key on the record (#5518). The counter is not rolled back by an `asserterror`, in BC
-or here.
+An `Insert` refused by an error in `OnInsert`, after an earlier successful `Insert` and with no `Truncate` in the
+transaction, does not roll the counter back, in BC (corpus 67822, ten cloud legs and the Windows container) or here; the
+rows written since the last `Commit` do roll back. Measured for that shape only: a `Truncate` in the same transaction is
+the exception, below.
+
+## A refused Insert keeps no key; a Rename may not change one (#5518, #5517)
+
+BC's SQL layer hands the assigned key back in the result buffer, and `RecordImplementation.InsertRecordAsync` adopts that
+buffer only when the Insert lands (decompiled, Ncl 28.4). The runner stamps the key before the write
+(`WriteStorageFieldsOnInsert`), so `BcRuntime.InsertRecordCompleted(bool, NavRecord)` is called from both exits of the
+`InsertRecordAsync` state machine (before `builder.SetResult` and before `builder.SetException`, a Cecil hook in
+`NclCecilRewrite.Records.cs` that refuses on any other count) and puts the field back to what it was when the Insert was
+refused, by `false` or by an exception. The counter value stays consumed. A key the AL code assigned itself is not reset.
+Corpus 67822 `AutoInc_FailedInsertOnUniqueKey_*` (Boolean receiver) and 67826
+`AutoInc_UniqueKeyRefusedInsert_UnderAsserterror_*` (error thrown).
+
+BC's SQL layer also refuses an UPDATE of an AutoIncrement column; `RecordImplementationHelper.MapException` turns its
+error code (18023796) into `You cannot change the value of an AutoIncrement field.` plus the Field, Table and
+Identification lines. `RecordPatches.GuardRenameOfAutoIncrementField` is prepended to `RenameRecordAsync` and raises
+the same exception, through BC's own `NavCSideException.CreateAutoIncrementFieldError`, when the AutoIncrement field's
+value differs between the record and the renamed clone. Corpus 67822 `AutoInc_Rename_OfTheAutoIncrementKey_IsRefused`.
+
+## A Truncate is part of the transaction (#5522)
+
+BC keeps the AutoIncrement counter in a SQL sequence: taking a value is not transactional, but `Truncate` restarts the
+sequence inside the transaction, so a rollback to the last `Commit` undoes the restart and brings the removed rows back.
+Corpus 67826 (ten cloud legs; the probe is corpus PR 567) measured, with an `Insert` refused by `OnInsert` and caught by
+`asserterror` as the rollback:
+
+| shape | next zero-key `Insert` after the rollback |
+|---|---|
+| `Truncate(true)`, one Insert, refused Insert | the key the first Insert had (the table's rows: only the new one) |
+| the same with two Inserts before | again the first key |
+| rows `1..3` committed, `Truncate(true)`, one Insert, refused Insert | `4`; the three rows are back |
+| `Truncate(true)`, `Commit`, one Insert, refused Insert | the next value: it is consumed |
+| `DeleteAll`, one Insert, refused Insert | the next value; the first row is rolled back |
+| rows committed, `Truncate(false)`, one Insert, refused Insert | the value that Insert had; the committed rows are back |
+
+`DataProvider_TruncateAsync` (`HelperShims.cs`) therefore snapshots the table for the rollback and journals the counter
+(`RecordPatches.NoteIdentityRestart`) before it clears the store, for a stored table only, never a temporary record.
+`RollbackToCommitPoint` puts each journaled counter back and `MarkCommitPoint` forgets the journal. Not modelled, and
+unmeasured: a rollback of a guarded `Codeunit.Run` scope does not consult the journal. The same clear is
+`ClearProviderInPlace`, the provider's own "no rows yet" state; the earlier in-place `Clear()` of each tree left a
+`FindSet` one row short of `Count()` in a test following a passing one (#5516).
+
+## The type of the counter (#5521)
+
+A BigInteger AutoIncrement field takes the whole counter (`BcRuntime.AutoIncrementBoxedValue`; the `(int)` cast wrapped
+5000000001 to 705032705, corpus 67826 `AutoInc_BigIntegerKey_*`). An Integer field cannot pass 2147483647 in BC: the
+first `Insert` past it ends the transaction (`Transaction was rolled back by the server.`) and the test fails, on all ten
+cloud legs, so no passing corpus test can pin it. The runner refuses by name (`docs/scope.md` §4) instead of storing a
+wrapped, negative key.
 
 ## What a page DELETE does was not measured
 
