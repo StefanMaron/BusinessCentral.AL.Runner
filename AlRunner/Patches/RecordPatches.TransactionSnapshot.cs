@@ -107,7 +107,20 @@ public static partial class RecordPatches
     {
         EndPermissionSetupTransaction();
         _txCommitPoint.Clear();
+        _txIdentityRestarts.Clear();
     }
+
+    // AutoIncrement counters Truncate(true) restarted since the last commit point, with the value each held before
+    // the FIRST restart (null: no counter yet). BC restarts the SEQUENCE under the AutoIncrement field inside the
+    // transaction, so a rollback to the commit point undoes the restart together with whatever the counter handed
+    // out afterwards (corpus 67826 AutoInc_Truncate_*, AlRunner#5522). Taking a value from a counter is NOT
+    // transactional, which is why only a restart is journaled. Trap: a rollback of a guarded Codeunit.Run scope
+    // does not consult this (unmeasured); the journal waits for the top-level rollback or the next commit point.
+    private static readonly Dictionary<int, long?> _txIdentityRestarts = new();
+
+    /// <summary>Journal that <paramref name="tableId"/>'s counter is being restarted; the first restart since the commit wins.</summary>
+    internal static void NoteIdentityRestart(int tableId, long? counterBefore)
+        => _txIdentityRestarts.TryAdd(tableId, counterBefore);
 
     /// <summary>
     /// AL's <c>Commit()</c> STATEMENT: a commit point in the top-level tracker AND in every
@@ -361,6 +374,9 @@ public static partial class RecordPatches
     public static void RollbackToCommitPoint(object? session)
     {
         EndPermissionSetupTransaction();
+        foreach (var (tableId, before) in _txIdentityRestarts)
+            BcRuntime.RestoreAutoIncrementCounter(tableId, before);
+        _txIdentityRestarts.Clear();
         if (_txCommitPoint.Count == 0) return;
         foreach (var ((source, tableId, token), saved) in _txCommitPoint.ToList())
         {
@@ -385,7 +401,7 @@ public static partial class RecordPatches
     /// through <c>EnsureTreeCreated()</c>, so nulling them is the provider's own
     /// "no rows yet" state.
     /// </summary>
-    private static void ClearProviderInPlace(object provider)
+    internal static void ClearProviderInPlace(object provider)
     {
         var t = provider.GetType();
         foreach (var name in new[] { "trees", "primaryTree", "uniqueIndexes" })

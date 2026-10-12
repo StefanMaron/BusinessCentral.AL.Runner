@@ -92,6 +92,14 @@ public static partial class BcRuntime
     private static readonly ConcurrentDictionary<(Guid AppGroup, int TableId), int> _aiFieldIds = new();
     private static readonly ConcurrentDictionary<int, long> _aiCounters  = new();
 
+    /// <summary>Put a table's counter back to <paramref name="value"/>; null removes it, so the next use re-seeds from the
+    /// stored rows. For <see cref="Patches.RecordPatches.RollbackToCommitPoint"/> to undo a Truncate(true) restart (#5522).</summary>
+    internal static void RestoreAutoIncrementCounter(int tableId, long? value)
+    {
+        if (value is long v) _aiCounters[tableId] = v;
+        else _aiCounters.TryRemove(tableId, out _);
+    }
+
     internal static IReadOnlyDictionary<int, long> CaptureAutoIncrementBaseline()
         => new Dictionary<int, long>(_aiCounters);
 

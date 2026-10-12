@@ -352,7 +352,10 @@ public sealed class BcInternalsNullForgivingGuardTests
         // RecordImplementation.Session, NavSession.Database and NavDatabase.CompanyTokens. A silent
         // null on the first would route every record to the session company's store, and on the
         // other three would send a clone of a record on another company back to the session company.
-        Assert.Equal(136, converted);
+        //
+        // 136 -> 137 for NCLMetaTable.TableCaptionSafe in RecordPatches.AutoIncrementRename.cs (#5517), a
+        // BcShape.Property: a silent null would leave the table name out of the AutoIncrement-field error.
+        Assert.Equal(137, converted);
     }
 
     /// <summary>

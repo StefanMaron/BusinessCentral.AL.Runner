@@ -576,7 +576,7 @@ public static partial class BcRuntime
 
     /// <summary>The AutoIncrement field the NCLMetaTable the executing code resolves for
     /// <paramref name="tableId"/> registered: per app group for a table id several groups declare.</summary>
-    private static bool TryGetAutoIncrementField(int tableId, out int fieldNo)
+    internal static bool TryGetAutoIncrementField(int tableId, out int fieldNo)
         => _aiFieldIds.TryGetValue((AlRunner.Patches.RecordPatches.AppGroupCacheScope("table", tableId), tableId), out fieldNo);
 
     /// <summary>
@@ -718,12 +718,46 @@ public static partial class BcRuntime
                     EnsureTableTouchedForAutoIncrement(self);
                     long next = NextAutoIncrementValue(tableId, aiFieldNo);
                     var newVal = Microsoft.Dynamics.Nav.Runtime.NavValue
-                        .CreateNavValueFromObject(aiField, (object)(int)next);
+                        .CreateNavValueFromObject(aiField, AutoIncrementBoxedValue(
+                            currentVal is Microsoft.Dynamics.Nav.Runtime.NavBigInteger, next));
                     self.SetFieldValue(aiField, newVal);
+                    // #5518: BC writes the counter's value into the buffer only when the Insert lands, so a
+                    // refused Insert leaves the field as it was (corpus 67822). InsertRecordCompleted undoes it.
+                    _aiPendingReset.AddOrUpdate(self, new PendingAutoIncrementReset(aiField, currentVal));
                 }
             }
         }
         catch { /* don't block insert if AI counter assignment fails */ }
+    }
+
+    /// <summary>The CLR value an AutoIncrement field of the given type stores for counter value
+    /// <paramref name="next"/>: a BigInteger field takes the whole long (#5521), an Integer field its Int32.</summary>
+    internal static object AutoIncrementBoxedValue(bool bigIntegerField, long next)
+        => bigIntegerField ? (object)next : (object)checked((int)next);
+
+    private sealed record PendingAutoIncrementReset(
+        Microsoft.Dynamics.Nav.Runtime.NCLMetaField Field, Microsoft.Dynamics.Nav.Runtime.NavValue Original);
+
+    // Records whose zero AutoIncrement key AssignAutoIncrement stamped and whose Insert has not finished.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Microsoft.Dynamics.Nav.Runtime.NavRecord, PendingAutoIncrementReset> _aiPendingReset = new();
+
+    /// <summary>
+    /// Called from the end of RecordImplementation.InsertRecordAsync (Cecil: before its builder.SetResult and
+    /// before its builder.SetException), with the Insert's outcome. A refused Insert (false, or an exception)
+    /// puts the AutoIncrement field back to what it was before <see cref="AssignAutoIncrement"/> stamped it.
+    /// Claim: BC's SQL layer hands the new key back in the result buffer, which InsertRecordAsync adopts only on
+    /// success, so a refused Insert leaves the record variable's key at 0 (corpus 67822
+    /// AutoInc_FailedInsertOnUniqueKey_LeavesTheKeyZeroOnTheRecord, Ncl 28.4 decompile of InsertRecordAsync).
+    /// The counter value stays consumed. A key the AL code assigned itself is never in the table, so it stays.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void InsertRecordCompleted(bool inserted, Microsoft.Dynamics.Nav.Runtime.NavRecord? record)
+    {
+        if (record == null || !_aiPendingReset.TryGetValue(record, out var pending)) return;
+        _aiPendingReset.Remove(record);
+        if (inserted) return;
+        try { record.SetFieldValue(pending.Field, pending.Original); }
+        catch { /* never mask the Insert's own outcome */ }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -1001,7 +1035,8 @@ public static partial class BcRuntime
                     EnsureTableTouchedForAutoIncrement(self);
                     long next = NextAutoIncrementValue(tableId, aiFieldNo);
                     var newVal = Microsoft.Dynamics.Nav.Runtime.NavValue
-                        .CreateNavValueFromObject(aiField, (object)(int)next);
+                        .CreateNavValueFromObject(aiField, AutoIncrementBoxedValue(
+                            currentVal is Microsoft.Dynamics.Nav.Runtime.NavBigInteger, next));
                     self.SetFieldValue(aiField, newVal);
                 }
             }

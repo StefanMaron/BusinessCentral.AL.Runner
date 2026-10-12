@@ -1311,6 +1311,8 @@ public static partial class NclCecilRewrite
             ilR.InsertBefore(firstR, ilR.Create(OpCodes.Call, writeRef));
             if (insertRecord.Body.MaxStackSize < 1) insertRecord.Body.MaxStackSize = 1;
             Console.Error.WriteLine("[Cecil] Prepended NoteInsertFunnel → NavRecord.InsertAsync(DataError,bool,bool,bool); WriteStorageFieldsOnInsert → RecordImplementation.InsertRecordAsync(DataError)");
+
+            HookInsertRecordCompleted(asm, recImpl, parentRecord);
         }
 
         // ── RecordImplementation.InsertRecordAsync(DataError) — User system-table insert arm ──
@@ -1495,13 +1497,30 @@ public static partial class NclCecilRewrite
                 ?? throw new InvalidOperationException("BcRuntime.StampSystemFieldsOnRename not found");
             var helperRef = asm.MainModule.ImportReference(helperMi);
 
+            // #5517: BC's SQL layer refuses an UPDATE of an AutoIncrement column; the guard runs first so a
+            // refused Rename stamps nothing. `ldarg.0; ldfld parentRecord` is the record being renamed (old key).
+            var guardMi = typeof(AlRunner.Patches.RecordPatches).GetMethod(
+                nameof(AlRunner.Patches.RecordPatches.GuardRenameOfAutoIncrementField),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("RecordPatches.GuardRenameOfAutoIncrementField not found");
+            var guardRef = asm.MainModule.ImportReference(guardMi);
+            var renameParent = recImpl.Fields.FirstOrDefault(f => f.Name == "parentRecord"
+                    && f.FieldType.FullName == "Microsoft.Dynamics.Nav.Runtime.NavRecord")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] RecordImplementation.parentRecord (NavRecord) not found — "
+                    + "a Rename of an AutoIncrement key would silently succeed (#5517).");
+
             var body = renameRecord.Body;
             var il = body.GetILProcessor();
             var firstOriginal = body.Instructions[0];
+            il.InsertBefore(firstOriginal, il.Create(OpCodes.Ldarg_0));
+            il.InsertBefore(firstOriginal, il.Create(OpCodes.Ldfld, renameParent));
+            il.InsertBefore(firstOriginal, il.Create(OpCodes.Ldarg, renameRecord.Parameters[1]));
+            il.InsertBefore(firstOriginal, il.Create(OpCodes.Call, guardRef));
             il.InsertBefore(firstOriginal, il.Create(OpCodes.Ldarg, renameRecord.Parameters[1]));
             il.InsertBefore(firstOriginal, il.Create(OpCodes.Call, helperRef));
-            if (body.MaxStackSize < 1) body.MaxStackSize = 1;
-            Console.Error.WriteLine("[Cecil] Prepended StampSystemFieldsOnRename → RecordImplementation.RenameRecordAsync(DataError,NavRecord)");
+            if (body.MaxStackSize < 2) body.MaxStackSize = 2;
+            Console.Error.WriteLine("[Cecil] Prepended GuardRenameOfAutoIncrementField + StampSystemFieldsOnRename → RecordImplementation.RenameRecordAsync(DataError,NavRecord)");
         }
 
         // ── RecordImplementation.ModifyRecordAsync(DataError) — User system-table modify arm ──
@@ -2059,6 +2078,68 @@ public static partial class NclCecilRewrite
             ReplaceBodyWithHelper(asm.MainModule, getter, helper);
             Console.Error.WriteLine("[Cecil] Rewrote NCLMetaTable.get_DefinedTriggers → RecordPatches.NCLMetaTable_get_DefinedTriggers");
         }
+    }
+
+    // === RecordImplementation.InsertRecordAsync's two exits — #5518 ===
+    // BC adopts the key its SQL layer assigned only when the Insert lands, so a refused Insert leaves the
+    // AutoIncrement field as it was. The runner stamps the key BEFORE the write (WriteStorageFieldsOnInsert),
+    // so BcRuntime.InsertRecordCompleted(bool, NavRecord) must undo it on the way out. The async state
+    // machine has exactly one builder.SetResult(bool) (every `return` funnels to it) and one
+    // builder.SetException (its catch-all); each gets one call before it:
+    //   SetResult:    `dup; ldarg.0; ldfld <>4__this; ldfld parentRecord; call InsertRecordCompleted`
+    //   SetException: `ldc.i4.0; ldarg.0; ldfld <>4__this; ldfld parentRecord; call InsertRecordCompleted`
+    // Refuses loudly on any other count or a branch aimed at either call: without the hook a refused
+    // Insert silently keeps the key. Adds one MemberRef (our helper) and a MemberRef to the state machine's
+    // own field; it renames, removes or re-signs nothing precompiled callers bind to.
+    private static void HookInsertRecordCompleted(AssemblyDefinition asm, TypeDefinition recImpl, FieldDefinition parentRecord)
+    {
+        var machines = recImpl.NestedTypes.Where(t => t.Name.StartsWith("<InsertRecordAsync>d__")).ToList();
+        if (machines.Count != 1)
+            throw new InvalidOperationException(
+                $"[Cecil] found {machines.Count} RecordImplementation.InsertRecordAsync state machines, expected exactly 1 — "
+                + "Ncl shape changed; a refused Insert would keep its AutoIncrement key (#5518). Do not commit");
+        var machine = machines[0];
+        var thisField = machine.Fields.FirstOrDefault(f => f.Name == "<>4__this")
+            ?? throw new InvalidOperationException(
+                "[Cecil] InsertRecordAsync state machine has no <>4__this field — Ncl shape changed (#5518). Do not commit");
+        var moveNext = machine.Methods.FirstOrDefault(m => m.Name == "MoveNext" && m.HasBody)
+            ?? throw new InvalidOperationException(
+                "[Cecil] InsertRecordAsync state machine has no MoveNext — Ncl shape changed (#5518). Do not commit");
+
+        var instructions = moveNext.Body.Instructions;
+        // The builder is AsyncValueTaskMethodBuilder<bool>; its SetResult(TResult) reads as !0 in the MemberRef.
+        var setResult = instructions.Where(i => i.Operand is MethodReference r && r.Name == "SetResult"
+            && r.Parameters.Count == 1 && r.DeclaringType is GenericInstanceType g
+            && g.ElementType.Name == "AsyncValueTaskMethodBuilder`1"
+            && g.GenericArguments.Count == 1 && g.GenericArguments[0].MetadataType == MetadataType.Boolean).ToList();
+        var setException = instructions.Where(i => i.Operand is MethodReference r && r.Name == "SetException"
+            && r.Parameters.Count == 1).ToList();
+        if (setResult.Count != 1 || setException.Count != 1)
+            throw new InvalidOperationException(
+                $"[Cecil] InsertRecordAsync MoveNext has {setResult.Count} SetResult(bool) and {setException.Count} SetException "
+                + "call(s), expected 1 and 1 — Ncl shape changed; a refused Insert would keep its AutoIncrement key (#5518). Do not commit");
+        foreach (var target in new[] { setResult[0], setException[0] })
+            if (instructions.Any(i => i.Operand == target
+                    || (i.Operand is Instruction[] table && table.Contains(target))))
+                throw new InvalidOperationException(
+                    "[Cecil] a branch targets InsertRecordAsync's builder call — inserting before it would be skipped (#5518). Do not commit");
+
+        var helperRef = asm.MainModule.ImportReference(typeof(AlRunner.BcRuntime).GetMethod(
+            nameof(AlRunner.BcRuntime.InsertRecordCompleted), BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException("BcRuntime.InsertRecordCompleted not found"));
+        var il = moveNext.Body.GetILProcessor();
+        void Before(Instruction at, bool duplicateResult)
+        {
+            il.InsertBefore(at, duplicateResult ? il.Create(OpCodes.Dup) : il.Create(OpCodes.Ldc_I4_0));
+            il.InsertBefore(at, il.Create(OpCodes.Ldarg_0));
+            il.InsertBefore(at, il.Create(OpCodes.Ldfld, thisField));
+            il.InsertBefore(at, il.Create(OpCodes.Ldfld, parentRecord));
+            il.InsertBefore(at, il.Create(OpCodes.Call, helperRef));
+        }
+        Before(setResult[0], duplicateResult: true);
+        Before(setException[0], duplicateResult: false);
+        moveNext.Body.MaxStackSize += 3;
+        Console.Error.WriteLine("[Cecil] Hooked BcRuntime.InsertRecordCompleted → RecordImplementation.InsertRecordAsync (SetResult, SetException)");
     }
 
     // === RecordImplementation.ValidateRelation, over the record's own company — #5349 ===

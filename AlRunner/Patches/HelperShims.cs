@@ -108,31 +108,28 @@ public static partial class BcRuntime
             return default;
 
         var providerType = self.GetType();
+        // #5522: a TRUNCATE is part of the open transaction, so the rows come back with a rollback to the last
+        // commit (corpus 67826 AutoInc_Truncate_*); the snapshot has to precede the clear below.
+        if (metaTable.TableId != 0)
+            AlRunner.Patches.RecordPatches.NoteTransactionWriteForTable(metaTable.TableId);
         if (providerType.Name.Contains("TempTableDataProvider", StringComparison.Ordinal))
         {
-            // Clear backing row tree(s).
-            for (var t = providerType; t != null; t = t.BaseType)
-            {
-                foreach (var f in t.GetFields(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
-                {
-                    if (!f.Name.Contains("tree", StringComparison.OrdinalIgnoreCase))
-                        continue;
-                    var value = f.GetValue(self);
-                    if (value == null)
-                        continue;
-                    var clear = value.GetType().GetMethod("Clear",
-                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-                        null, Type.EmptyTypes, null);
-                    clear?.Invoke(value, null);
-                }
-            }
+            // The provider's own "no rows yet" state, as a rollback restores it (#5516): Clear()ing the trees in place
+            // left a FindSet loop one row short of Count() in a test following a passing one, and left uniqueIndexes behind.
+            AlRunner.Patches.RecordPatches.ClearProviderInPlace(self);
         }
 
         if (resetIdentity)
         {
             var tableId = metaTable.TableId;
             if (tableId != 0)
+            {
+                // #5522: BC restarts the SEQUENCE behind the AutoIncrement field inside the transaction, so a
+                // rollback to the last commit puts the counter back where it was before the restart.
+                AlRunner.Patches.RecordPatches.NoteIdentityRestart(
+                    tableId, _aiCounters.TryGetValue(tableId, out var before) ? before : null);
                 _aiCounters.TryRemove(tableId, out _);
+            }
             else
             {
                 // Fallback if metadata table ID is unexpectedly unset.
