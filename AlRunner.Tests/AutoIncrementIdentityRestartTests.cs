@@ -40,6 +40,12 @@ public sealed class AutoIncrementIdentityRestartTests
     private const int FirstRestartWins = 1_900_000_403;
     private const int CommittedAway = 1_900_000_404;
     private const int Untouched = 1_900_000_405;
+    private const int ScopeRolledBack = 1_900_000_406;
+    private const int ScopeCommitted = 1_900_000_407;
+    private const int ScopeAfterEarlierRestart = 1_900_000_408;
+    private const int ScopeOnlyRestart = 1_900_000_409;
+    private const int ScopeExplicitCommit = 1_900_000_410;
+    private const int NestedInnerRolledBack = 1_900_000_411;
 
     private void Ready()
     {
@@ -113,5 +119,120 @@ public sealed class AutoIncrementIdentityRestartTests
         Raise(Untouched, 7);
         RecordPatches.RollbackToCommitPoint(null);
         Assert.Equal(8, Take(Untouched));
+    }
+
+    // ---- #5527: a guarded Codeunit.Run's own rollback (PushTransactionWorldScope / PopTransactionWorldScope(restore)) ----
+    // The helper stands in for DataProvider_TruncateAsync's two calls on the counter: journal it, then restart it.
+    private static void Truncate(int tableId, long? counterBefore)
+    {
+        RecordPatches.NoteIdentityRestart(tableId, counterBefore);
+        Restore(tableId, null);
+    }
+
+    [SkippableFact]
+    public void GuardedScope_RolledBack_PutsTheCounterBackWhereItWasBeforeTheTruncate()
+    {
+        Ready();
+        Raise(ScopeRolledBack, 3);
+        RecordPatches.PushTransactionWorldScope();
+        Truncate(ScopeRolledBack, 3);
+        Assert.Equal(1, Take(ScopeRolledBack));        // the inner Insert, after the restart
+
+        RecordPatches.PopTransactionWorldScope(restore: true);
+
+        Assert.Equal(4, Take(ScopeRolledBack));        // the caller's next Insert
+    }
+
+    [SkippableFact]
+    public void GuardedScope_RolledBack_OfACounterThatHadNeverStarted_LeavesItUnstarted()
+    {
+        Ready();
+        RecordPatches.PushTransactionWorldScope();
+        Truncate(ScopeRolledBack + 100, null);
+        Assert.Equal(1, Take(ScopeRolledBack + 100));
+
+        RecordPatches.PopTransactionWorldScope(restore: true);
+
+        Assert.Equal(1, Take(ScopeRolledBack + 100));
+    }
+
+    [SkippableFact]
+    public void GuardedScope_Committed_KeepsTheRestart_AndAnEarlierTopLevelRollbackLeavesTheCounterAlone()
+    {
+        Ready();
+        Raise(ScopeCommitted, 3);
+        RecordPatches.PushTransactionWorldScope();
+        Truncate(ScopeCommitted, 3);
+        Assert.Equal(1, Take(ScopeCommitted));
+
+        RecordPatches.PopTransactionWorldScope(restore: false);
+        RecordPatches.RollbackToCommitPoint(null);     // the rows are durable, so the restart is too (as for the row snapshot)
+
+        Assert.Equal(2, Take(ScopeCommitted));
+    }
+
+    [SkippableFact]
+    public void GuardedScope_RolledBack_KeepsAnEarlierTruncateOfTheCaller_ForTheCallersOwnRollback()
+    {
+        Ready();
+        Raise(ScopeAfterEarlierRestart, 5);
+        Truncate(ScopeAfterEarlierRestart, 5);         // the caller's own Truncate(true), before the guarded run
+        Assert.Equal(1, Take(ScopeAfterEarlierRestart));
+        RecordPatches.PushTransactionWorldScope();
+        Truncate(ScopeAfterEarlierRestart, 1);         // the guarded run's, with the counter now at 1
+        Assert.Equal(1, Take(ScopeAfterEarlierRestart));
+
+        RecordPatches.PopTransactionWorldScope(restore: true);
+
+        Assert.Equal(2, Take(ScopeAfterEarlierRestart));   // back to where the scope found it
+        RecordPatches.RollbackToCommitPoint(null);
+        Assert.Equal(6, Take(ScopeAfterEarlierRestart));   // and the caller's rollback still undoes ITS Truncate
+    }
+
+    [SkippableFact]
+    public void GuardedScope_RolledBack_ForgetsATruncateOnlyItMade_SoTheCallersRollbackLeavesLaterValuesAlone()
+    {
+        Ready();
+        Raise(ScopeOnlyRestart, 3);
+        RecordPatches.PushTransactionWorldScope();
+        Truncate(ScopeOnlyRestart, 3);
+        RecordPatches.PopTransactionWorldScope(restore: true);
+        Assert.Equal(4, Take(ScopeOnlyRestart));       // taken by the caller after the guarded run
+
+        RecordPatches.RollbackToCommitPoint(null);     // nobody truncated at the caller's level
+
+        Assert.Equal(5, Take(ScopeOnlyRestart));
+    }
+
+    [SkippableFact]
+    public void GuardedScope_AfterAnExplicitCommit_HasNothingLeftToRestore()
+    {
+        Ready();
+        Raise(ScopeExplicitCommit, 3);
+        RecordPatches.PushTransactionWorldScope();
+        Truncate(ScopeExplicitCommit, 3);
+        Assert.Equal(1, Take(ScopeExplicitCommit));
+        RecordPatches.MarkExplicitCommitPoint();       // AL Commit() inside the guarded run
+
+        RecordPatches.PopTransactionWorldScope(restore: true);
+
+        Assert.Equal(2, Take(ScopeExplicitCommit));
+    }
+
+    [SkippableFact]
+    public void NestedGuardedScopes_InnerRolledBack_RestoresTheCounter_OuterStillHoldsItsOwnRestart()
+    {
+        Ready();
+        Raise(NestedInnerRolledBack, 3);
+        RecordPatches.PushTransactionWorldScope();     // outer
+        RecordPatches.PushTransactionWorldScope();     // inner
+        Truncate(NestedInnerRolledBack, 3);
+        Assert.Equal(1, Take(NestedInnerRolledBack));
+
+        RecordPatches.PopTransactionWorldScope(restore: true);   // inner fails
+        Assert.Equal(4, Take(NestedInnerRolledBack));             // the outer's next Insert
+
+        RecordPatches.PopTransactionWorldScope(restore: false);  // outer succeeds
+        Assert.Equal(5, Take(NestedInnerRolledBack));
     }
 }
