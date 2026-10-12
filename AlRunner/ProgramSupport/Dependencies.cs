@@ -907,6 +907,31 @@ internal static partial class ProgramSupport
     }
 
     /// <summary>
+    /// One term per dependency <paramref name="appRootDir"/>'s own app.json declares that the
+    /// source pre-passes resolved to a workspace package, naming the package's directory (keyed on
+    /// the dependency's source content, so equal paths mean equal content). Empty when it declares
+    /// none, or its manifest cannot be read. The --watch loop compares these against the ones its
+    /// last successful whole-module compile saw (#4125).
+    /// </summary>
+    internal static IReadOnlyList<AlRunner.Infrastructure.DependencyTerm> DeclaredImplTerms(
+        string? appRootDir, IReadOnlyDictionary<Guid, string> implAppPaths)
+    {
+        if (appRootDir == null || implAppPaths.Count == 0) return Array.Empty<AlRunner.Infrastructure.DependencyTerm>();
+        var appJson = Path.Combine(appRootDir, "app.json");
+        if (!File.Exists(appJson)) return Array.Empty<AlRunner.Infrastructure.DependencyTerm>();
+        AlRunner.Infrastructure.BundleIdentity? id;
+        try { id = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJson); }
+        catch { return Array.Empty<AlRunner.Infrastructure.DependencyTerm>(); }
+        if (id == null) return Array.Empty<AlRunner.Infrastructure.DependencyTerm>();
+        return id.Dependencies
+            .Where(d => d.AppId != Guid.Empty && implAppPaths.ContainsKey(d.AppId))
+            .Select(d => new AlRunner.Infrastructure.DependencyTerm(
+                $"package:{d.AppId:N}:{implAppPaths[d.AppId]}", string.IsNullOrEmpty(d.Name) ? d.AppId.ToString() : d.Name))
+            .OrderBy(t => t.Term, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    /// <summary>
     /// The resolved dependency terms for one bundle's AL-output cache key, together with the
     /// reason — when there is one — that this run may claim NO cache identity at all (#2954).
     ///

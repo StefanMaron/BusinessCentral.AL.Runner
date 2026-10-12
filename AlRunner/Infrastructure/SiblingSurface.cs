@@ -2,86 +2,88 @@
 // it, so an app whose own files did not change can still tell that its dependency's did (#4125).
 //
 // A sibling app has no .app in any package cache. The dependent compiles against the
-// *.symbols.json (and deps sidecar) EmitSiblingSymbols writes for it, which makes those two
-// files the whole of what the dependent reads from the sibling. Hashing them is therefore an
-// exact "did the surface this app was compiled against move" test, with no model of what a
-// surface change is. Two reuse decisions were blind to it: the AL-output cache key (own .al
-// bytes and package dependencies only) and the --watch incremental path (own .al files only).
+// *.symbols.json (and deps sidecar) EmitSiblingSymbols writes for it, so hashing those two files
+// says which surface a compile saw. Two reuse decisions were blind to it: the AL-output cache key
+// (own .al bytes and package dependencies only) and the --watch incremental path (own .al files
+// only). The incremental path is safe only while its baseline was compiled against the surface
+// the dependencies have NOW, which is what SiblingSurfaceMemory records and compares.
 using System.Security.Cryptography;
 using System.Text.Json;
 
 namespace AlRunner.Infrastructure;
 
+/// <summary>One thing an app's compile depends on that its own files do not show: the term that
+/// identifies its current state, and a name for a message.</summary>
+internal readonly record struct DependencyTerm(string Term, string Name);
+
 /// <summary>
-/// The fingerprints of the previous pass, kept for the life of a run (the --watch loop owns one),
-/// so a pass can say which sibling surfaces moved since. The first pass has nothing to compare
-/// against and reports no change: nothing was compiled against an earlier surface yet.
+/// For each --watch app, the dependency terms its last SUCCESSFUL whole-module compile was built
+/// against. The incremental path replays the app's unchanged files from that compile, so it may run
+/// only while the terms are still the current ones. A whole-module compile forgets the entry when it
+/// starts and records it only on success, so a failed one (AL0132 in two files, one then fixed) and
+/// an AL-output cache HIT (which compiles nothing) both leave the app without a replayable baseline
+/// until a whole-module compile succeeds against the current surface.
 /// </summary>
 internal sealed class SiblingSurfaceMemory
 {
-    // (suite dir, app id): two suites in one tree can share an app id (EmitSiblingSymbols).
-    private readonly Dictionary<(string SuiteDir, Guid AppId), string> _last = new();
+    private readonly Dictionary<string, IReadOnlyList<string>> _builtAgainst = new();
 
-    /// <summary>Stores <paramref name="fingerprint"/> and says whether it differs from the stored
-    /// one. False when nothing was stored.</summary>
-    internal bool Record(string suiteDir, Guid appId, string fingerprint)
+    private static string Key(string suiteDir) => Path.TrimEndingDirectorySeparator(suiteDir);
+
+    internal void Forget(string suiteDir) => _builtAgainst.Remove(Key(suiteDir));
+
+    internal void Built(string suiteDir, IReadOnlyList<DependencyTerm> terms) =>
+        _builtAgainst[Key(suiteDir)] = terms.Select(t => t.Term).ToList();
+
+    /// <summary>
+    /// Null when the baseline of <paramref name="suiteDir"/> may be replayed; otherwise the reason,
+    /// naming the first dependency whose term differs. An app with no such dependency is always
+    /// replayable: nothing here concerns it.
+    /// </summary>
+    internal string? WhyNotReplayable(string suiteDir, IReadOnlyList<DependencyTerm> current)
     {
-        var key = (Path.TrimEndingDirectorySeparator(suiteDir), appId);
-        var moved = _last.TryGetValue(key, out var before) && !string.Equals(before, fingerprint, StringComparison.Ordinal);
-        _last[key] = fingerprint;
-        return moved;
+        if (current.Count == 0) return null;
+        if (!_builtAgainst.TryGetValue(Key(suiteDir), out var built))
+            return "no whole-module compile of it has succeeded against its dependencies' current state";
+        var known = built.ToHashSet(StringComparer.Ordinal);
+        var changed = current.FirstOrDefault(t => !known.Contains(t.Term));
+        if (changed.Term == null && built.Count == current.Count) return null;
+        return changed.Term == null
+            ? "its set of dependencies changed since the compile its baseline was built from"
+            : $"'{changed.Name}' changed since the compile its baseline was built from";
     }
 }
 
 /// <summary>
-/// The surfaces one <c>EmitSiblingSymbols</c> pass produced and which of them moved.
+/// The surfaces one <c>EmitSiblingSymbols</c> pass produced.
 /// </summary>
 internal sealed class SiblingSurfaces
 {
     /// <summary>No sibling dependencies: every query answers "nothing".</summary>
     internal static readonly SiblingSurfaces None = new(
-        new Dictionary<Guid, string>(), new HashSet<Guid>(), new Dictionary<Guid, AppGroup>());
+        new Dictionary<Guid, string>(), new Dictionary<Guid, AppGroup>());
 
     /// <summary>What a fingerprint reads as when the symbols could not be built or read. It is a
     /// fingerprint like any other, so it differs from every real one.</summary>
     internal const string Unavailable = "unavailable";
 
     private readonly IReadOnlyDictionary<Guid, string> _fingerprints;
-    private readonly IReadOnlySet<Guid> _moved;
     private readonly IReadOnlyDictionary<Guid, AppGroup> _groups;
 
-    internal SiblingSurfaces(
-        IReadOnlyDictionary<Guid, string> fingerprints, IReadOnlySet<Guid> moved,
-        IReadOnlyDictionary<Guid, AppGroup> groups)
+    internal SiblingSurfaces(IReadOnlyDictionary<Guid, string> fingerprints, IReadOnlyDictionary<Guid, AppGroup> groups)
     {
         _fingerprints = fingerprints;
-        _moved = moved;
         _groups = groups;
     }
 
     /// <summary>
-    /// The name of the first sibling <paramref name="group"/> declares a dependency on whose
-    /// surface moved this pass, or null. <c>moved</c> already carries the propagation: an app
-    /// rebuilt because its dependency moved counts as moved for ITS dependents, because it may
-    /// re-export that dependency's types.
+    /// One term per sibling <paramref name="group"/> compiles against, directly or through another
+    /// sibling (a chain moves whichever link changed). Sorted, so the order the siblings were
+    /// compiled in does not matter. Empty for an app with no sibling dependency.
     /// </summary>
-    internal string? MovedDependencyOf(AppGroup group)
+    internal IReadOnlyList<DependencyTerm> Terms(AppGroup group)
     {
-        foreach (var dep in group.DependsOn)
-            if (_moved.Contains(dep))
-                return _groups.TryGetValue(dep, out var g) ? g.ModuleName : dep.ToString();
-        return null;
-    }
-
-    /// <summary>
-    /// One line per sibling <paramref name="group"/> compiles against, directly or through
-    /// another sibling, for the AL-output cache key. Sorted, so the key does not depend on the
-    /// order the siblings were compiled in. Empty for an app with no sibling dependency, which
-    /// leaves its key exactly as it was.
-    /// </summary>
-    internal IReadOnlyList<string> CacheTerms(AppGroup group)
-    {
-        if (_fingerprints.Count == 0) return Array.Empty<string>();
+        if (_fingerprints.Count == 0) return Array.Empty<DependencyTerm>();
         var seen = new HashSet<Guid>();
         var pending = new Stack<Guid>(group.DependsOn);
         while (pending.Count > 0)
@@ -91,10 +93,14 @@ internal sealed class SiblingSurfaces
             foreach (var next in g.DependsOn) pending.Push(next);
         }
         return seen
-            .Select(id => $"sibling:{id:N}:{(_fingerprints.TryGetValue(id, out var f) ? f : "none")}")
-            .OrderBy(t => t, StringComparer.Ordinal)
+            .Select(id => new DependencyTerm(
+                $"sibling:{id:N}:{(_fingerprints.TryGetValue(id, out var f) ? f : "none")}", _groups[id].ModuleName))
+            .OrderBy(t => t.Term, StringComparer.Ordinal)
             .ToList();
     }
+
+    /// <summary>The terms as lines for the AL-output cache key.</summary>
+    internal IReadOnlyList<string> CacheTerms(AppGroup group) => Terms(group).Select(t => t.Term).ToList();
 
     /// <summary>
     /// SHA-256 over the symbols file and the dependency sidecar beside it, or

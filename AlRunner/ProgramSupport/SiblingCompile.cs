@@ -1330,7 +1330,7 @@ internal static partial class ProgramSupport
     internal static AlRunner.Infrastructure.SiblingSurfaces EmitSiblingSymbols(
         List<AlRunner.AppGroup> appGroups, string bundleAbs,
         IReadOnlyList<(AlRunner.AppManifest Manifest, string AppPath)> bundleResolvedDeps,
-        bool announcePath, AlRunner.Infrastructure.SiblingSurfaceMemory memory)
+        bool announcePath)
     {
         BcCompiler.SetSiblingSymbolsDir(null);
         // Not a dictionary: two suites in the same tree can (and in tests/runner-extras do)
@@ -1367,21 +1367,16 @@ internal static partial class ProgramSupport
         // Unlike the primary emit, this compile checks declaration diagnostics, so an unrelated
         // suite's fixture package would fail every sibling here. See ScopeSymbolBearingDepsOnly.
         using var depScope = BcCompiler.ScopeSymbolBearingDepsOnly();
-        // #4125: what each sibling's surface looked like to the apps compiled against it, and which
-        // moved since the previous pass. A sibling that depends on one that moved counts as moved:
-        // its own surface may re-export that dependency's types, and a dependent of it is then
-        // compiled against the changed thing too.
+        // #4125: what each sibling's surface looks like to the apps compiled against it.
         var groupsById = appGroups.Where(g => g.AppId != null)
             .GroupBy(g => g.AppId!.Value).ToDictionary(x => x.Key, x => x.Last());
         var fingerprints = new Dictionary<Guid, string>();
-        var moved = new HashSet<Guid>();
         foreach (var group in appGroups)
         {
             if (group.AppId == null || !targets.Contains(group.AppId.Value)) continue;
             var symbolsPath = Path.Combine(dir, $"{group.AppId:N}.symbols.json");
             var depsSidecarPath = Path.Combine(dir, $"{group.AppId:N}.symbols.deps.json");
             var fingerprint = AlRunner.Infrastructure.SiblingSurfaces.Unavailable;
-            var movedDependency = group.DependsOn.Where(moved.Contains).Select(d => groupsById[d].ModuleName).FirstOrDefault();
             try
             {
                 // #2672: the same reuse as RunLayeredPrePass/BuildSiblingSourceDeps (#2669). Keyed
@@ -1435,10 +1430,8 @@ internal static partial class ProgramSupport
                     $"  [sibling-symbols] {group.ModuleName}: {ex.GetType().Name}: {ex.Message} — " +
                     "apps depending on it will fail to compile against it");
             }
-            var surfaceMoved = memory.Record(group.SuiteDir, group.AppId.Value, fingerprint);
             fingerprints[group.AppId.Value] = fingerprint;
-            if (surfaceMoved || movedDependency != null) moved.Add(group.AppId.Value);
         }
-        return new AlRunner.Infrastructure.SiblingSurfaces(fingerprints, moved, groupsById);
+        return new AlRunner.Infrastructure.SiblingSurfaces(fingerprints, groupsById);
     }
 }

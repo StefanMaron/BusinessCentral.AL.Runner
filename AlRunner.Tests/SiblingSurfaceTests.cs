@@ -19,43 +19,52 @@ public sealed class SiblingSurfaceRecordTests
     private static AppGroup Group(string name, Guid id, params Guid[] dependsOn) =>
         new(name, id, "AL Runner", new Version(1, 0, 0, 0), new List<string>(), dependsOn, "/suites/" + name);
 
+    private static DependencyTerm T(string term, string name = "Lib") => new(term, name);
+
     [Fact]
-    public void Record_FirstSighting_IsNotAMove_AChangedFingerprintIs_AndTheSameOneAgainIsNot()
+    public void WhyNotReplayable_AnAppWithNoSuchDependency_IsAlwaysReplayable()
     {
         var memory = new SiblingSurfaceMemory();
-        Assert.False(memory.Record("/suites/a", A, "f1"));
-        Assert.False(memory.Record("/suites/a", A, "f1"));
-        Assert.True(memory.Record("/suites/a", A, "f2"));
-        Assert.False(memory.Record("/suites/a", A, "f2"));
-        // Going back is a move too: what the dependents hold is the surface of the pass before.
-        Assert.True(memory.Record("/suites/a", A, "f1"));
+        Assert.Null(memory.WhyNotReplayable("/suites/a", Array.Empty<DependencyTerm>()));
     }
 
     [Fact]
-    public void Record_KeepsEachSuiteAndEachAppApart()
+    public void WhyNotReplayable_NeedsASuccessfulCompileAgainstTheCurrentTerms_AndNamesWhatDiffers()
     {
         var memory = new SiblingSurfaceMemory();
-        memory.Record("/suites/a", A, "f1");
-        Assert.False(memory.Record("/suites/other", A, "f9"));   // same app id, another suite
-        Assert.False(memory.Record("/suites/a", B, "f9"));       // same suite, another app
-        Assert.False(memory.Record("/suites/a/", A, "f1"));      // the same suite spelled with a trailing slash
-        Assert.True(memory.Record("/suites/a", A, "f2"));
+        var s1 = new[] { T("sibling:a:1", "Lib"), T("sibling:b:1", "Mid") };
+
+        Assert.Contains("no whole-module compile", memory.WhyNotReplayable("/suites/a", s1));
+        memory.Built("/suites/a", s1);
+        Assert.Null(memory.WhyNotReplayable("/suites/a", s1));
+        Assert.Null(memory.WhyNotReplayable("/suites/a/", s1));   // the same suite spelled with a trailing slash
+
+        // The surface the baseline was built against is not the current one, whatever happened in between.
+        var s2 = new[] { T("sibling:a:2", "Lib"), T("sibling:b:1", "Mid") };
+        Assert.Contains("'Lib'", memory.WhyNotReplayable("/suites/a", s2));
+        Assert.DoesNotContain("'Mid'", memory.WhyNotReplayable("/suites/a", s2)!);
+        // ...still true on the next cycle, and an undo to the old terms is replayable again.
+        Assert.Contains("'Lib'", memory.WhyNotReplayable("/suites/a", s2));
+        Assert.Null(memory.WhyNotReplayable("/suites/a", s1));
+
+        // A dependency gained or lost is a difference too.
+        Assert.NotNull(memory.WhyNotReplayable("/suites/a", s1.Take(1).ToArray()));
+        Assert.NotNull(memory.WhyNotReplayable("/suites/a", s1.Append(T("sibling:c:1", "Extra")).ToArray()));
     }
 
     [Fact]
-    public void MovedDependencyOf_NamesTheFirstMovedSiblingTheAppDeclares_AndIgnoresTheRest()
+    public void WhyNotReplayable_AWholeModuleCompileThatStartsForgetsTheBaseline_UntilOneSucceeds()
     {
-        var a = Group("Lib", A);
-        var b = Group("Mid", B, A);
-        var c = Group("Tests", C, B, External);
-        var groups = new Dictionary<Guid, AppGroup> { [A] = a, [B] = b, [C] = c };
-        var surfaces = new SiblingSurfaces(
-            new Dictionary<Guid, string> { [A] = "fa", [B] = "fb" }, new HashSet<Guid> { A }, groups);
+        var memory = new SiblingSurfaceMemory();
+        var s1 = new[] { T("sibling:a:1") };
+        memory.Built("/suites/a", s1);
+        memory.Built("/suites/other", s1);
 
-        Assert.Equal("Lib", surfaces.MovedDependencyOf(b));
-        Assert.Null(surfaces.MovedDependencyOf(c));   // B did not move; External is no sibling
-        Assert.Null(surfaces.MovedDependencyOf(a));
-        Assert.Null(SiblingSurfaces.None.MovedDependencyOf(b));
+        memory.Forget("/suites/a");   // a compile started and may not finish
+        Assert.NotNull(memory.WhyNotReplayable("/suites/a", s1));
+        Assert.Null(memory.WhyNotReplayable("/suites/other", s1));   // each suite keeps its own
+        memory.Built("/suites/a", s1);
+        Assert.Null(memory.WhyNotReplayable("/suites/a", s1));
     }
 
     [Fact]
@@ -66,7 +75,7 @@ public sealed class SiblingSurfaceRecordTests
         var c = Group("Tests", C, B);
         var groups = new Dictionary<Guid, AppGroup> { [A] = a, [B] = b, [C] = c };
         var surfaces = new SiblingSurfaces(
-            new Dictionary<Guid, string> { [A] = "fa", [B] = "fb" }, new HashSet<Guid>(), groups);
+            new Dictionary<Guid, string> { [A] = "fa", [B] = "fb" }, groups);
 
         Assert.Equal(new[] { $"sibling:{A:N}:fa", $"sibling:{B:N}:fb" }, surfaces.CacheTerms(c));
         Assert.Equal(new[] { $"sibling:{A:N}:fa" }, surfaces.CacheTerms(b));
@@ -81,7 +90,7 @@ public sealed class SiblingSurfaceRecordTests
         var c = Group("Tests", C, B);
         var groups = new Dictionary<Guid, AppGroup> { [A] = Group("Lib", A), [B] = b, [C] = c };
         IReadOnlyList<string> Terms(string fa, string fb) => new SiblingSurfaces(
-            new Dictionary<Guid, string> { [A] = fa, [B] = fb }, new HashSet<Guid>(), groups).CacheTerms(c);
+            new Dictionary<Guid, string> { [A] = fa, [B] = fb }, groups).CacheTerms(c);
 
         var before = Terms("fa", "fb");
         var after = Terms("fa2", "fb");
@@ -93,7 +102,7 @@ public sealed class SiblingSurfaceRecordTests
     public void CacheTerms_ASiblingWhoseSymbolsNeverArrived_IsAnExplicitNone_NotAnOmission()
     {
         var groups = new Dictionary<Guid, AppGroup> { [A] = Group("Lib", A) };
-        var surfaces = new SiblingSurfaces(new Dictionary<Guid, string> { [C] = "x" }, new HashSet<Guid>(), groups);
+        var surfaces = new SiblingSurfaces(new Dictionary<Guid, string> { [C] = "x" }, groups);
         Assert.Equal(new[] { $"sibling:{A:N}:none" }, surfaces.CacheTerms(Group("Tests", C, A)));
     }
 
@@ -219,11 +228,14 @@ public sealed class SiblingSurfaceStabilityTests : IDisposable
         Assert.NotNull(InProcessAppPackager.ReadIdentity(appJson));
     }
 
-    private void WriteLib(int value, string extraProcedure = "", string addSignature = "A: Integer; B: Text", string extraField = "")
+    private void WriteLib(int value, string extraProcedure = "", string addSignature = "A: Integer; B: Text", string extraField = "",
+        string codeunitProperty = "", string valueAttribute = "")
     {
         File.WriteAllText(Path.Combine(Dir("lib"), "Lib.Codeunit.al"), $$"""
         codeunit 64080 "SS Lib"
         {
+            {{codeunitProperty}}
+            {{valueAttribute}}
             procedure Value(): Integer
             begin
                 exit({{value}});
@@ -269,12 +281,12 @@ public sealed class SiblingSurfaceStabilityTests : IDisposable
         new("SS Tests", TestsId, "AL Runner", new Version(1, 0, 0, 0), new List<string> { Dir("tests") }, new[] { LibId }, Dir("tests")),
     };
 
-    private SiblingSurfaces Pass(SiblingSurfaceMemory memory) =>
+    private SiblingSurfaces Pass() =>
         ProgramSupport.EmitSiblingSymbols(
-            Groups(), _root, Array.Empty<(AppManifest Manifest, string AppPath)>(), announcePath: false, memory);
+            Groups(), _root, Array.Empty<(AppManifest Manifest, string AppPath)>(), announcePath: false);
 
     [SkippableFact]
-    public void OnlyASurfaceChangeIsAMove_WhicheverWriterSpelledThePreviousPass()
+    public void OnlyASurfaceChangeMovesTheTerms_WhicheverWriterSpelledThePreviousPass()
     {
         TestArtifacts.SkipIf(!_engine.Ready, _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
         WriteManifest(Dir("lib"), LibId, "SS Lib", 64080, "");
@@ -282,34 +294,43 @@ public sealed class SiblingSurfaceStabilityTests : IDisposable
             $$"""{ "id": "{{LibId}}", "name": "SS Lib", "publisher": "AL Runner", "version": "1.0.0.0" }""");
         File.WriteAllText(Path.Combine(Dir("tests"), "Tests.Codeunit.al"), "codeunit 64090 \"SS Tests\" { }");
         WriteLib(42);
-        var memory = new SiblingSurfaceMemory();
         var tests = Groups()[1];
-        string? Moved(string what) => Pass(memory).MovedDependencyOf(tests);
+        var last = Pass().CacheTerms(tests);
+        var first = last;
+        Assert.Single(first);
 
-        Assert.Null(Moved("first pass: nothing to compare against"));
-        var terms = Pass(memory).CacheTerms(tests);
+        IReadOnlyList<string> Now() => Pass().CacheTerms(tests);
+        void Same(string what) { var now = Now(); Assert.True(last.SequenceEqual(now), $"{what}: the terms moved, {string.Join(",", last)} -> {string.Join(",", now)}"); last = now; }
+        void Moved(string what) { var now = Now(); Assert.False(last.SequenceEqual(now), $"{what}: the terms did not move"); last = now; }
 
-        Assert.Null(Moved("nothing edited"));
+        Same("nothing edited");
         WriteLib(43);
-        Assert.Null(Moved("a body edit after the whole-module compile"));
+        Same("a body edit after the whole-module compile");
         WriteLib(44);
-        Assert.Null(Moved("a body edit after an incremental one"));
-        Assert.Equal(terms, Pass(memory).CacheTerms(tests));
+        Same("a body edit after an incremental one");
 
-        WriteLib(44, extraProcedure: "\n    procedure Extra(): Integer\n    begin\n        exit(58);\n    end;\n");
-        Assert.Equal("SS Lib", Moved("a procedure added"));
-        WriteLib(45, extraProcedure: "\n    procedure Extra(): Integer\n    begin\n        exit(58);\n    end;\n");
-        Assert.Null(Moved("a body edit after the addition"));
+        const string Extra = "\n    procedure Extra(): Integer\n    begin\n        exit(58);\n    end;\n";
+        WriteLib(44, extraProcedure: Extra);
+        Moved("a procedure added");
+        WriteLib(45, extraProcedure: Extra);
+        Same("a body edit after the addition");
 
         WriteLib(45);
-        Assert.Equal("SS Lib", Moved("the procedure removed again (a whole-module fallback)"));
+        Moved("the procedure removed again (a whole-module fallback)");
         WriteLib(46);
-        Assert.Null(Moved("a body edit after a whole-module fallback"));
-        Assert.Equal(terms, Pass(memory).CacheTerms(tests));
+        Same("a body edit after a whole-module fallback");
+        Assert.True(first.SequenceEqual(last), "back on the first surface the terms are the first ones");
 
         WriteLib(46, addSignature: "B: Text; A: Integer");
-        Assert.Equal("SS Lib", Moved("two parameters swapped: the order is part of the surface"));
+        Moved("two parameters swapped: the order is part of the surface");
         WriteLib(46, addSignature: "B: Text; A: Integer", extraField: "        field(3; Level; Integer) { }");
-        Assert.Equal("SS Lib", Moved("a table field added"));
+        Moved("a table field added");
+
+        // What the symbols carry as Properties and Attributes is the surface too: the dependent is
+        // compiled against it, and the compiler answers differently (access, obsolete).
+        WriteLib(46, addSignature: "B: Text; A: Integer", extraField: "        field(3; Level; Integer) { }", codeunitProperty: "Access = Internal;");
+        Moved("the codeunit made Access = Internal");
+        WriteLib(46, addSignature: "B: Text; A: Integer", extraField: "        field(3; Level; Integer) { }", codeunitProperty: "Access = Internal;", valueAttribute: "[Obsolete('use Add', '1.0')]");
+        Moved("a procedure marked [Obsolete]");
     }
 }
