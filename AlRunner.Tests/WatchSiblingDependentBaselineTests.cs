@@ -102,7 +102,7 @@ public class WatchSiblingDependentBaselineTests
     // baseline was last SUCCESSFULLY built against, and the failed compile in between must not have
     // replaced what is replayed.
     [SkippableFact]
-    public async Task Watch_AFailedForcedCompile_ThenTheDependencyIsRestored_PassesAndStaysIncremental()
+    public async Task Watch_AFailedForcedCompile_ThenTheDependencyIsRestored_PassesAgain()
     {
         TestArtifacts.SkipIfMissing();
         var root = TestScratch.Dir("al-runner-watch-baseline-undo");
