@@ -109,4 +109,51 @@ public sealed class ServerMovedSubfolderAppTests
             try { Directory.Delete(root, recursive: true); } catch { }
         }
     }
+
+    // #5532: the SAME tree re-requested under another spelling after a version bump is a rebuild.
+    // No move: appA stays where it is, the request just names the app root after its subfolder, and
+    // then the subfolder after the root.
+    [SkippableFact]
+    public async Task AnAppRootAndItsSubfolder_AcrossAVersionBump_AreOneTreeRebuiltNotAFatal()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = TestScratch.Dir("al-runner-server-tree-5532");
+        var appA = Path.Combine(root, "appA");
+        WriteApp(appA, "1.0.0.0", 62420, "MS5532 Probe");
+        void Bump(string from, string to)
+        {
+            var manifest = Path.Combine(appA, "app.json");
+            var text = File.ReadAllText(manifest);
+            var edited = text.Replace($"\"version\": \"{from}\"", $"\"version\": \"{to}\"");
+            Assert.NotEqual(text, edited); // guard: the substitution applied
+            File.WriteAllText(manifest, edited);
+        }
+        try
+        {
+            await using var server = await CliServer.StartAsync();
+
+            var lines1 = await server.SendRequestStreamingAsync(Req(Path.Combine(appA, "test")), TimeSpan.FromSeconds(180));
+            Assert.Equal(0, ProtocolV2Streaming.Split(lines1).Item2.GetProperty("exitCode").GetInt32());
+
+            Bump("1.0.0.0", "2.0.0.0");
+            var lines2 = await server.SendRequestStreamingAsync(Req(appA), TimeSpan.FromSeconds(180));
+            Assert.DoesNotContain("duplicate app id", string.Join(" | ", lines2), StringComparison.OrdinalIgnoreCase);
+            var d2 = ProtocolV2Streaming.Split(lines2).Item2;
+            Assert.Equal(0, d2.GetProperty("exitCode").GetInt32());
+            Assert.Equal(1, d2.GetProperty("passed").GetInt32());
+            Assert.DoesNotContain("already loaded earlier in this request/session", await server.StdErrOfRequestAsync(2));
+
+            Bump("2.0.0.0", "3.0.0.0");
+            var lines3 = await server.SendRequestStreamingAsync(Req(Path.Combine(appA, "test")), TimeSpan.FromSeconds(180));
+            Assert.DoesNotContain("duplicate app id", string.Join(" | ", lines3), StringComparison.OrdinalIgnoreCase);
+            var d3 = ProtocolV2Streaming.Split(lines3).Item2;
+            Assert.Equal(0, d3.GetProperty("exitCode").GetInt32());
+            Assert.Equal(1, d3.GetProperty("passed").GetInt32());
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
 }

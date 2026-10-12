@@ -105,6 +105,14 @@ public sealed class DependencyLoader
            && !string.Equals(entry.SourcePath, askedSourcePath, StringComparison.OrdinalIgnoreCase)
            && !File.Exists(Path.Combine(root, "app.json"));
 
+    // #5532: the ask names the app folder the module was compiled under, in whatever spelling: one tree.
+    // A package file has no app root, so it is never one. Called only once the identity differs, so a
+    // module that is merely asked about again never pays for the walk.
+    private static bool SameAppTree(LoadedAppEntry entry, string askedSourcePath)
+        => entry.AppRoot is { } root
+           && AppRootOf(askedSourcePath) is { } askedRoot
+           && AlRunner.Infrastructure.BundleRootDeduplication.SameDirectory(root, askedRoot);
+
     /// <summary>#5520/#5528: the app folder that no longer holds the app.json the module registered
     /// for <paramref name="appId"/> was compiled under, when <paramref name="askedSourcePath"/> is
     /// that app at a new path (see <c>SourceMoved</c>), else null. For the message;
@@ -1700,6 +1708,9 @@ public sealed class DependencyLoader
         // #5520: asked before identity, like the path above: a moved app with a bumped version is
         // not a collision either.
         if (SourceMoved(entry, sourcePath)) return null;
+        // #5532: the same app tree asked under another spelling (its root after its subfolder, a trailing
+        // separator, a symlink) after an edit is a rebuild, not a collision, exactly as for an identical path.
+        if (!IdentityMatches(entry, name, publisher, version) && SameAppTree(entry, sourcePath)) return null;
         if (!IdentityMatches(entry, name, publisher, version))
             throw new AlRunner.Infrastructure.AppIdCollisionException(
                 appId, entry.Name, entry.Publisher, entry.Version, entry.SourcePath,
@@ -1781,8 +1792,10 @@ public sealed class DependencyLoader
         // #5520: a module whose app folder moved is replaced by the compile at the new folder, whatever
         // its identity says now, so the next lookup does not keep finding the one that no longer
         // has a source.
+        // #5532: the same app tree under another spelling, edited, is replaced the same way.
         if (string.Equals(existing.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase)
             || SourceMoved(existing, sourcePath)
+            || (!IdentityMatches(existing, name, publisher, version) && SameAppTree(existing, sourcePath))
             || (IdentityMatches(existing, name, publisher, version)
                 && (FromEarlierEpoch(existing)
                     || !string.Equals(existing.VisibilitySignature, newEntry.VisibilitySignature, StringComparison.Ordinal))))

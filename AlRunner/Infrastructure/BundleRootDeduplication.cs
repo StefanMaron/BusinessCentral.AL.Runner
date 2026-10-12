@@ -94,6 +94,13 @@ internal static class BundleRootDeduplication
     }
 
     /// <summary>
+    /// #5532: whether two spellings name one folder, by the rule <see cref="Deduplicate"/> applies:
+    /// <see cref="Canonicalize"/> on both, then the platform's comparer.
+    /// </summary>
+    public static bool SameDirectory(string a, string b)
+        => PathComparer.Equals(Canonicalize(a), Canonicalize(b));
+
+    /// <summary>
     /// The resolved real path of <paramref name="root"/>: absolute, '.'/'..' collapsed,
     /// trailing separators trimmed, and every symlinked component followed to its final
     /// target. Returns the input unchanged when it cannot be resolved (an unparseable

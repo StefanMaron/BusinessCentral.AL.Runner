@@ -544,4 +544,246 @@ public class AppIdCollisionLoudFailureTests
         }
         finally { try { Directory.Delete(root, recursive: true); } catch { } }
     }
+
+    // #5532: a re-request of the SAME app tree after a version bump is a rebuild, not a collision, however
+    // the second request spells the folder. The tree is the app root (the folder holding app.json), the
+    // same notion #5528 records; a collision needs two roots that both still hold the app (#1850).
+    private static void AssertRebuiltNotACollision(string registered, string asked, string appRoot)
+    {
+        var appId = Guid.NewGuid();
+        var sibling = AppDir(Path.GetDirectoryName(appRoot.TrimEnd(Path.DirectorySeparatorChar))!, Path.GetFileName(appRoot.TrimEnd(Path.DirectorySeparatorChar)) + "-sibling");
+        var asmNew = Dynamic("Tree5532V2" + appId.ToString("N"));
+        DependencyLoader.RegisterLoaded(appId, Dynamic("Tree5532V1" + appId.ToString("N")), "Tree 5532", "Repro5532", "1.0.0.0", registered);
+
+        // The lookup answers "recompile", exactly as it does for an identical path (#2556).
+        Assert.Null(DependencyLoader.TryGetByAppId(appId, "Tree 5532", "Repro5532", "2.0.0.0", asked));
+        // The registration of the rebuild replaces the old module rather than throwing.
+        DependencyLoader.RegisterLoaded(appId, asmNew, "Tree 5532", "Repro5532", "2.0.0.0", asked);
+        Assert.Equal(asked, DependencyLoader.LoadedSourcePath(appId));
+        // A sibling bundle resolving the id now shares the rebuild (#1683), not the retired v1 module.
+        Assert.Same(asmNew, DependencyLoader.TryGetByAppId(appId, "Tree 5532", "Repro5532", "2.0.0.0", sibling));
+    }
+
+    [Fact]
+    public void SameAppTree_AppRootAskedAfterItsSubfolder_VersionBump_IsRebuiltNotACollision()
+    {
+        var root = TestScratch.Dir("al-runner-tree-5532");
+        try
+        {
+            var a = AppDir(root, "a");
+            AssertRebuiltNotACollision(SubOf(a, "test"), a, a);
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
+
+    [Fact]
+    public void SameAppTree_ASiblingSubfolderAsked_VersionBump_IsRebuiltNotACollision()
+    {
+        var root = TestScratch.Dir("al-runner-tree-5532");
+        try
+        {
+            var a = AppDir(root, "a");
+            AssertRebuiltNotACollision(SubOf(a, "test"), SubOf(a, "src"), a);
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
+
+    [Fact]
+    public void SameAppTree_AppRootRegisteredFirst_ThenItsSubfolder_VersionBump_IsRebuiltNotACollision()
+    {
+        // The other direction of one tree: root -> subfolder is as much a rebuild as subfolder -> root.
+        var root = TestScratch.Dir("al-runner-tree-5532");
+        try
+        {
+            var a = AppDir(root, "a");
+            var test = SubOf(a, "test");
+            AssertRebuiltNotACollision(a, test, a);
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
+
+    [Fact]
+    public void SameAppTree_TrailingSeparatorSpellings_VersionBump_IsRebuiltNotACollision()
+    {
+        var root = TestScratch.Dir("al-runner-tree-5532");
+        try
+        {
+            var a = AppDir(root, "a");
+            var sep = Path.DirectorySeparatorChar.ToString();
+            AssertRebuiltNotACollision(SubOf(a, "test"), SubOf(a, "test") + sep, a);                // a/test -> a/test/
+            AssertRebuiltNotACollision(SubOf(a, "src") + sep, SubOf(a, "src"), a);                 // and back
+            AssertRebuiltNotACollision(SubOf(a, "test"), a + sep, a);                              // the root itself, with a separator
+            AssertRebuiltNotACollision(a + sep, SubOf(a, "test"), a);
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
+
+    [Fact]
+    public void SameAppTree_DotSegmentSpelling_VersionBump_IsRebuiltNotACollision()
+    {
+        var root = TestScratch.Dir("al-runner-tree-5532");
+        try
+        {
+            var a = AppDir(root, "a");
+            SubOf(a, "src");
+            AssertRebuiltNotACollision(SubOf(a, "test"), Path.Combine(a, "src", "..", "test"), a);
+            AssertRebuiltNotACollision(a, Path.Combine(a, ".", "test", ".."), a);
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
+
+    [SkippableFact]
+    public void SameAppTree_ASymlinkedSpellingOfTheFolder_VersionBump_IsRebuiltNotACollision()
+    {
+        var root = TestScratch.Dir("al-runner-tree-5532");
+        try
+        {
+            var a = AppDir(root, "a");
+            SubOf(a, "test");
+            var link = Path.Combine(root, "link-to-a");
+            Skip.IfNot(TrySymlink(a, link), "the filesystem does not allow creating symlinks here");
+            AssertRebuiltNotACollision(SubOf(a, "test"), Path.Combine(link, "test"), a);   // via the link, below it
+            AssertRebuiltNotACollision(Path.Combine(link, "test"), a, a);                  // registered via the link
+            AssertRebuiltNotACollision(a, link, a);                                        // the link is the root
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
+
+    private static bool TrySymlink(string target, string link)
+    {
+        try { Directory.CreateSymbolicLink(link, target); return Directory.Exists(link); }
+        catch { return false; }
+    }
+
+    [Fact]
+    public void SameAppTree_RenamedAppInTheSameFolder_IsRebuiltNotACollision()
+    {
+        // #2556 for an identical path says any identity change on one tree is an edit, not a collision.
+        var root = TestScratch.Dir("al-runner-tree-5532");
+        try
+        {
+            var appId = Guid.NewGuid();
+            var a = AppDir(root, "a");
+            DependencyLoader.RegisterLoaded(appId, Dynamic("Tree5532Old"), "Tree 5532", "Repro5532", "1.0.0.0", SubOf(a, "test"));
+
+            Assert.Null(DependencyLoader.TryGetByAppId(appId, "Tree 5532 Renamed", "Repro5532", "1.0.0.0", a));
+            DependencyLoader.RegisterLoaded(appId, Dynamic("Tree5532New"), "Tree 5532 Renamed", "Repro5532", "1.0.0.0", a);
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
+
+    [Fact]
+    public void SameAppTree_SameIdentity_StillSharesTheModule()
+    {
+        // #1683/#1892 is unchanged: one tree asked under another spelling with the identity it was
+        // compiled under is the same module, not a recompile.
+        var root = TestScratch.Dir("al-runner-tree-5532");
+        try
+        {
+            var appId = Guid.NewGuid();
+            var asm = Dynamic("Tree5532Same");
+            var a = AppDir(root, "a");
+            DependencyLoader.RegisterLoaded(appId, asm, "Tree 5532", "Repro5532", "1.0.0.0", SubOf(a, "test"));
+
+            Assert.Same(asm, DependencyLoader.TryGetByAppId(appId, "Tree 5532", "Repro5532", "1.0.0.0", SubOf(a, "src")));
+            Assert.Same(asm, DependencyLoader.TryGetByAppId(appId, "Tree 5532", "Repro5532", "1.0.0.0", a));
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
+
+    [Fact]
+    public void TwoLiveAppRoots_AtDifferentVersions_RemainACollision()
+    {
+        // Two folders that both still hold the app at different versions are #1850's case: the
+        // message keeps naming both and keeps saying one is a stale build.
+        var root = TestScratch.Dir("al-runner-tree-5532");
+        try
+        {
+            var appId = Guid.NewGuid();
+            var a = AppDir(root, "a");
+            var b = AppDir(root, "b");
+            DependencyLoader.RegisterLoaded(appId, Dynamic("Tree5532A"), "Tree 5532", "Repro5532", "1.0.0.0", SubOf(a, "test"));
+
+            var ex = Assert.Throws<AlRunner.Infrastructure.AppIdCollisionException>(() =>
+                DependencyLoader.TryGetByAppId(appId, "Tree 5532", "Repro5532", "2.0.0.0", SubOf(b, "test")));
+            Assert.True(ex.IsVersionSkew);
+            Assert.Contains(SubOf(a, "test"), ex.Message);
+            Assert.Contains(SubOf(b, "test"), ex.Message);
+            Assert.Contains("stale build", ex.Message);
+
+            Assert.Throws<AlRunner.Infrastructure.AppIdCollisionException>(() =>
+                DependencyLoader.RegisterLoaded(appId, Dynamic("Tree5532B"), "Tree 5532", "Repro5532", "2.0.0.0", b));
+            Assert.Equal(SubOf(a, "test"), DependencyLoader.LoadedSourcePath(appId));   // the throw left the entry alone
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
+
+    [Fact]
+    public void NestedAppRoots_AreTwoTrees_SoAVersionBumpBetweenThemRemainsACollision()
+    {
+        // <ws>/app.json and <ws>/tests/app.json are two apps (FindBucketRoot names the nearest): asking
+        // for one after registering the other is not "the same tree" because one contains the other.
+        var root = TestScratch.Dir("al-runner-tree-5532");
+        try
+        {
+            var appId = Guid.NewGuid();
+            var ws = AppDir(root, "ws");
+            var inner = AppDir(ws, "tests");
+            DependencyLoader.RegisterLoaded(appId, Dynamic("Tree5532Nested"), "Tree 5532", "Repro5532", "1.0.0.0", SubOf(inner, "src"));
+
+            Assert.Throws<AlRunner.Infrastructure.AppIdCollisionException>(() =>
+                DependencyLoader.TryGetByAppId(appId, "Tree 5532", "Repro5532", "2.0.0.0", ws));
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
+
+    [Fact]
+    public void APackageRegistration_HasNoAppRoot_SoItIsNeverTheSameTree()
+    {
+        // A null AppRoot (a package file) matches no folder: a version bump asked from a folder stays a
+        // collision exactly as before, and nothing here dereferences the missing root.
+        var root = TestScratch.Dir("al-runner-tree-5532");
+        try
+        {
+            var appId = Guid.NewGuid();
+            Directory.CreateDirectory(root);
+            var pkg = Path.Combine(root, "dep.app");
+            File.WriteAllText(pkg, "x");
+            DependencyLoader.RegisterLoaded(appId, Dynamic("Tree5532Pkg"), "Tree 5532", "Repro5532", "1.0.0.0", pkg);
+            var a = AppDir(root, "a");
+
+            Assert.Throws<AlRunner.Infrastructure.AppIdCollisionException>(() =>
+                DependencyLoader.TryGetByAppId(appId, "Tree 5532", "Repro5532", "2.0.0.0", a));
+            // And an ask from under no app.json at all has no root to match either.
+            var bare = Path.Combine(root, "bare");
+            Directory.CreateDirectory(bare);
+            Assert.Throws<AlRunner.Infrastructure.AppIdCollisionException>(() =>
+                DependencyLoader.TryGetByAppId(appId, "Tree 5532", "Repro5532", "2.0.0.0", bare));
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
+
+    [SkippableFact]
+    public void TwoFoldersDifferingOnlyInCase_AreTwoTrees_WhereTheFilesystemSaysSo()
+    {
+        // The comparison follows the platform: Linux is case-sensitive, so `app` and `APP` are two
+        // folders there and a version bump between them stays a collision. Skipped where one folder
+        // answers to both spellings.
+        var root = TestScratch.Dir("al-runner-tree-5532");
+        try
+        {
+            var lower = AppDir(root, "app");
+            var upper = Path.Combine(root, "APP");
+            Directory.CreateDirectory(upper);
+            Skip.If(Directory.GetDirectories(root).Length < 2, "the filesystem folds case: one folder answers to both spellings");
+            File.WriteAllText(Path.Combine(upper, "app.json"), "{}");
+            var appId = Guid.NewGuid();
+            // Registered from a subfolder, so the SourcePath comparison (case-folding since #2556) does not decide it.
+            DependencyLoader.RegisterLoaded(appId, Dynamic("Tree5532Case"), "Tree 5532", "Repro5532", "1.0.0.0", SubOf(lower, "test"));
+
+            Assert.Throws<AlRunner.Infrastructure.AppIdCollisionException>(() =>
+                DependencyLoader.TryGetByAppId(appId, "Tree 5532", "Repro5532", "2.0.0.0", upper));
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
 }
