@@ -24,7 +24,17 @@ public sealed class TddHomeDroppedTests : IDisposable
         try { Directory.Delete(_scratch, recursive: true); } catch { }
     }
 
-    /// <summary>The package every shape but the first generates a field of: table 65380 "Loyalty Entry" with the fields "Id" and "Existing Points".</summary>
+    private const string PkgAppId = "5f1a2b3c-8394-4ea5-9f16-d0728293a045";
+
+    private const string PkgSymbols = """
+        {"Codeunits":[{"Id":65390,"Name":"Pkg Calc","Methods":[
+          {"Id":1,"Name":"Existing","ReturnTypeDefinition":{"Name":"Integer"},"Properties":[]}
+        ],"ReferenceSourceFileName":"PkgCalc.Codeunit.al","Properties":[]}],
+        "AppId":"@APPID@","Name":"Tdd Home Dropped Pkg","Publisher":"AL Runner Fixtures","Version":"1.0.0.0"}
+        """;
+
+    /// <summary>The packages the shapes read: table 65380 "Loyalty Entry" with the fields "Id" and "Existing Points" (the field shapes), and
+    /// codeunit 65390 "Pkg Calc" with the procedure "Existing" (the stub shape), each carrying its own source.</summary>
     private string PackageCache()
     {
         var packages = Path.Combine(_scratch, "packages");
@@ -32,6 +42,8 @@ public sealed class TddHomeDroppedTests : IDisposable
         File.WriteAllBytes(Path.Combine(packages, TddPackageMemberTests.DepFileStem + ".app"),
             TddPackageMemberTests.BuildApp(TddPackageMemberTests.DepAppId, "Tdd Package Members Dep", 65380, 65389,
                 TddPackageMemberTests.DepSymbols, Path.Combine(TddPackageMemberTests.FixtureRoot, "dep")));
+        File.WriteAllBytes(Path.Combine(packages, "AL_Runner_Fixtures_Tdd_Home_Dropped_Pkg_1.0.0.0.app"),
+            TddPackageMemberTests.BuildApp(PkgAppId, "Tdd Home Dropped Pkg", 65390, 65394, PkgSymbols, Path.Combine(FixtureRoot, "pkgsrc")));
         return packages;
     }
 
@@ -43,11 +55,12 @@ public sealed class TddHomeDroppedTests : IDisposable
     }
 
     /// <summary>
-    /// "Calc" is added to the codeunit "Lib", whose file holds an unrelated error: the compile drops the file, so nothing declares "Calc".
-    /// The run says the file was dropped, and neither the closing list nor the test names the member.
+    /// Three members are generated into files the compile then drops (each holds an unrelated error): "Calc" in the source codeunit "Lib", the
+    /// codeunit "Nothing There" and its "Total" in a test file, and "Missing" in a stub beside the package's "Pkg Calc". Nothing declares any
+    /// of them, so the run says so for each, and neither the closing list nor a test names one.
     /// </summary>
     [SkippableFact]
-    public void ProcedureInADroppedSourceCodeunit_IsNotReportedAsGenerated()
+    public void MembersOfDroppedFiles_AreNotReportedAsGenerated()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -55,12 +68,22 @@ public sealed class TddHomeDroppedTests : IDisposable
 
         Assert.True(exit == 1, $"exit {exit}\n{stderr}");
         using var doc = JsonDocument.Parse(stdout.Trim());
-        var test = doc.RootElement.GetProperty("tests").EnumerateArray().Single();
-        Assert.Equal("fail", test.GetProperty("status").GetString());
-        Assert.Empty(TddMissingObjectTests.StubsOf(test));
+        var tests = doc.RootElement.GetProperty("tests").EnumerateArray().ToList();
         Assert.Contains("TDD-EXCLUDED", stdout + stderr);
-        Assert.Contains("--tdd: not reported as generated: Lib: procedure \"Calc\"(Arg1: Integer): Integer", stderr);
-        Assert.DoesNotContain("--tdd: generated ", stderr);
+        Assert.All(tests, t =>
+        {
+            Assert.Equal("fail", t.GetProperty("status").GetString());
+            Assert.Empty(TddMissingObjectTests.StubsOf(t));
+        });
+        foreach (var member in new[]
+        {
+            "Lib: procedure \"Calc\"(Arg1: Integer): Integer",
+            "Nothing There: codeunit 65400",
+            "Nothing There: procedure \"Total\"(Arg1: Integer): Integer",
+            "Pkg Calc: procedure \"Missing\"(Arg1: Integer): Integer",
+        })
+            Assert.Contains($"--tdd: not reported as generated: {member} - the compile did not keep", stderr);
+        Assert.DoesNotContain("member(s) this run:", stderr);
         Assert.Contains("--tdd: no members were generated this run", stderr);
     }
 
@@ -77,7 +100,7 @@ public sealed class TddHomeDroppedTests : IDisposable
 
         Assert.NotEqual(0, exit);
         Assert.Contains("--tdd: dropped with its file: table extension", stderr);
-        Assert.DoesNotContain("--tdd: generated ", stderr);
+        Assert.DoesNotContain("member(s) this run:", stderr);
         Assert.DoesNotContain("Loyalty Entry: field \"Points\"", stdout + stderr);
         Assert.Contains("--tdd: no members were generated this run", stderr);
     }
@@ -98,7 +121,7 @@ public sealed class TddHomeDroppedTests : IDisposable
         using var doc = JsonDocument.Parse(stdout.Trim());
         var test = doc.RootElement.GetProperty("tests").EnumerateArray().Single(t => t.GetProperty("name").GetString()!.EndsWith(".FieldCount_IsTheTablesOwn"));
         Assert.True(test.GetProperty("status").GetString() == "pass", $"exit {exit}\n{test}\n{stderr}");
-        Assert.DoesNotContain("--tdd: generated ", stderr);
+        Assert.DoesNotContain("member(s) this run:", stderr);
         Assert.Contains("--tdd: no members were generated this run", stderr);
     }
 }

@@ -4,9 +4,21 @@
   "publisher": "AL Runner Fixtures",
   "version": "1.0.0.0",
   "brief": "The source shape of the #5493 --tdd reproducer.",
-  "description": "A test calls a procedure its library does not declare, and the library's file does not compile.",
-  "dependencies": [],
-  "idRanges": [ { "from": 65400, "to": 65419 } ],
+  "description": "Tests call a procedure its library does not declare, a codeunit nobody declares and a procedure of a package's codeunit, in files that do not compile.",
+  "dependencies": [
+    {
+      "id": "5f1a2b3c-8394-4ea5-9f16-d0728293a045",
+      "name": "Tdd Home Dropped Pkg",
+      "publisher": "AL Runner Fixtures",
+      "version": "1.0.0.0"
+    }
+  ],
+  "idRanges": [
+    {
+      "from": 65400,
+      "to": 65419
+    }
+  ],
   "runtime": "14.0",
   "features": []
 }
