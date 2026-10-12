@@ -108,10 +108,16 @@ public static partial class BcRuntime
             return default;
 
         var providerType = self.GetType();
-        // #5522: a TRUNCATE is part of the open transaction, so the rows come back with a rollback to the last
-        // commit (corpus 67826 AutoInc_Truncate_*); the snapshot has to precede the clear below.
-        if (metaTable.TableId != 0)
+        // #5522: a TRUNCATE of a stored table is part of the open transaction. A rollback to the last commit brings the
+        // rows back and puts the AutoIncrement counter where it stood before the Truncate, whether or not it was
+        // reseeded (corpus 67826 AutoInc_Truncate_*, Truncate(true) and Truncate(false)). The snapshot and the
+        // journal entry have to precede the clear below. A temporary record's Truncate is not part of any transaction.
+        if (metaTable.TableId != 0 && AlRunner.Patches.RecordPatches.IsSessionStoreProvider(metaTable.TableId, self))
+        {
             AlRunner.Patches.RecordPatches.NoteTransactionWriteForTable(metaTable.TableId);
+            AlRunner.Patches.RecordPatches.NoteIdentityRestart(
+                metaTable.TableId, _aiCounters.TryGetValue(metaTable.TableId, out var before) ? before : null);
+        }
         if (providerType.Name.Contains("TempTableDataProvider", StringComparison.Ordinal))
         {
             // The provider's own "no rows yet" state, as a rollback restores it (#5516): Clear()ing the trees in place
@@ -123,13 +129,7 @@ public static partial class BcRuntime
         {
             var tableId = metaTable.TableId;
             if (tableId != 0)
-            {
-                // #5522: BC restarts the SEQUENCE behind the AutoIncrement field inside the transaction, so a
-                // rollback to the last commit puts the counter back where it was before the restart.
-                AlRunner.Patches.RecordPatches.NoteIdentityRestart(
-                    tableId, _aiCounters.TryGetValue(tableId, out var before) ? before : null);
                 _aiCounters.TryRemove(tableId, out _);
-            }
             else
             {
                 // Fallback if metadata table ID is unexpectedly unset.

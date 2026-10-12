@@ -719,7 +719,7 @@ public static partial class BcRuntime
                     long next = NextAutoIncrementValue(tableId, aiFieldNo);
                     var newVal = Microsoft.Dynamics.Nav.Runtime.NavValue
                         .CreateNavValueFromObject(aiField, AutoIncrementBoxedValue(
-                            currentVal is Microsoft.Dynamics.Nav.Runtime.NavBigInteger, next));
+                            currentVal is Microsoft.Dynamics.Nav.Runtime.NavBigInteger, next, tableId));
                     self.SetFieldValue(aiField, newVal);
                     // #5518: BC writes the counter's value into the buffer only when the Insert lands, so a
                     // refused Insert leaves the field as it was (corpus 67822). InsertRecordCompleted undoes it.
@@ -727,13 +727,27 @@ public static partial class BcRuntime
                 }
             }
         }
-        catch { /* don't block insert if AI counter assignment fails */ }
+        catch (Exception ex) when (ex is not AlRunner.Infrastructure.RunnerOutOfScopeException)
+        { /* don't block insert if AI counter assignment fails */ }
     }
 
     /// <summary>The CLR value an AutoIncrement field of the given type stores for counter value
-    /// <paramref name="next"/>: a BigInteger field takes the whole long (#5521), an Integer field its Int32.</summary>
-    internal static object AutoIncrementBoxedValue(bool bigIntegerField, long next)
-        => bigIntegerField ? (object)next : (object)checked((int)next);
+    /// <paramref name="next"/>: a BigInteger field takes the whole long (#5521), an Integer field its Int32.
+    /// Claim: BC's counter for an Integer field cannot pass Int32.MaxValue. The first Insert past it did not wrap
+    /// on any of the ten cloud legs, it ended the transaction and the test failed with "Transaction was rolled back
+    /// by the server." at the asserterror holding the Insert (corpus PR 567 probe H2/H3, AlRunner#5521). The runner does not
+    /// model an ended transaction, so it refuses by name rather than hand out a wrapped, negative key.</summary>
+    internal static object AutoIncrementBoxedValue(bool bigIntegerField, long next, int tableId = 0)
+    {
+        if (bigIntegerField) return next;
+        if (next > int.MaxValue)
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                "NavRecord.Insert (Integer AutoIncrement counter)",
+                $"not-yet-implemented — table {tableId}'s counter passed 2147483647, which ends BC's transaction "
+                + "(\"Transaction was rolled back by the server.\"); the runner does not model that",
+                "todo");
+        return (int)next;
+    }
 
     private sealed record PendingAutoIncrementReset(
         Microsoft.Dynamics.Nav.Runtime.NCLMetaField Field, Microsoft.Dynamics.Nav.Runtime.NavValue Original);

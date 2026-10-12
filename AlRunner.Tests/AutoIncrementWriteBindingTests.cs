@@ -87,12 +87,13 @@ public sealed class AutoIncrementWriteBindingTests
     }
 
     [Theory]
-    [InlineData(true, 5_000_000_001L)]
-    [InlineData(true, 705_032_705L)]
-    [InlineData(true, 3L)]
-    public void AutoIncrementBoxedValue_ForABigIntegerField_KeepsTheWholeLong(bool big, long next)
+    [InlineData(5_000_000_001L)]
+    [InlineData(705_032_705L)]
+    [InlineData(2_147_483_648L)]
+    [InlineData(3L)]
+    public void AutoIncrementBoxedValue_ForABigIntegerField_KeepsTheWholeLong(long next)
     {
-        var boxed = BoxedValue(big, next);
+        var boxed = BoxedValue(true, next);
         Assert.IsType<long>(boxed);
         Assert.Equal(next, boxed);
     }
@@ -107,12 +108,22 @@ public sealed class AutoIncrementWriteBindingTests
         Assert.Equal((int)next, boxed);
     }
 
+    [Fact]
+    public void AutoIncrementBoxedValue_ForAnIntegerFieldPastInt32_RefusesByName_InsteadOfWrapping()
+    {
+        // BC does not wrap (corpus PR 567 probe H2/H3: the transaction ends); a wrapped, negative key is the silent answer.
+        var ex = Assert.Throws<System.Reflection.TargetInvocationException>(() => BoxedValue(false, 2_147_483_648L));
+        var refusal = Assert.IsType<AlRunner.Infrastructure.RunnerOutOfScopeException>(ex.InnerException);
+        Assert.Contains("not-yet-implemented", refusal.Reason, StringComparison.Ordinal);
+        Assert.Contains("2147483647", refusal.Message, StringComparison.Ordinal);
+    }
+
     private static object BoxedValue(bool big, long next)
     {
         var method = typeof(AlRunner.Patches.RecordPatches).Assembly.GetType("AlRunner.BcRuntime")!
             .GetMethod("AutoIncrementBoxedValue",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
             ?? throw new InvalidOperationException("BcRuntime.AutoIncrementBoxedValue not found (#5521)");
-        return method.Invoke(null, new object[] { big, next })!;
+        return method.Invoke(null, new object[] { big, next, 7 })!;
     }
 }

@@ -118,6 +118,16 @@ public static partial class RecordPatches
     // does not consult this (unmeasured); the journal waits for the top-level rollback or the next commit point.
     private static readonly Dictionary<int, long?> _txIdentityRestarts = new();
 
+    /// <summary>True when <paramref name="provider"/> is the provider of a session-company store of <paramref name="tableId"/>,
+    /// the stores the transaction snapshot covers; false for a temporary record's provider.</summary>
+    internal static bool IsSessionStoreProvider(int tableId, object provider)
+    {
+        foreach (var (_, perTable) in _dataAccessByTable)
+            if (perTable.TryGetValue(tableId, out var store) && ReferenceEquals(GetDataProvider(store), provider))
+                return true;
+        return false;
+    }
+
     /// <summary>Journal that <paramref name="tableId"/>'s counter is being restarted; the first restart since the commit wins.</summary>
     internal static void NoteIdentityRestart(int tableId, long? counterBefore)
         => _txIdentityRestarts.TryAdd(tableId, counterBefore);
