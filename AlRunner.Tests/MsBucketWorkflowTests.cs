@@ -550,25 +550,37 @@ public sealed class MsBucketWorkflowTests
     /// <summary>
     /// #3433: the reader tag is pinned once, in .github/backup-reader.json. The nightly header
     /// said ".github/backup-reader.json pins reader v0.1.2" after the pin had moved on, which
-    /// is the #3433 shape again in prose: a second copy of the tag that nothing updates. The
-    /// "pins reader vX" form is refused whether or not X is the pinned tag today (the pin is
-    /// read only so the failure message can say what it holds), because a correct restatement
-    /// is stale on the next bump.
+    /// is the #3433 shape again in prose: a second copy of the tag that nothing updates.
+    ///
+    /// Judged on every release tag in the file, not on one phrasing: a phrase-level match
+    /// passes any reflow, rewording or backticked tag. The file may name only the tags in
+    /// <c>HistoricalReaderTags</c> (they appear as history, "v0.1.1 could not open 28.2+"), and
+    /// the pinned tag, read from the pin file, must never be one of them or appear in the
+    /// file at all. So a restatement of today's tag fails now, and a stale one fails after the
+    /// next bump because it is no longer in the historical set.
     /// </summary>
     [Fact]
-    public void NightlyHeader_DoesNotStateWhichReaderTagTheBackupReaderPinHolds()
+    public void NightlyHeader_NamesNoReaderTagButHistoricalOnes_AndNeverThePinnedTag()
     {
         var header = Read(Path.Combine("workflows", Nightly));
         var pinnedTag = BackupReaderPin.Parse(Read("backup-reader.json")).Tag;
+        string[] historical = { "v0.1.1", "v0.1.2" };
 
-        // A comment wraps, so the match crosses "\n# " between the words.
-        var restated = System.Text.RegularExpressions.Regex.Matches(
-            header, @"backup-reader\.json\s+pins\s+(?:#\s*)?(?:the\s+)?reader\s+(v\d+\.\d+\.\d+)");
-        Assert.True(restated.Count == 0,
-            "ms-bucket-nightly.yml states which tag .github/backup-reader.json pins ("
-            + string.Join(", ", restated.Select(m => m.Groups[1].Value))
-            + $"; the pin holds {pinnedTag}). A tag in prose is a second copy of the pin and goes "
-            + "stale on the next bump; name the file and what it does, never the tag it holds today.");
+        // The set must not rot into the pin: a pin that moved onto a "historical" tag makes
+        // every restatement of it legal.
+        Assert.DoesNotContain(pinnedTag, historical);
+
+        var tags = System.Text.RegularExpressions.Regex.Matches(header, @"v\d+\.\d+\.\d+")
+            .Select(m => m.Value).Distinct().ToArray();
+        var foreign = tags.Where(t => !historical.Contains(t)).ToArray();
+        Assert.True(foreign.Length == 0,
+            "ms-bucket-nightly.yml names reader tag(s) " + string.Join(", ", foreign)
+            + $" that are not historical ({string.Join(", ", historical)}); the pin holds {pinnedTag}. "
+            + "A tag in prose is a second copy of the pin and goes stale on the next bump; name "
+            + "the file and what it does, never the tag it holds today.");
+        // A tag spelled without its "v" ("0.2.1") is the same restatement.
+        Assert.False(header.Contains(pinnedTag.TrimStart('v'), StringComparison.Ordinal),
+            $"ms-bucket-nightly.yml contains the pinned reader version {pinnedTag}, spelled without its 'v'.");
     }
 
     /// <summary>
