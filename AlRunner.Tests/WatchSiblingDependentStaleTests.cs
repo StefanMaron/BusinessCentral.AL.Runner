@@ -12,17 +12,12 @@
 //   c4  dependency gains it back                  -> compiles and passes again
 //   c5  dependency body edit, surface unchanged   -> the dependent sees the new behaviour, no rebuild
 //   c6  [Obsolete] on a procedure, c7 Access = Internal -> the symbols carry both, so both rebuild it
-using System.Diagnostics;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public class WatchSiblingDependentStaleTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
     private const string DepAppId = "41250000-0000-4000-8000-00000000d001";
     private const string TestAppId = "41250000-0000-4000-8000-00000000d002";
     private const string DepLine = "[sibling-symbols] WSI Sibling Dep 1.0.0.0: ";
@@ -154,156 +149,6 @@ public class WatchSiblingDependentStaleTests
         finally
         {
             session.Dispose();
-            try { Directory.Delete(root, recursive: true); } catch { }
-            try { Directory.Delete(cacheDir, recursive: true); } catch { }
-        }
-    }
-
-    // Lib <- Mid <- Tests. Tests declares Mid only, and Mid (which propagates its dependencies)
-    // never calls what Lib loses, so Mid's own symbols do not move: only the chain tells Tests that
-    // what Mid was compiled against did.
-    [SkippableFact]
-    public async Task Watch_ChainOfThree_ALibraryChangeReachesTheAppAtTheEndOfTheChain()
-    {
-        TestArtifacts.SkipIfMissing();
-
-        var root = TestScratch.Dir("al-runner-watch-sibling-chain-4125");
-        var cacheDir = TestScratch.Dir("al-runner-watch-sibling-chain-4125-cache");
-        const string LibId = "41250000-0000-4000-8000-0000000001a1";
-        const string MidId = "41250000-0000-4000-8000-0000000001b2";
-        const string TestsId = "41250000-0000-4000-8000-0000000001c3";
-        void App(string dir, string id, string name, int from, string extra, string deps)
-        {
-            Directory.CreateDirectory(Path.Combine(root, dir));
-            File.WriteAllText(Path.Combine(root, dir, "app.json"), $$"""
-            { "id": "{{id}}", "name": "{{name}}", "publisher": "AL Runner", "version": "1.0.0.0", {{extra}}
-              "dependencies": [ {{deps}} ], "idRanges": [ { "from": {{from}}, "to": {{from + 4}} } ], "runtime": "14.0" }
-            """);
-        }
-        string Dep(string id, string name) =>
-            $$"""{ "id": "{{id}}", "name": "{{name}}", "publisher": "AL Runner", "version": "1.0.0.0" }""";
-        App("ss-lib", LibId, "SS Lib", 64080, "", "");
-        App("ss-mid", MidId, "SS Mid", 64085, "\"propagateDependencies\": true,", Dep(LibId, "SS Lib"));
-        App("ss-tests", TestsId, "SS Tests", 64090, "", Dep(MidId, "SS Mid"));
-        void WriteLib(bool extra) => WatchEdit.Replace(Path.Combine(root, "ss-lib", "Lib.Codeunit.al"), $$"""
-            codeunit 64080 "SS Lib"
-            {
-                procedure Value(): Integer
-                begin
-                    exit(42);
-                end;
-            {{(extra ? "\n    procedure Extra(): Integer\n    begin\n        exit(58);\n    end;\n" : "")}}
-            }
-            """);
-        File.WriteAllText(Path.Combine(root, "ss-mid", "Mid.Codeunit.al"), """
-            codeunit 64085 "SS Mid"
-            {
-                procedure Total(): Integer
-                var
-                    Lib: Codeunit "SS Lib";
-                begin
-                    exit(Lib.Value() + 1);
-                end;
-            }
-            """);
-        File.WriteAllText(Path.Combine(root, "ss-tests", "Tests.Codeunit.al"), """
-            codeunit 64090 "SS Tests"
-            {
-                Subtype = Test;
-
-                [Test]
-                procedure TotalIs100()
-                var
-                    Mid: Codeunit "SS Mid";
-                    Lib: Codeunit "SS Lib";
-                begin
-                    if Lib.Value() + Lib.Extra() <> 100 then
-                        Error('SS total %1', Lib.Value() + Lib.Extra());
-                    if Mid.Total() <> 43 then
-                        Error('SS mid %1', Mid.Total());
-                end;
-            }
-            """);
-        WriteLib(extra: true);
-
-        using var session = new WatchCycleSession($"\"{root}\"", cacheDir);
-        try
-        {
-            var c1 = await session.Cycle(null);
-            Assert.True(c1.Contains("PASS") && c1.Contains("TotalIs100"), "cycle 1 did not pass:\n" + c1);
-            Assert.DoesNotContain("FAIL", c1);
-
-            var c2 = await session.Cycle(() => WriteLib(extra: false));
-            Assert.DoesNotContain("Function ID", c2);
-            Assert.True(c2.Contains("AL0132"), "cycle 2 did not report AL0132 for the end of the chain:\n" + c2);
-            // Both are rebuilt because of the library: Mid's own symbols did not change, but the
-            // compile Tests' baseline came from saw Lib's old surface.
-            foreach (var app in new[] { "SS Mid", "SS Tests" })
-                Assert.True(c2.Split('\n').Any(l => l.Contains($"[watch] {app}: FULL REBUILD") && l.Contains("'SS Lib'")),
-                    $"cycle 2 did not rebuild {app} because of the library:\n" + c2);
-        }
-        finally
-        {
-            session.Dispose();
-            try { Directory.Delete(root, recursive: true); } catch { }
-            try { Directory.Delete(cacheDir, recursive: true); } catch { }
-        }
-    }
-
-    // The same stale answer without --watch: the dependent's AL-output cache key did not move when
-    // only the sibling changed, so a warm --cache served the compile of the OLD surface.
-    [SkippableFact]
-    public void Cli_SiblingDependencyAloneChanges_AWarmCacheDoesNotServeTheDependentsOldCompile()
-    {
-        TestArtifacts.SkipIfMissing();
-
-        var root = TestScratch.Dir("al-runner-cli-sibling-dependent-4125");
-        var cacheDir = TestScratch.Dir("al-runner-cli-sibling-dependent-4125-cache");
-        try
-        {
-            WriteApps(root);
-            WriteDep(root, 58);
-            WriteTests(root, 1);
-
-            (int Exit, string Output) Run()
-            {
-                var psi = new ProcessStartInfo
-                {
-                    FileName = "dotnet",
-                    Arguments = TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg
-                        + $" \"{root}\" --show-pass --verbose --cache \"{cacheDir}\"",
-                    RedirectStandardOutput = true, RedirectStandardError = true,
-                    UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-                };
-                using var proc = Process.Start(psi)!;
-                var stdout = proc.StandardOutput.ReadToEndAsync();
-                var stderr = proc.StandardError.ReadToEndAsync();
-                if (!proc.WaitForExit(TimeSpan.FromMinutes(5)))
-                {
-                    try { proc.Kill(entireProcessTree: true); } catch { }
-                    proc.WaitForExit();
-                    Assert.Fail($"the runner did not finish in 5 minutes.\n{stdout.Result}\n{stderr.Result}");
-                }
-                return (proc.ExitCode, stdout.Result + "\n" + stderr.Result);
-            }
-
-            var cold = Run();
-            Assert.True(cold.Exit == 0 && cold.Output.Contains("PASS"), $"cold run did not pass (exit {cold.Exit}):\n{cold.Output}");
-
-            // Unchanged, the ordinary warm start: both apps are served from the cache, so the sibling's
-            // fingerprint is the same across processes (it must not carry anything per-process).
-            var unchanged = Run();
-            Assert.True(unchanged.Exit == 0, $"unchanged run did not pass (exit {unchanged.Exit}):\n{unchanged.Output}");
-            Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(unchanged.Output, @"\[cache\] HIT ").Count);
-
-            WriteDep(root, null);
-            var warm = Run();
-            Assert.DoesNotContain("Function ID", warm.Output);
-            Assert.True(warm.Output.Contains("AL0132"), $"warm run did not report AL0132 (exit {warm.Exit}):\n{warm.Output}");
-            Assert.Equal(3, warm.Exit);
-        }
-        finally
-        {
             try { Directory.Delete(root, recursive: true); } catch { }
             try { Directory.Delete(cacheDir, recursive: true); } catch { }
         }

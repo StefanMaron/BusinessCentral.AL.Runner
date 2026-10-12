@@ -4161,6 +4161,7 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
             // that succeeds records what it was built against.
             var wholeModule = watchMode && incrementalOutput == null && dependencyTerms.Count > 0;
             if (wholeModule) siblingSurfaceMemory.Forget(appGroup.SuiteDir);
+            var radGenerationBefore = wholeModule ? emitter.RadBaselineGeneration(moduleName) : null;
             var emitTask = incrementalOutput != null
                 ? Task.FromResult(incrementalOutput)
                 : Task.Run(() => emitter.Emit(allPaths, moduleName, appGroup.SuiteDir, trackIncrementalBaseline: watchMode));
@@ -4177,8 +4178,12 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                 else
                 {
                     var emitOutput = emitTask.Result;
+                    // Recorded only if this compile also replaced the RAD baseline: Emit leaves the old one in
+                    // place when a --tdd package table extension was registered (#5430), and the memory says
+                    // what the baseline that is replayed was built against.
                     if (wholeModule && emitOutput.Diagnostics.Count == 0 && emitOutput.ExcludedObjects.Count == 0
-                        && emitOutput.Sources.Count > 0)
+                        && emitOutput.Sources.Count > 0
+                        && emitter.RadBaselineGeneration(moduleName) is { } radGenerationAfter && radGenerationAfter != radGenerationBefore)
                         siblingSurfaceMemory.Built(appGroup.SuiteDir, dependencyTerms);
                     sources = emitOutput.Sources;
                     emitManifestAppJsonPath = emitOutput.ManifestAppJsonPath;
