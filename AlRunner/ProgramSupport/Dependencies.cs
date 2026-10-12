@@ -689,7 +689,8 @@ internal static partial class ProgramSupport
         IReadOnlyList<string> alFolders,
         string moduleName,
         IReadOnlyList<string> ordered,
-        string? appRootDir = null)
+        string? appRootDir = null,
+        IReadOnlyList<string>? siblingTerms = null)
     {
         using var sha = System.Security.Cryptography.SHA256.Create();
         using var ms = new MemoryStream();
@@ -805,6 +806,13 @@ internal static partial class ProgramSupport
             WriteLine(visibility);
 
         foreach (var d in ordered) WriteLine($"dep:{d}");
+
+        // #4125: the compiled surface of each in-bundle sibling app this one compiles against. A
+        // sibling has no package, so `dep:` above never names it, and an edit to ONLY the sibling left
+        // this key unchanged: a warm cache served the dependent compiled against the old surface.
+        // Absent for an app with no sibling dependency, so those keys are exactly what they were.
+        if (siblingTerms != null)
+            foreach (var t in siblingTerms) WriteLine(t);
 
         // Enumerate every .al file in stable order, hash each. The key uses paths
         // relative to the common source root, not absolute paths, so invoking the

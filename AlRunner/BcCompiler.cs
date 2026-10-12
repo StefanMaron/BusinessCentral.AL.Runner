@@ -3082,10 +3082,16 @@ public sealed partial class BcCompiler
     public void EmitDepSymbolsIncremental(
         IEnumerable<string> alFolders, string moduleName,
         Guid appId, string publisher, Version version, string symbolsJsonPath,
-        string? appRootDir, out bool tookFastPath, out string fallbackReason)
+        string? appRootDir, out bool tookFastPath, out string fallbackReason,
+        string? forceFullReason = null)
     {
         var folders = (alFolders as IReadOnlyCollection<string>) ?? alFolders.ToList();
-        var incrementalOutput = TryEmitIncremental(folders, moduleName, appRootDir, out fallbackReason, out _);
+        // #4125: the delta compile reads only THIS module's files, so it cannot see that a module
+        // it compiles against moved. The caller that knows says so, and the whole module compiles.
+        BcEmitOutput? incrementalOutput = null;
+        fallbackReason = forceFullReason ?? "";
+        if (forceFullReason == null)
+            incrementalOutput = TryEmitIncremental(folders, moduleName, appRootDir, out fallbackReason, out _);
         if (incrementalOutput != null && _radBaselines.TryGetValue(moduleName, out var baseline))
         {
             tookFastPath = true;

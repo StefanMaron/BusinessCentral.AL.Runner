@@ -1327,10 +1327,10 @@ internal static partial class ProgramSupport
     /// table lives in the SAME symbols.json as the extension, so no cross-module link was
     /// needed. See #1686.
     /// </summary>
-    internal static void EmitSiblingSymbols(
+    internal static AlRunner.Infrastructure.SiblingSurfaces EmitSiblingSymbols(
         List<AlRunner.AppGroup> appGroups, string bundleAbs,
         IReadOnlyList<(AlRunner.AppManifest Manifest, string AppPath)> bundleResolvedDeps,
-        bool announcePath)
+        bool announcePath, AlRunner.Infrastructure.SiblingSurfaceMemory memory)
     {
         BcCompiler.SetSiblingSymbolsDir(null);
         // Not a dictionary: two suites in the same tree can (and in tests/runner-extras do)
@@ -1340,7 +1340,7 @@ internal static partial class ProgramSupport
             .SelectMany(g => g.DependsOn)
             .Where(presentIds.Contains)
             .ToHashSet();
-        if (targets.Count == 0) return;
+        if (targets.Count == 0) return AlRunner.Infrastructure.SiblingSurfaces.None;
 
         // Per (bundle, process), not per bundle leaf name — see
         // Infrastructure/SiblingSymbolsDirectory.cs (#2586). The recursive delete below is only
@@ -1357,7 +1357,7 @@ internal static partial class ProgramSupport
         catch (Exception ex)
         {
             Console.Error.WriteLine($"  [sibling-symbols] cannot prepare {dir}: {ex.Message}");
-            return;
+            return AlRunner.Infrastructure.SiblingSurfaces.None;
         }
 
         BcCompiler.SetSiblingSymbolsDir(dir);
@@ -1367,10 +1367,21 @@ internal static partial class ProgramSupport
         // Unlike the primary emit, this compile checks declaration diagnostics, so an unrelated
         // suite's fixture package would fail every sibling here. See ScopeSymbolBearingDepsOnly.
         using var depScope = BcCompiler.ScopeSymbolBearingDepsOnly();
+        // #4125: what each sibling's surface looked like to the apps compiled against it, and which
+        // moved since the previous pass. A sibling that depends on one that moved counts as moved:
+        // its own surface may re-export that dependency's types, and a dependent of it is then
+        // compiled against the changed thing too.
+        var groupsById = appGroups.Where(g => g.AppId != null)
+            .GroupBy(g => g.AppId!.Value).ToDictionary(x => x.Key, x => x.Last());
+        var fingerprints = new Dictionary<Guid, string>();
+        var moved = new HashSet<Guid>();
         foreach (var group in appGroups)
         {
             if (group.AppId == null || !targets.Contains(group.AppId.Value)) continue;
             var symbolsPath = Path.Combine(dir, $"{group.AppId:N}.symbols.json");
+            var depsSidecarPath = Path.Combine(dir, $"{group.AppId:N}.symbols.deps.json");
+            var fingerprint = AlRunner.Infrastructure.SiblingSurfaces.Unavailable;
+            var movedDependency = group.DependsOn.Where(moved.Contains).Select(d => groupsById[d].ModuleName).FirstOrDefault();
             try
             {
                 // #2672: the same reuse as RunLayeredPrePass/BuildSiblingSourceDeps (#2669). Keyed
@@ -1384,7 +1395,10 @@ internal static partial class ProgramSupport
                     GetDepSymbolCompiler(group.SuiteDir).EmitDepSymbolsIncremental(
                         group.Paths, group.ModuleName, group.AppId.Value,
                         group.Publisher ?? "AlRunner", version,
-                        symbolsPath, group.SuiteDir, out var tookFastPath, out var fallbackReason);
+                        symbolsPath, group.SuiteDir, out var tookFastPath, out var fallbackReason,
+                        forceFullReason: movedDependency == null ? null
+                            : $"its sibling dependency '{movedDependency}' changed its surface this cycle, " +
+                              "and the delta compile reads only this app's own files");
                     // --watch or --verbose only: a one-shot run has no baseline, so it would print
                     // "full compile (no incremental baseline yet ...)" for every sibling on every run.
                     if (announcePath)
@@ -1404,7 +1418,7 @@ internal static partial class ProgramSupport
                 // attaches downstream (AL0132 in the consuming app) even though the sibling's own
                 // symbols.json genuinely contains the TableExtension entry. See #1686.
                 DepsSidecarWriter.Write(
-                    Path.Combine(dir, $"{group.AppId:N}.symbols.deps.json"),
+                    depsSidecarPath,
                     group.Publisher ?? "AlRunner", group.ModuleName,
                     group.Version ?? new Version(1, 0, 0, 0), group.AppId.Value,
                     DepsSidecarWriter.BuildClosure(
@@ -1416,6 +1430,7 @@ internal static partial class ProgramSupport
                 // Re-index in place so the NEXT app in this loop — and every app group compiled
                 // below — sees it, without rebuilding the expensive shared reference loader.
                 BcCompiler.RefreshSiblingSymbols();
+                fingerprint = AlRunner.Infrastructure.SiblingSurfaces.Fingerprint(symbolsPath, depsSidecarPath);
             }
             catch (Exception ex)
             {
@@ -1423,6 +1438,10 @@ internal static partial class ProgramSupport
                     $"  [sibling-symbols] {group.ModuleName}: {ex.GetType().Name}: {ex.Message} — " +
                     "apps depending on it will fail to compile against it");
             }
+            var surfaceMoved = memory.Record(group.SuiteDir, group.AppId.Value, fingerprint);
+            fingerprints[group.AppId.Value] = fingerprint;
+            if (surfaceMoved || movedDependency != null) moved.Add(group.AppId.Value);
         }
+        return new AlRunner.Infrastructure.SiblingSurfaces(fingerprints, moved, groupsById);
     }
 }

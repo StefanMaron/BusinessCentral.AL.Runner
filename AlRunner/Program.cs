@@ -2536,6 +2536,8 @@ var basePackageCacheDirs = packageCacheDirs.ToList();
 // EDITED module was serving in between.
 var previousImplAppPaths = new Dictionary<Guid, string>();
 var changedImplAppIds = new HashSet<Guid>();
+// #4125: the same question for sibling apps INSIDE one bundle, which have no package to compare.
+var siblingSurfaceMemory = new AlRunner.Infrastructure.SiblingSurfaceMemory();
 
 // Dirs the COMPILE-time .app scanner may safely enumerate: everything except the
 // synthetic workspace dirs (whose source-only .apps would trip AL1023).
@@ -3654,9 +3656,10 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
         // topological order (a dep-of-a-dep is written before the app that needs it), and
         // chain them into the compiler. Only sibling-dependency TARGETS are compiled here —
         // this is an extra compile per app, and most bundles (the corpus: one app) have none.
+        AlRunner.Infrastructure.SiblingSurfaces siblingSurfaces;
         using (AlRunner.Infrastructure.PhaseLog.Stage("sibling-symbols"))
-            EmitSiblingSymbols(appGroups, bundleAbs, bundleResolvedDeps,
-                announcePath: watchMode || AlRunner.Log.Verbose);
+            siblingSurfaces = EmitSiblingSymbols(appGroups, bundleAbs, bundleResolvedDeps,
+                announcePath: watchMode || AlRunner.Log.Verbose, siblingSurfaceMemory);
 
         var loadedAssemblies = new List<Assembly>();
         // SetTestAssembly re-runs its full body (incl. NavAppResourcePatches.RegisterTestAssembly)
@@ -3846,7 +3849,8 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
             {
             using (AlRunner.Infrastructure.PhaseLog.AppStage("query-decl-probe"))
                 bundleDeclaresQuery = BcCompiler.BundleDeclaresQuery(allPaths);
-            cacheKey = ComputeAlCacheKey(allPaths, moduleName, ordered: depIds.Terms, appRootDir: appGroup.SuiteDir);
+            cacheKey = ComputeAlCacheKey(allPaths, moduleName, ordered: depIds.Terms, appRootDir: appGroup.SuiteDir,
+                siblingTerms: siblingSurfaces.CacheTerms(appGroup));
             cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
             sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
             querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
@@ -4095,6 +4099,9 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
             var changedDependency = changedImplAppIds.Count == 0
                 ? null
                 : DeclaredDependencyOn(appGroup.SuiteDir, changedImplAppIds);
+            // #4125: a sibling app in this same bundle is not a package, so the pre-pass above never
+            // sees it move; the symbols EmitSiblingSymbols just wrote are what this app compiles against.
+            changedDependency ??= siblingSurfaces.MovedDependencyOf(appGroup);
             if (watchMode && changedDependency != null && watchCycleIndex > 0)
             {
                 watchFullRebuildReasons.Add((moduleName, $"dependency '{changedDependency}' changed this cycle"));
