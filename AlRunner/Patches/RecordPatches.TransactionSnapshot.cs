@@ -320,14 +320,12 @@ public static partial class RecordPatches
     // of _txCommitPoint's "since the last real commit" one — hence the stack, and the
     // dual-write in NoteTransactionWrite above.
     //
-    // NOT verified against real BC: nested guarded runs (a guarded Codeunit.Run whose OnRun
-    // itself calls another guarded Codeunit.Run). PopTransactionWorldScope's commit==true
-    // branch forgets any OLDER snapshot an enclosing scope holds for a table this scope
-    // itself touched, so a LATER failure in the enclosing scope cannot undo the inner
-    // scope's already-committed write — reasoned from "a transaction-world commit is as
-    // durable as an explicit Commit()" (see NoteTransactionEnd below), not measured against
-    // a real BC service tier. This shape is not exercised by any known corpus or
-    // runner-extras test today.
+    // Nested guarded runs: an inner run that FAILS is rolled back on its own, rows and counters, before the outer run
+    // goes on (corpus 67840 AutoInc_GuardedRun_Nested*, #5527). NOT verified against real BC: an inner run that SUCCEEDS
+    // followed by an outer run that fails. PopTransactionWorldScope's commit==true branch forgets any OLDER snapshot an
+    // enclosing scope holds for a table this scope itself touched, so a LATER failure in the enclosing scope cannot undo
+    // the inner scope's already-committed write -- reasoned from "a transaction-world commit is as durable as an
+    // explicit Commit()" (see NoteTransactionEnd below), and the counter journal follows the rows.
     private static readonly Stack<Dictionary<(object Source, int TableId, int Token), BaselineTable>> _txScopeStack = new();
 
     /// <summary>

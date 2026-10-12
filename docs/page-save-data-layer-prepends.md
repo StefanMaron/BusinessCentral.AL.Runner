@@ -152,12 +152,30 @@ measured, with an `Insert` refused by `OnInsert` and caught by `asserterror` as 
 
 `DataProvider_TruncateAsync` (`HelperShims.cs`) therefore snapshots the table for the rollback and journals the counter
 (`RecordPatches.NoteIdentityRestart`) before it clears the store, for a stored table only, never a temporary record.
-`RollbackToCommitPoint` puts each journaled counter back and `MarkCommitPoint` forgets the journal. Not modelled, and
-unmeasured on BC: a rollback of a guarded `Codeunit.Run` scope does not consult the journal, so a guarded run that
-truncates, inserts and fails gets its rows back but not its counter, and the caller's next Insert can hit a duplicate
-key (#5527). The same clear is
+`RollbackToCommitPoint` puts each journaled counter back and `MarkCommitPoint` forgets the journal. The rows' clear is
 `ClearProviderInPlace`, the provider's own "no rows yet" state; the earlier in-place `Clear()` of each tree left a
 `FindSet` one row short of `Count()` in a test following a passing one (#5516).
+
+## A failed guarded Codeunit.Run rolls the counter back too (#5527)
+
+A guarded `Codeunit.Run` (`if Codeunit.Run(...) then`, or its result captured) that fails is rolled back as a whole,
+and a Truncate inside it comes back with it. Corpus 67840 `AutoInc_GuardedRun_*` (corpus PR 568; ten cloud legs):
+rows `1..3` committed, then a failing run that does `Truncate(true)`, `Truncate(false)` or `DeleteAll`, inserts and
+errors:
+
+| inside the failed run | the caller's next zero-key `Insert` |
+|---|---|
+| `Truncate(true)`, Insert, Error | `4`: the three rows are back and the counter stands where it did before the Truncate |
+| `Truncate(false)`, Insert, Error | `4` (the failed run's Insert had taken `4`) |
+| `DeleteAll`, Insert, Error; or Insert, Error | `5`: the value the failed run took is consumed |
+| the first row again, with row 3 deleted and committed before the run | `4`, not `3`: the counter, not the rows' highest key |
+| nested: an inner failing run truncated, the outer inserts and succeeds / fails | `5` either way: the outer's Insert took `4` after the inner restore |
+
+`PushTransactionWorldScope` therefore opens a counter journal beside the scope's row snapshots; a Truncate's
+`NoteIdentityRestart` enters the top-level journal and every open scope's. `PopTransactionWorldScope(restore: true)`
+puts the scope's counters back and drops the entries the scope created from the levels around it (no Truncate happened
+there any more), `restore: false` forgets the tables at every level, and `MarkExplicitCommitPoint` clears each scope's
+journal, all as the row snapshots are handled. Unmeasured: an inner run that succeeds and an outer run that then fails.
 
 ## The type of the counter (#5521)
 

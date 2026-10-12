@@ -45,6 +45,7 @@ public sealed class AutoIncrementIdentityRestartTests
     private const int ScopeAfterEarlierRestart = 1_900_000_408;
     private const int ScopeOnlyRestart = 1_900_000_409;
     private const int ScopeExplicitCommit = 1_900_000_410;
+    private const int ScopeTwoTruncates = 1_900_000_413;
     private const int NestedInnerRolledBack = 1_900_000_411;
 
     private void Ready()
@@ -217,6 +218,23 @@ public sealed class AutoIncrementIdentityRestartTests
         RecordPatches.PopTransactionWorldScope(restore: true);
 
         Assert.Equal(2, Take(ScopeExplicitCommit));
+    }
+
+    [SkippableFact]
+    public void GuardedScope_RolledBack_AfterTwoTruncates_PutsBackTheValueFromBeforeTheFirst()
+    {
+        Ready();
+        Raise(ScopeTwoTruncates, 5);
+        RecordPatches.PushTransactionWorldScope();
+        Truncate(ScopeTwoTruncates, 5);
+        Take(ScopeTwoTruncates);
+        Take(ScopeTwoTruncates);
+        Truncate(ScopeTwoTruncates, 2);                // a second Truncate(true), counter now 2
+        Assert.Equal(1, Take(ScopeTwoTruncates));
+
+        RecordPatches.PopTransactionWorldScope(restore: true);
+
+        Assert.Equal(6, Take(ScopeTwoTruncates));
     }
 
     [SkippableFact]
