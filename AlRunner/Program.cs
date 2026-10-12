@@ -3754,6 +3754,13 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
         Assembly? reusedAsm;
         try
         {
+            // #5520: the app's folder moved (--watch revisits it): not another bundle's copy, so no reuse.
+            if (appGroup.AppId is { } movedCheckId
+                && DependencyLoader.MovedSourcePath(movedCheckId, appGroup.SuiteDir) is { } movedFrom)
+                Console.Error.WriteLine(
+                    $"  [{rel}] {moduleName}: AppId {movedCheckId} was loaded earlier in this process from " +
+                    $"{movedFrom}, which no longer holds this app; compiling {appGroup.SuiteDir} afresh " +
+                    "instead of reusing that module (see issue #5520).");
             // Publisher/Version are non-null whenever AppId is: BuildAppGroups only ever
             // constructs an AppGroup with all three set together (from InProcessAppPackager.
             // ReadIdentity, which defaults an absent app.json field rather than leaving it
@@ -3762,13 +3769,6 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
             // asserts that invariant instead of silently masking a violation of it behind a
             // fallback that would disagree with AppLoader's own default (see IdentityMatches'
             // doc comment) — PR #1862 review.
-            // #5520: the app's folder moved (--watch revisits it): not another bundle's copy, so no reuse.
-            if (appGroup.AppId is { } movedCheckId
-                && DependencyLoader.MovedSourcePath(movedCheckId, appGroup.SuiteDir) is { } movedFrom)
-                Console.Error.WriteLine(
-                    $"  [{rel}] {moduleName}: AppId {movedCheckId} was loaded earlier in this process from " +
-                    $"{movedFrom}, which no longer holds this app; compiling {appGroup.SuiteDir} afresh " +
-                    "instead of reusing that module (see issue #5520).");
             reusedAsm = appGroup.AppId is { } reuseCheckId
                 ? DependencyLoader.TryGetByAppId(
                     reuseCheckId, appGroup.ModuleName, appGroup.Publisher!,
