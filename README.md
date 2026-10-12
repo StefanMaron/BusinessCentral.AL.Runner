@@ -153,6 +153,8 @@ al-runner <bundle-dir> --watch [--package-cache PATH ...] [--cache DIR]
 
 Stays resident with dependencies + BC patches loaded once, and re-runs the bundle **in-process** on every `.al` save (~seconds/save after a one-time cold first cycle).
 
+When the watched directory holds several apps, an edit that changes one app's public surface (a procedure removed or added, a signature changed) recompiles every app that depends on it, even if that app's own files are untouched, and says why on a `[watch] <app>: FULL REBUILD` line; a body-only edit leaves the dependents on the incremental path. Without that, the dependent would keep running its output from the old surface and fail at run time instead of reporting `AL0132` (#4125).
+
 Add `--affected` to rerun only the tests an edit can affect, with the same selection `--server` uses for `affectedOnly`; `--include-failing` also reruns every test that is still failing. See [docs/watch-affected.md](docs/watch-affected.md).
 
 On an interactive terminal `--watch` renders a **live, non-scrolling dashboard** that repaints in place on each cycle (like vitest / cargo-watch):

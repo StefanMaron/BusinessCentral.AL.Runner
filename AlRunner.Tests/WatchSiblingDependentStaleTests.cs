@@ -332,7 +332,7 @@ public class WatchSiblingDependentStaleTests
                 {
                     FileName = "dotnet",
                     Arguments = TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg
-                        + $" \"{root}\" --show-pass --cache \"{cacheDir}\"",
+                        + $" \"{root}\" --show-pass --verbose --cache \"{cacheDir}\"",
                     RedirectStandardOutput = true, RedirectStandardError = true,
                     UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
                 };
@@ -345,6 +345,12 @@ public class WatchSiblingDependentStaleTests
 
             var cold = Run();
             Assert.True(cold.Exit == 0 && cold.Output.Contains("PASS"), $"cold run did not pass (exit {cold.Exit}):\n{cold.Output}");
+
+            // Unchanged, the ordinary warm start: both apps are served from the cache, so the sibling's
+            // fingerprint is the same across processes (it must not carry anything per-process).
+            var unchanged = Run();
+            Assert.True(unchanged.Exit == 0, $"unchanged run did not pass (exit {unchanged.Exit}):\n{unchanged.Output}");
+            Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(unchanged.Output, @"\[cache\] HIT ").Count);
 
             WriteDep(root, null);
             var warm = Run();
