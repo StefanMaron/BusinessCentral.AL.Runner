@@ -889,12 +889,16 @@ public static partial class BcRuntime
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void WriteStorageFieldsOnInsert(Microsoft.Dynamics.Nav.Runtime.NavRecord self)
     {
-        bool entered;
-        try { entered = self != null && _insertFunnelEntered.Remove(self); }
-        catch { return; }
-        if (!entered) return;
+        if (!TryConsumeInsertFunnelMark(self)) return;
         AssignAutoIncrement(self);
         StampSystemFieldsOnInsert(self);
+    }
+
+    /// <summary>True once per <see cref="NoteInsertFunnel"/> call on <paramref name="self"/>.</summary>
+    internal static bool TryConsumeInsertFunnelMark(Microsoft.Dynamics.Nav.Runtime.NavRecord? self)
+    {
+        try { return self != null && _insertFunnelEntered.Remove(self); }
+        catch { return false; }
     }
 
     /// <summary>Prepended to RecordImplementation.ModifyRecordAsync on its parentRecord:
@@ -902,11 +906,15 @@ public static partial class BcRuntime
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void WriteStorageFieldsOnModify(Microsoft.Dynamics.Nav.Runtime.NavRecord self)
     {
-        bool entered;
-        try { entered = self != null && _modifyFunnelEntered.Remove(self); }
-        catch { return; }
-        if (!entered) return;
+        if (!TryConsumeModifyFunnelMark(self)) return;
         StampSystemFieldsOnModify(self);
+    }
+
+    /// <summary>True once per <see cref="NoteModifyFunnel"/> call on <paramref name="self"/>.</summary>
+    internal static bool TryConsumeModifyFunnelMark(Microsoft.Dynamics.Nav.Runtime.NavRecord? self)
+    {
+        try { return self != null && _modifyFunnelEntered.Remove(self); }
+        catch { return false; }
     }
 
     /// <summary>
