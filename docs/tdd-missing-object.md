@@ -29,7 +29,12 @@ Each test that reaches the object is annotated like any generated member (`gener
 `No Such Codeunit: procedure "Calc"(Arg1: Integer): Integer` for each procedure it calls. A test that only
 declares the variable, or passes it on, names the object alone. "Reaches" is the static call graph of
 `TddCallGraph` from the type reference, and for a variable declared outside any procedure (a global of the test
-codeunit) from every mention of its name in the object.
+codeunit) from every mention of its name in the object. A reference in the DECLARATION of another object (a table's field typed
+with a generated enum, a global of a non-test codeunit that no procedure mentions) reaches the object too (#5485): the declaring
+object does not compile without it, so every test that reaches the declaring object (declares a variable of its type, calls
+a procedure of it, raises an event it subscribes to) is annotated, followed through the type references to it by name
+(`TddGeneration.UseSitesOf`). Over-annotating is the safe direction. A test codeunit stays per procedure (its global reaches the tests
+that mention it, not its other tests), and an object property (`SourceTable`, `TableNo`) is not followed.
 
 ## A table (#5445)
 
@@ -163,6 +168,16 @@ namespace case needs a file with its own `namespace` line (the fixture's); a sib
 dependency is AL0185.
 
 ## Design points a later edit gets wrong
+
+- **Ids skip every module of the compile** (#5498). The first id of `idRanges` that no object of that type uses, among the compile's own
+  trees AND every module it reads (a package's, another source bundle's of the run): a generated codeunit, table, enum, stub codeunit,
+  tableextension or enumextension on an id a module already holds is AL0264, and the file it was appended to is dropped
+  (`TddGeneration.IdsAcrossModules`, which binds the compiler's `GetObjectSymbolsByKindAcrossModules` as required: a bind that
+  finds nothing refuses rather than choosing among no ids).
+- **A member whose home file the compile dropped is not reported as generated** (#5493). `TddGeneration.SettleGeneratedMembers` runs once the
+  compile has settled: a member generated into files of this compile (`TddGeneratedMember.HomeFiles`) is listed only if one of them is among
+  the trees the compile kept (none when nothing compiled), and a dropped one is taken out of the closing list, the annotations and what
+  `TddCrossBundle` kept for the bundles compiled after it. The run says `--tdd: not reported as generated: ...`.
 
 - **One object per name, so one file.** AL object names are unique, so the per-file stub of
   `tdd-precompiled.md` (distinct names) is impossible here. The object sits in the first file that names it;

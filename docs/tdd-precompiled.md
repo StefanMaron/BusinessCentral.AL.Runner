@@ -145,6 +145,12 @@ What differs from the procedure case, and what a later edit gets wrong:
   registers) again; the reason is printed (`FULL REBUILD ... generated a member or an object`). Same gate as an excluded object
   (`BcCompiler.Emit`). Not run: `--server` (it resets once per request, by reading).
 
+## Ids and dropped files
+
+The stub codeunit, the tableextension and the enumextension take the first id of the app's `idRanges` that no object of their type uses in
+any module the compile reads (#5498), and a stub, field or value written into a file the compile then drops is not reported as generated
+(#5493); see [`tdd-missing-object.md`](tdd-missing-object.md) § "Design points a later edit gets wrong".
+
 ## Not covered (reported FAILED as before)
 
 An overload of a package's procedure, a call through anything but a plain variable, a field that is only read, a table or
