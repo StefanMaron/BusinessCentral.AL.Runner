@@ -92,6 +92,78 @@ public class WatchSiblingDependentStaleTests
         """);
     }
 
+    /// <summary>A `--watch` process and its output. A cycle's text is read as "everything since the
+    /// quiet before the edit", after the output has been quiet again, never as a window closed by
+    /// the marker's index: the [watch] FULL REBUILD line goes to stderr and the closing marker to
+    /// stdout, and list order is pump order, not program order (#1843, #2653).</summary>
+    private sealed class WatchSession : IDisposable
+    {
+        private readonly List<CapturedLine> _lines = new();
+        private readonly Process _p;
+
+        public WatchSession(string bundle, string cacheDir)
+        {
+            _p = Process.Start(new ProcessStartInfo
+            {
+                FileName = "dotnet",
+                // The parent directory is the bundle, so the dependency is a sibling app group.
+                Arguments = TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg
+                    + $" \"{bundle}\" --watch --show-pass --cache \"{cacheDir}\"",
+                RedirectStandardOutput = true, RedirectStandardError = true,
+                UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
+            })!;
+            Pump(_p.StandardOutput, OutputStream.Stdout);
+            Pump(_p.StandardError, OutputStream.Stderr);
+        }
+
+        private void Pump(StreamReader r, OutputStream stream) => Task.Run(async () =>
+        {
+            string? l;
+            while ((l = await r.ReadLineAsync()) != null) lock (_lines) _lines.Add(new CapturedLine(stream, l));
+        });
+
+        private string DumpAll() { lock (_lines) return string.Join("\n", _lines.Select((l, i) => $"[{i}][{l.Stream}] {l.Text}")); }
+
+        private async Task WaitUntilQuiet()
+        {
+            int seen;
+            do
+            {
+                lock (_lines) seen = _lines.Count;
+                await Task.Delay(1500);
+                if (_p.HasExited) throw new TimeoutException($"watch exited early (exit={_p.ExitCode}).\n{DumpAll()}");
+            } while (_lines.Count != seen);
+        }
+
+        /// <summary>Runs <paramref name="edit"/> (nothing for the first cycle) and returns the text
+        /// of the cycle it started.</summary>
+        public async Task<string> Cycle(Action? edit)
+        {
+            int start;
+            lock (_lines) start = _lines.Count;
+            edit?.Invoke();
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(240);
+            while (true)
+            {
+                List<int> found;
+                lock (_lines)
+                    found = WatchOutputSlicing.FindStdoutMarkerIndices(_lines, WatchOutputSlicing.WaitingForSourceMarker, start);
+                if (found.Count > 0) break;
+                if (_p.HasExited) throw new TimeoutException($"watch exited early (exit={_p.ExitCode}).\n{DumpAll()}");
+                if (DateTime.UtcNow > deadline) throw new TimeoutException($"watch marker not seen.\n{DumpAll()}");
+                await Task.Delay(200);
+            }
+            await WaitUntilQuiet();
+            lock (_lines) return WatchOutputSlicing.MergedJoin(_lines, start, _lines.Count);
+        }
+
+        public void Dispose()
+        {
+            try { if (!_p.HasExited) _p.Kill(entireProcessTree: true); } catch { }
+            _p.Dispose();
+        }
+    }
+
     [SkippableFact]
     public async Task Watch_SiblingDependencyAloneChanges_TheUnchangedDependentIsRecompiledAgainstIt()
     {
@@ -103,70 +175,15 @@ public class WatchSiblingDependentStaleTests
         WriteDep(root, 58);
         WriteTests(root, 1);
 
-        var lines = new List<CapturedLine>();
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            // The parent directory is the bundle, so the dependency is a sibling app group.
-            Arguments = TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg
-                + $" \"{root}\" --watch --show-pass --cache \"{cacheDir}\"",
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        using var p = Process.Start(psi)!;
-        void Pump(StreamReader r, OutputStream stream) => Task.Run(async () =>
-        {
-            string? l;
-            while ((l = await r.ReadLineAsync()) != null) lock (lines) lines.Add(new CapturedLine(stream, l));
-        });
-        Pump(p.StandardOutput, OutputStream.Stdout);
-        Pump(p.StandardError, OutputStream.Stderr);
-
-        string DumpAll() { lock (lines) return string.Join("\n", lines.Select((l, i) => $"[{i}][{l.Stream}] {l.Text}")); }
-
-        // The [watch] FULL REBUILD line is written to stderr and the closing marker to stdout, and
-        // list order is pump order, not program order (#1843, #2653). So a cycle's text is read as
-        // "from where the quiet before the edit ended", after the output has been quiet again for a
-        // while, never as a window closed by the marker's index.
-        async Task WaitUntilQuiet()
-        {
-            int seen;
-            do
-            {
-                lock (lines) seen = lines.Count;
-                await Task.Delay(1500);
-                if (p.HasExited) throw new TimeoutException($"watch exited early (exit={p.ExitCode}).\n{DumpAll()}");
-            } while (lines.Count != seen);
-        }
-
-        async Task<string> Cycle(Action? edit)
-        {
-            int start;
-            lock (lines) start = lines.Count;
-            edit?.Invoke();
-            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(240);
-            while (true)
-            {
-                List<int> found;
-                lock (lines)
-                    found = WatchOutputSlicing.FindStdoutMarkerIndices(lines, WatchOutputSlicing.WaitingForSourceMarker, start);
-                if (found.Count > 0) break;
-                if (p.HasExited) throw new TimeoutException($"watch exited early (exit={p.ExitCode}).\n{DumpAll()}");
-                if (DateTime.UtcNow > deadline) throw new TimeoutException($"watch marker not seen.\n{DumpAll()}");
-                await Task.Delay(200);
-            }
-            await WaitUntilQuiet();
-            lock (lines) return WatchOutputSlicing.MergedJoin(lines, start, lines.Count);
-        }
-
+        using var session = new WatchSession(root, cacheDir);
         try
         {
-            var c1 = await Cycle(null);
+            var c1 = await session.Cycle(null);
             Assert.True(c1.Contains("PASS") && c1.Contains("AnswerMatches"), "cycle 1 did not pass:\n" + c1);
             Assert.DoesNotContain("FAIL", c1);
 
             // c2, the control: only the dependent changes, so its incremental baseline is still taken.
-            var c2 = await Cycle(() => WriteTests(root, 2));
+            var c2 = await session.Cycle(() => WriteTests(root, 2));
             Assert.True(c2.Contains("Marker_Edit2") && c2.Contains("PASS"), "cycle 2 did not run the edited test:\n" + c2);
             Assert.DoesNotContain("FAIL", c2);
             Assert.DoesNotContain(TestsRebuildLine, c2);
@@ -175,14 +192,14 @@ public class WatchSiblingDependentStaleTests
 
             // c3: the dependency loses Extra() and the dependent is not touched. BC rejects the
             // dependent at compile time; the run-time Function ID failure is the stale-output symptom.
-            var c3 = await Cycle(() => WriteDep(root, null));
+            var c3 = await session.Cycle(() => WriteDep(root, null));
             Assert.DoesNotContain("Function ID", c3);
             Assert.True(c3.Contains("AL0132"), "cycle 3 did not report AL0132 for the dependent:\n" + c3);
             Assert.True(c3.Contains(TestsRebuildLine) && c3.Contains("'WSI Sibling Dep'"),
                 "cycle 3 did not say the dependent was rebuilt because the dependency changed:\n" + c3);
 
             // c4: the procedure is back, the dependent is still untouched: it must compile and pass.
-            var c4 = await Cycle(() => WriteDep(root, 58));
+            var c4 = await session.Cycle(() => WriteDep(root, 58));
             Assert.DoesNotContain("AL0132", c4);
             Assert.DoesNotContain("FAIL", c4);
             Assert.True(c4.Contains("PASS") && c4.Contains("Marker_Edit2"), "cycle 4 did not pass again:\n" + c4);
@@ -190,7 +207,7 @@ public class WatchSiblingDependentStaleTests
 
             // c5: a body-only edit keeps the surface, so the dependent is NOT rebuilt but still runs
             // the dependency's new code.
-            var c5 = await Cycle(() => WriteDep(root, 59));
+            var c5 = await session.Cycle(() => WriteDep(root, 59));
             Assert.True(c5.Contains("WSI answered 101"), "cycle 5 did not run the edited dependency:\n" + c5);
             Assert.DoesNotContain(TestsRebuildLine, c5);
             Assert.True(c5.Contains(DepLine + "RAD incremental (fast path)"),
@@ -198,7 +215,97 @@ public class WatchSiblingDependentStaleTests
         }
         finally
         {
-            try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { }
+            session.Dispose();
+            try { Directory.Delete(root, recursive: true); } catch { }
+            try { Directory.Delete(cacheDir, recursive: true); } catch { }
+        }
+    }
+
+    // Lib <- Mid <- Tests. Tests declares Mid only, and Mid (which propagates its dependencies)
+    // never calls what Lib loses, so Mid's own symbols do not move: only the chain tells Tests that
+    // what Mid was compiled against did.
+    [SkippableFact]
+    public async Task Watch_ChainOfThree_ALibraryChangeReachesTheAppAtTheEndOfTheChain()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = TestScratch.Dir("al-runner-watch-sibling-chain-4125");
+        var cacheDir = TestScratch.Dir("al-runner-watch-sibling-chain-4125-cache");
+        const string LibId = "41250000-0000-4000-8000-0000000001a1";
+        const string MidId = "41250000-0000-4000-8000-0000000001b2";
+        const string TestsId = "41250000-0000-4000-8000-0000000001c3";
+        void App(string dir, string id, string name, int from, string extra, string deps)
+        {
+            Directory.CreateDirectory(Path.Combine(root, dir));
+            File.WriteAllText(Path.Combine(root, dir, "app.json"), $$"""
+            { "id": "{{id}}", "name": "{{name}}", "publisher": "AL Runner", "version": "1.0.0.0", {{extra}}
+              "dependencies": [ {{deps}} ], "idRanges": [ { "from": {{from}}, "to": {{from + 4}} } ], "runtime": "14.0" }
+            """);
+        }
+        string Dep(string id, string name) =>
+            $$"""{ "id": "{{id}}", "name": "{{name}}", "publisher": "AL Runner", "version": "1.0.0.0" }""";
+        App("ss-lib", LibId, "SS Lib", 64080, "", "");
+        App("ss-mid", MidId, "SS Mid", 64085, "\"propagateDependencies\": true,", Dep(LibId, "SS Lib"));
+        App("ss-tests", TestsId, "SS Tests", 64090, "", Dep(MidId, "SS Mid"));
+        void WriteLib(bool extra) => WatchEdit.Replace(Path.Combine(root, "ss-lib", "Lib.Codeunit.al"), $$"""
+            codeunit 64080 "SS Lib"
+            {
+                procedure Value(): Integer
+                begin
+                    exit(42);
+                end;
+            {{(extra ? "\n    procedure Extra(): Integer\n    begin\n        exit(58);\n    end;\n" : "")}}
+            }
+            """);
+        File.WriteAllText(Path.Combine(root, "ss-mid", "Mid.Codeunit.al"), """
+            codeunit 64085 "SS Mid"
+            {
+                procedure Total(): Integer
+                var
+                    Lib: Codeunit "SS Lib";
+                begin
+                    exit(Lib.Value() + 1);
+                end;
+            }
+            """);
+        File.WriteAllText(Path.Combine(root, "ss-tests", "Tests.Codeunit.al"), """
+            codeunit 64090 "SS Tests"
+            {
+                Subtype = Test;
+
+                [Test]
+                procedure TotalIs100()
+                var
+                    Mid: Codeunit "SS Mid";
+                    Lib: Codeunit "SS Lib";
+                begin
+                    if Lib.Value() + Lib.Extra() <> 100 then
+                        Error('SS total %1', Lib.Value() + Lib.Extra());
+                    if Mid.Total() <> 43 then
+                        Error('SS mid %1', Mid.Total());
+                end;
+            }
+            """);
+        WriteLib(extra: true);
+
+        using var session = new WatchSession(root, cacheDir);
+        try
+        {
+            var c1 = await session.Cycle(null);
+            Assert.True(c1.Contains("PASS") && c1.Contains("TotalIs100"), "cycle 1 did not pass:\n" + c1);
+            Assert.DoesNotContain("FAIL", c1);
+
+            var c2 = await session.Cycle(() => WriteLib(extra: false));
+            Assert.DoesNotContain("Function ID", c2);
+            Assert.True(c2.Contains("AL0132"), "cycle 2 did not report AL0132 for the end of the chain:\n" + c2);
+            Assert.True(c2.Contains("[watch] SS Mid: FULL REBUILD") && c2.Contains("'SS Lib'"),
+                "cycle 2 did not rebuild the middle of the chain because of the library:\n" + c2);
+            Assert.True(c2.Contains("[watch] SS Tests: FULL REBUILD") && c2.Contains("'SS Mid'"),
+                "cycle 2 did not rebuild the end of the chain because of the middle:\n" + c2);
+        }
+        finally
+        {
+            session.Dispose();
             try { Directory.Delete(root, recursive: true); } catch { }
             try { Directory.Delete(cacheDir, recursive: true); } catch { }
         }

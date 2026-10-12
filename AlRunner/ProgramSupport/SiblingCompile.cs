@@ -1395,10 +1395,7 @@ internal static partial class ProgramSupport
                     GetDepSymbolCompiler(group.SuiteDir).EmitDepSymbolsIncremental(
                         group.Paths, group.ModuleName, group.AppId.Value,
                         group.Publisher ?? "AlRunner", version,
-                        symbolsPath, group.SuiteDir, out var tookFastPath, out var fallbackReason,
-                        forceFullReason: movedDependency == null ? null
-                            : $"its sibling dependency '{movedDependency}' changed its surface this cycle, " +
-                              "and the delta compile reads only this app's own files");
+                        symbolsPath, group.SuiteDir, out var tookFastPath, out var fallbackReason);
                     // --watch or --verbose only: a one-shot run has no baseline, so it would print
                     // "full compile (no incremental baseline yet ...)" for every sibling on every run.
                     if (announcePath)

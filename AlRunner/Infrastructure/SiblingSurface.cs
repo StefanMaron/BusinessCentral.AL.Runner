@@ -8,6 +8,7 @@
 // surface change is. Two reuse decisions were blind to it: the AL-output cache key (own .al
 // bytes and package dependencies only) and the --watch incremental path (own .al files only).
 using System.Security.Cryptography;
+using System.Text.Json;
 
 namespace AlRunner.Infrastructure;
 
@@ -99,6 +100,12 @@ internal sealed class SiblingSurfaces
     /// SHA-256 over the symbols file and the dependency sidecar beside it, or
     /// <see cref="Unavailable"/> when the symbols file is missing or unreadable. A missing
     /// sidecar is not an error: it hashes as empty.
+    ///
+    /// <para>The symbols are hashed as a value, not as bytes: the incremental writer emits the
+    /// empty lists (<c>"Tables":[]</c>) the whole-module writer leaves out, so one unchanged
+    /// surface has two spellings depending on which path wrote it last. Empty and null properties
+    /// are dropped and property order is fixed; ARRAY order is kept, because a parameter list is
+    /// ordered.</para>
     /// </summary>
     internal static string Fingerprint(string symbolsFile, string sidecarFile)
     {
@@ -106,16 +113,60 @@ internal sealed class SiblingSurfaces
         {
             if (!File.Exists(symbolsFile)) return Unavailable;
             using var sha = SHA256.Create();
-            foreach (var f in new[] { symbolsFile, sidecarFile })
-            {
-                var bytes = File.Exists(f) ? File.ReadAllBytes(f) : Array.Empty<byte>();
-                sha.TransformBlock(BitConverter.GetBytes(bytes.Length), 0, 4, null, 0);
-                sha.TransformBlock(bytes, 0, bytes.Length, null, 0);
-            }
+            Absorb(sha, Canonical(File.ReadAllBytes(symbolsFile)));
+            Absorb(sha, File.Exists(sidecarFile) ? File.ReadAllBytes(sidecarFile) : Array.Empty<byte>());
             sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
             return Convert.ToHexString(sha.Hash!);
         }
         catch (IOException) { return Unavailable; }
         catch (UnauthorizedAccessException) { return Unavailable; }
     }
+
+    private static void Absorb(SHA256 sha, byte[] bytes)
+    {
+        sha.TransformBlock(BitConverter.GetBytes(bytes.Length), 0, 4, null, 0);
+        sha.TransformBlock(bytes, 0, bytes.Length, null, 0);
+    }
+
+    /// <summary>The value form of <paramref name="json"/>; the bytes themselves when it is not JSON,
+    /// which can only over-report a change.</summary>
+    private static byte[] Canonical(byte[] json)
+    {
+        try
+        {
+            var start = json.Length >= 3 && json[0] == 0xEF && json[1] == 0xBB && json[2] == 0xBF ? 3 : 0;
+            using var doc = JsonDocument.Parse(json.AsMemory(start));
+            using var ms = new MemoryStream();
+            using (var w = new Utf8JsonWriter(ms)) WriteCanonical(doc.RootElement, w);
+            return ms.ToArray();
+        }
+        catch (JsonException) { return json; }
+    }
+
+    private static void WriteCanonical(JsonElement e, Utf8JsonWriter w)
+    {
+        switch (e.ValueKind)
+        {
+            case JsonValueKind.Object:
+                w.WriteStartObject();
+                foreach (var p in e.EnumerateObject().Where(p => !IsAbsent(p.Value)).OrderBy(p => p.Name, StringComparer.Ordinal))
+                {
+                    w.WritePropertyName(p.Name);
+                    WriteCanonical(p.Value, w);
+                }
+                w.WriteEndObject();
+                break;
+            case JsonValueKind.Array:
+                w.WriteStartArray();
+                foreach (var item in e.EnumerateArray()) WriteCanonical(item, w);
+                w.WriteEndArray();
+                break;
+            default:
+                e.WriteTo(w);
+                break;
+        }
+    }
+
+    private static bool IsAbsent(JsonElement v) =>
+        v.ValueKind == JsonValueKind.Null || (v.ValueKind == JsonValueKind.Array && v.GetArrayLength() == 0);
 }
