@@ -107,7 +107,7 @@ them) on the funnel route exactly as before, now after the trigger.
 `OnBeforeInsertEvent` subscriber put into the AutoIncrement field reaches it as a non-zero value. It used to leave
 that alone and never move the counter, so the next zero-key `Insert` handed out a value the table already held.
 BC's AutoIncrement is a SQL IDENTITY column written with `IDENTITY_INSERT` for an explicit key, and the corpus
-(codeunit 67822, `AutoInc_*`, measured on the cloud legs 27.0, 28.0, 28.4 and 28.5) shows the effect: an explicit
+(codeunit 67822, `AutoInc_*`, measured on the cloud legs of corpus PR 566) shows the effect: an explicit
 key above the counter raises it, so the next zero-key `Insert` gets explicit + 1; a key at or below the counter,
 a negative key, a refused duplicate and a `DeleteAll` leave it alone. The helper now does
 `counter = max(counter, explicit key)` (`RaiseAutoIncrementCounterTo`), seeding a counter that has not started from
