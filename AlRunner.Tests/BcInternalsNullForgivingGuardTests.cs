@@ -355,7 +355,11 @@ public sealed class BcInternalsNullForgivingGuardTests
         //
         // 136 -> 137 for NCLMetaTable.TableCaptionSafe in RecordPatches.AutoIncrementRename.cs (#5517), a
         // BcShape.Property: a silent null would leave the table name out of the AutoIncrement-field error.
-        Assert.Equal(137, converted);
+        //
+        // 137 -> 136 (#3523): NCLMetaQueryColumn.ColumnIndex in the deleted ComputeJoinColumnSlotMap
+        // was a BcShape.Property. DELETED with the second slot-allocation algorithm, not unconverted:
+        // the filter pass now reads the slot JoinExecutor's plan gave the column.
+        Assert.Equal(136, converted);
     }
 
     /// <summary>

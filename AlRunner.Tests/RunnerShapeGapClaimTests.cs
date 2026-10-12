@@ -391,7 +391,13 @@ public sealed class RunnerShapeGapClaimTests
         // catch, neither of which was a RunnerShapeGap refusal.
         // 23 -> 24 (#5133): RecordPatches.QueryProjection.BuildQueryPositionPredicate, refusing a
         // re-read positioned on an aggregated column, WITH its Sites entry above — a new surface.
-        Assert.Equal(24, total);
+        // 24 -> 23 (#3523): ComputeJoinColumnSlotMap's copy of `query-join-synthesized-subquery`
+        // was DELETED with the second slot-allocation algorithm, not corrected. The surface keeps
+        // its site in JoinExecutor.BuildJoinProjectionPlan (routed through the same factory,
+        // TheIsolatedJoinExecutor_RoutesItsRefusalsThroughTheSameFactory), and that site runs
+        // first: Execute builds its plan before ApplyJoinRuntimeFilters ever ran, so the copy
+        // could not be the one that fired.
+        Assert.Equal(23, total);
     }
 
     [Fact]
