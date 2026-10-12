@@ -265,20 +265,43 @@ public static partial class TddGeneration
         return name.All(c => char.IsLetterOrDigit(c) || c == '_');
     }
 
-    /// <summary>Where the code reaches the object from: the type reference itself, and, for a variable declared
-    /// outside any procedure (a global of the test codeunit), every mention of its name in the same object.</summary>
+    /// <summary>Where the code reaches the object from: the type reference itself; for a variable declared outside any procedure (a global of the
+    /// test codeunit), every mention of its name in the same object; and (#5485) for a reference that sits in the DECLARATION of an object (a table's
+    /// field typed with it, a codeunit's global) every procedure and trigger of that object plus, followed the same way, every type reference to that object
+    /// in the trees (a test codeunit excepted: its tests are reached by mention). The declaring object does not compile without the generated one, so whatever reaches the declaring object reaches it too. Over-approximates
+    /// by name, never by kind (a table and a codeunit of one name both count), and follows no object property (<c>SourceTable</c>, <c>TableNo</c>).</summary>
     private static IEnumerable<(string, int)> UseSitesOf(NavSyntax.SyntaxTree[] trees, int treeIdx, NavCA.SyntaxNode node)
+        => UseSitesOf(trees, treeIdx, node, new HashSet<(int, int)>());
+
+    private static IEnumerable<(string, int)> UseSitesOf(NavSyntax.SyntaxTree[] trees, int treeIdx, NavCA.SyntaxNode node, HashSet<(int, int)> declaring)
     {
         var file = trees[treeIdx].FilePath;
         yield return (file, node.SpanStart);
         if (node.Ancestors().Any(a => a is NavSyntax.MethodOrTriggerDeclarationSyntax)) yield break;
-        var declaration = node.Ancestors().OfType<NavSyntax.VariableDeclarationSyntax>().FirstOrDefault();
         var obj = node.Ancestors().OfType<NavSyntax.ObjectSyntax>().FirstOrDefault();
-        if (declaration == null || obj == null) yield break;
-        var variable = Unquote(declaration.Name.ToString().Trim());
-        foreach (var id in obj.DescendantNodes().OfType<NavSyntax.IdentifierNameSyntax>())
-            if (string.Equals(Unquote(id.ToString().Trim()), variable, StringComparison.OrdinalIgnoreCase)
-                && id.Ancestors().Any(a => a is NavSyntax.MethodOrTriggerDeclarationSyntax))
-                yield return (file, id.SpanStart);
+        if (obj == null) yield break;
+        var declaration = node.Ancestors().OfType<NavSyntax.VariableDeclarationSyntax>().FirstOrDefault();
+        if (declaration != null)
+        {
+            var variable = Unquote(declaration.Name.ToString().Trim());
+            foreach (var id in obj.DescendantNodes().OfType<NavSyntax.IdentifierNameSyntax>())
+                if (string.Equals(Unquote(id.ToString().Trim()), variable, StringComparison.OrdinalIgnoreCase)
+                    && id.Ancestors().Any(a => a is NavSyntax.MethodOrTriggerDeclarationSyntax))
+                    yield return (file, id.SpanStart);
+        }
+        // A test codeunit stays per procedure: its global reaches the tests that mention it (the loop above), not the codeunit's other tests.
+        if (obj.DescendantNodes().OfType<NavSyntax.MethodDeclarationSyntax>().Any(m =>
+                m.Attributes.Any(a => string.Equals(Unquote(a.Name.ToString().Trim()), "Test", StringComparison.OrdinalIgnoreCase)))) yield break;
+        if (!declaring.Add((treeIdx, obj.SpanStart))) yield break;
+        foreach (var method in obj.DescendantNodes().OfType<NavSyntax.MethodOrTriggerDeclarationSyntax>())
+            yield return (file, method.SpanStart);
+        var name = ObjectNameOf(obj);
+        for (var i = 0; i < trees.Length; i++)
+            foreach (var reference in trees[i].GetRoot().DescendantNodes().Where(n => n is NavSyntax.SubtypedDataTypeSyntax or NavSyntax.EnumDataTypeSyntax))
+            {
+                var written = reference is NavSyntax.SubtypedDataTypeSyntax subtyped ? subtyped.Subtype.ToString() : ((NavSyntax.EnumDataTypeSyntax)reference).EnumTypeName.ToString();
+                if (!string.Equals(Unquote(written.Trim()), name, StringComparison.OrdinalIgnoreCase)) continue;
+                foreach (var site in UseSitesOf(trees, i, reference, declaring)) yield return site;
+            }
     }
 }
