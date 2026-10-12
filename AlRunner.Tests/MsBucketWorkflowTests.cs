@@ -536,7 +536,7 @@ public sealed class MsBucketWorkflowTests
         {
             Assert.False(header.Contains(stale, StringComparison.OrdinalIgnoreCase),
                 $"ms-bucket-nightly.yml still says \"{stale}\". #2780 is closed as completed and "
-                + ".github/backup-reader.json pins reader v0.1.2, which reads BC 28.2, 28.3 and 28.4 — so this "
+                + ".github/backup-reader.json pins a reader that reads BC 28.2, 28.3 and 28.4 — so this "
                 + "presents finished work as pending. Update the header rather than the test.");
         }
 
@@ -545,6 +545,30 @@ public sealed class MsBucketWorkflowTests
         // is the property that makes a scheduled job people actually read.
         Assert.Contains("Known blocker", header, StringComparison.Ordinal);
         Assert.Contains("does NOT recognise", header, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// #3433: the reader tag is pinned once, in .github/backup-reader.json. The nightly header
+    /// said ".github/backup-reader.json pins reader v0.1.2" after the pin had moved on, which
+    /// is the #3433 shape again in prose: a second copy of the tag that nothing updates. The
+    /// "pins reader vX" form is refused whether or not X is the pinned tag today (the pin is
+    /// read only so the failure message can say what it holds), because a correct restatement
+    /// is stale on the next bump.
+    /// </summary>
+    [Fact]
+    public void NightlyHeader_DoesNotStateWhichReaderTagTheBackupReaderPinHolds()
+    {
+        var header = Read(Path.Combine("workflows", Nightly));
+        var pinnedTag = BackupReaderPin.Parse(Read("backup-reader.json")).Tag;
+
+        // A comment wraps, so the match crosses "\n# " between the words.
+        var restated = System.Text.RegularExpressions.Regex.Matches(
+            header, @"backup-reader\.json\s+pins\s+(?:#\s*)?(?:the\s+)?reader\s+(v\d+\.\d+\.\d+)");
+        Assert.True(restated.Count == 0,
+            "ms-bucket-nightly.yml states which tag .github/backup-reader.json pins ("
+            + string.Join(", ", restated.Select(m => m.Groups[1].Value))
+            + $"; the pin holds {pinnedTag}). A tag in prose is a second copy of the pin and goes "
+            + "stale on the next bump; name the file and what it does, never the tag it holds today.");
     }
 
     /// <summary>
