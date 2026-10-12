@@ -114,9 +114,9 @@ a negative key, a refused duplicate and a `DeleteAll` leave it alone. The helper
 the table's stored high-water mark first. An explicit key refused by an error in `OnInsert` never reaches the
 helper, and one refused on a unique secondary key has raised the counter by then, both as in BC.
 
-Known differences are tracked, not fixed here: Rename of an AutoIncrement key is not refused (#5517), a refused
-zero-key Insert keeps the taken key on the record (#5518), and the counter is not rolled back with an
-`asserterror` rollback (#5519).
+Known differences are tracked, not fixed here: Rename of an AutoIncrement key is not refused (#5517) and a refused
+zero-key Insert keeps the taken key on the record (#5518). The counter is not rolled back by an `asserterror`, in BC
+or here.
 
 ## What a page DELETE does was not measured
 
