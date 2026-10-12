@@ -12,7 +12,7 @@ namespace AlRunner.Tests;
 /// query with a static <c>ColumnFilter</c> on any column -- aggregated or plain -- silently
 /// ignored it. #2444 mirrors #2418's approach inside <c>ApplyJoinRuntimeFilters</c>: it now
 /// reads the static filters via <c>GetStaticColumnFilters</c>, resolves each filtered column to
-/// its join-projection slot via <c>ComputeJoinColumnSlotMap</c>, and evaluates it against the
+/// its join-projection slot via the executor's own slot map (#3523), and evaluates it against the
 /// already-projected join row -- skipping any column a runtime filter already targets on that
 /// request (a runtime filter replaces the static one, not combines with it, per #2418's
 /// verified real-BC behavior).
@@ -26,7 +26,7 @@ namespace AlRunner.Tests;
 /// bump is a follow-up once that corpus PR merges, per .claude/rules/al-language-submodule.md.
 /// This test exists so a regression in OUR OWN join-path ColumnFilter routing
 /// (RecordPatches.QueryProjection.ApplyJoinRuntimeFilters / GetStaticColumnFilters /
-/// ComputeJoinColumnSlotMap) fails loudly here without needing a full corpus run to notice.
+/// the executor's slot map) fails loudly here without needing a full corpus run to notice.
 ///
 /// Both scenarios are deliberately designed so a naive (wrong/no-op) implementation would
 /// produce a DIFFERENT, distinguishable answer:

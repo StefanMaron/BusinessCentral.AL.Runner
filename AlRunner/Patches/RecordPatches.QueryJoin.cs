@@ -220,7 +220,8 @@ public static partial class RecordPatches
     /// AlRunner.QueryJoin executor. Materialised eagerly inside the executor so any failure
     /// surfaces as a managed exception here, never a native crash mid-enumeration.
     /// </summary>
-    private static IEnumerable ExecuteJoinQuery(object nclMetaQuery, object? flowFiltersAndMarks, object request)
+    private static IEnumerable ExecuteJoinQuery(
+        object nclMetaQuery, object? flowFiltersAndMarks, object request, out Dictionary<object, int> columnSlots)
     {
         EnsureJoinExecutorLoaded();
         var queryDef = BcShape.Property(
@@ -233,11 +234,14 @@ public static partial class RecordPatches
                 "query-join-no-source",
                 "internal: the join's DataAccessSource was not stashed");
 
+        // Filled by the executor with the slot each query column got in the rows it returns.
+        var slots = new Dictionary<object, int>();
+        columnSlots = slots;
         try
         {
             return (IEnumerable)_mExecute!.Invoke(null,
                 new[] { _joinCtx, nclMetaQuery, dataAccessSource, flowFiltersAndMarks,
-                        BuildJoinWhereFilters(nclMetaQuery, request) })!;
+                        BuildJoinWhereFilters(nclMetaQuery, request), slots })!;
         }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {

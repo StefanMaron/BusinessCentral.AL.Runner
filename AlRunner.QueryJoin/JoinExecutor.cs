@@ -199,11 +199,14 @@ public static class JoinExecutor
     /// managed exception at the call site, never a native crash mid-enumeration.
     /// <paramref name="whereFilters"/> pairs a non-aggregated query column (as object) with a
     /// predicate over that column's value; every joined row must satisfy all of them BEFORE
-    /// grouping (#5145).
+    /// grouping (#5145). <paramref name="columnSlots"/> is filled with every query column
+    /// (object, BC-neutral) and the result slot the projection plan gave it, filter-only
+    /// columns included: the one layout the post-join filter pass reads (#3523).
     /// </summary>
     public static List<object> Execute(
         JoinContext ctx, object nclMetaQuery, object dataAccessSource, object? flowFiltersAndMarks,
-        IReadOnlyList<KeyValuePair<object, Func<object?, bool>>> whereFilters)
+        IReadOnlyList<KeyValuePair<object, Func<object?, bool>>> whereFilters,
+        Dictionary<object, int> columnSlots)
     {
         Log(ctx, "ExecuteJoinQuery start");
         EnsureReflection(nclMetaQuery);
@@ -272,6 +275,9 @@ public static class JoinExecutor
 
         // 3. Project each combo into the query result slots.
         var plan = BuildJoinProjectionPlan(ctx, queryDef);
+        // The slot every query column occupies in the rows built below, handed to the caller's
+        // post-join filter pass so it reads the layout that produced them (#3523).
+        foreach (var col in plan.Columns) columnSlots[col.ColumnObj] = col.QuerySlot;
         combos = ApplyWhereFilters(ctx, plan, combos, whereFilters, flowFiltersAndMarks);
         bool hasAggregate = plan.Columns.Any(c => c.Aggregation != "None");
         List<object?[]> projected;
@@ -760,10 +766,8 @@ public static class JoinExecutor
         // Pass 2: filter-only columns (referenced only via `filter(...)`, never `column(...)`,
         // and — Query 777's own shape — join-key fields with no declared column at all) get NO
         // real ColumnIndex slot from BC, so mint dedicated EXTRA slots past every projected
-        // column, in the SAME deterministic (dataitem, then declaration) order that
-        // RecordPatches.QueryProjection.ApplyJoinRuntimeFilters recomputes independently (the two
-        // live in separate assemblies and cannot share a single source of truth for this map —
-        // see the comment there). This is what lets a runtime SetRange/SetFilter on a
+        // column, in (dataitem, then declaration) order. Execute hands this layout to the post-join
+        // filter pass through columnSlots, so it is the only copy (#3523). This is what lets a runtime SetRange/SetFilter on a
         // non-projected column (e.g. Query 777's "User Security ID") be evaluated post-join
         // instead of either aliasing onto an unrelated real column's slot (the original bug —
         // NavNCLInvalidComparisonException comparing the filter's NavGuid against whatever

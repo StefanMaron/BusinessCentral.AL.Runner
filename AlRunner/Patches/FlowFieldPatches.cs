@@ -1698,8 +1698,7 @@ public static class FlowFieldPatches
     // internal (not private): RecordPatches.QueryProjection.cs's Min/Max query-column
     // aggregation (issue #2137) reuses this same factory for its own "no source row in the
     // group" case — NCLMetaQueryColumn is also an INavValueMetadata, so the exact same call
-    // works unchanged. Kept here rather than duplicated, per the sister-drift concern noted
-    // elsewhere in this codebase (ComputeJoinColumnSlotMap's comment).
+    // works unchanged. Kept here rather than duplicated, so the two cannot drift.
     private static MethodInfo? _mFlowFieldGetDefaultNavValue;
     internal static NavValue? TypedDefaultForField(object fieldObj)
     {

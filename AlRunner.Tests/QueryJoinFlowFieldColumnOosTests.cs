@@ -8,8 +8,8 @@ namespace AlRunner.Tests;
 /// once #2295 unblocked the query's own metadata construction. #2300 fixed the
 /// single-real-dataitem FlowField case (via NCLMetaQueryDataItem.SourceFlowField and
 /// FlowFieldPatches.CalcOneFlowFieldForQueryRow); #2423 extends the SAME mechanism across the
-/// join projection path (AlRunner.QueryJoin.JoinExecutor.BuildJoinProjectionPlan and its
-/// al-runner-side mirror RecordPatches.QueryProjection.ComputeJoinColumnSlotMap): the
+/// join projection path (AlRunner.QueryJoin.JoinExecutor.BuildJoinProjectionPlan, whose slot map
+/// the al-runner-side filter pass now consumes directly, #3523): the
 /// FlowField sub-dataitem's column is now routed through ctx.CalcFlowFieldForRow against the
 /// resolved OWNER real dataitem's row in the join combo, instead of a generic TableSlot read
 /// against the FlowField's SOURCE table (a table the join never reads a row buffer for at all).
