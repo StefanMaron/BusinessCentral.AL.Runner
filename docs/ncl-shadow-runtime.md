@@ -122,6 +122,38 @@ the tool's, and only then — leaving out any file byte-identical to a same-fram
 (Mono.Cecil, Spectre.Console), which the mirror reaches through the install anyway. Pinned by
 `NclShadowRuntimeTests.MirrorInstallDirectory_WithEntrySource_AVariantsOwnDependencyBeatsTheInstallsCopy`.
 
+## A variant's own `runtimes/` assets, and what keys its shadow dir (#5461)
+
+The same gap one level down: a **directory** both the install and the variant carry was linked from the
+install alone. BC 29's `al-runner.deps.json` names its win-rid assets under `runtimes/win/lib/net10.0/`
+(`System.Diagnostics.EventLog.dll` and its `.Messages.dll`); the install ships `runtimes/win/lib/net8.0/` only,
+and the pack step staged `*.dll` at the variant's top level, so the rid-specific asset was in neither place.
+On Windows hostfxr prefers the rid asset over the root `lib/net10.0` copy, found nothing, and BC's own .NET
+Framework build of `System.Diagnostics.EventLog.dll` (the artifact's copy is 37,712 bytes, the size of the
+package's `lib/net462` file; `AlRunner.csproj` has the history) was left to serve the bind, which
+`SuppressEventLogWriter` reaches first: `TypeLoadException` for `EventLogEntryType`, on every run, before the first test. Linux has no
+win rid, so every Linux leg passed.
+
+Three changes, each pinned:
+
+- **Staging** (`bc-tests.yml` `pack`, `publish.yml`): a variant on another framework than the tool also stages its
+  `runtimes/` tree. **A check on the packed nupkg**, `.github/scripts/check_variant_assets.py` (guard:
+  `test_check_variant_assets.py`), fails when an asset the variant's own `al-runner.deps.json` names is in neither
+  the variant folder nor the install folder; it exits 3 when it measured nothing.
+- **Mirror**: `MirrorMergedDirectory` mirrors a directory both carry as the union of the two, the variant's
+  file winning a name clash, as a real directory holding links (a link to the install's would send a write
+  into the install). A directory only the variant carries is linked too; one only the install carries stays one
+  link. Pinned by `MirrorInstallDirectory_WithEntrySource_ASharedDirectoryIsTheUnionOfBoth` and its sibling.
+- **Key**: a variant's shadow dir is named by `VariantShadowKey`, which now includes a hash of the variant
+  folder's contents. Before, it was the variant's name and the install's path, so a local reinstall of one
+  package version reused a shadow built from the previous contents (measured: the staging and mirror fix in
+  place, the old shadow at the same path still died). Pinned by
+  `VariantShadowKey_IsStableForSameContents_AndMovesWhenTheVariantChanges`.
+
+**Reproducing the Windows failure on Linux:** `DOTNET_RUNTIME_ID=win` makes hostfxr resolve the win-rid assets,
+and the packaged BC 29 variant then dies with the identical `TypeLoadException` (and exits 0 once the three
+changes are in). It does not exercise Windows-only code beyond asset resolution; use it for this class only.
+
 ## Publishing Ncl.dll (#5018, #5019)
 
 `NclCecilRewrite.RewriteInPlace` runs at every start and publishes the Cecil-rewritten Ncl.dll

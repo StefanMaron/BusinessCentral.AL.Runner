@@ -1617,6 +1617,12 @@ jobs:
                 if [ -f "./variant-ref/$(basename "$f")" ] && cmp -s "$f" "./variant-ref/$(basename "$f")"; then continue; fi
                 cp -n "$f" "./variants-staging/$full/"
               done
+              # Its rid-specific assets keep their relative path (runtimes/win/lib/net10.0/...), which the
+              # tool's own runtimes/ (net8.0 assets) does not carry. Missing, the Windows engine died at
+              # startup (#5461); .github/scripts/check_variant_assets.py asserts it on the packed nupkg.
+              if [ -d "./variant-build-$full/runtimes" ]; then
+                cp -r "./variant-build-$full/runtimes" "./variants-staging/$full/runtimes"
+              fi
             else
               mkdir -p ./variant-ref
               for f in "./variant-build-$full"/*.dll; do cp -n "$f" ./variant-ref/; done
@@ -1672,6 +1678,13 @@ jobs:
         # NclShadowRuntime.cs's class doc for how Ncl.dll itself is now resolved from the
         # user's own BC artifact cache at runtime instead of being shipped.
         run: .github/scripts/check-nupkg-contents.sh ./nupkg/*.nupkg
+
+      - name: Assert every packed engine variant carries the assets its own deps.json names (#5461)
+        # The BC 29 variant's deps.json named runtimes/win/lib/net10.0/System.Diagnostics.EventLog.dll,
+        # which the staging step above did not copy and the install does not carry. Nothing in this job
+        # (or any Linux leg) loads a win-rid asset, so the package passed every check and the engine
+        # died at startup on Windows. This reads the PACKED nupkg, so it measures what ships.
+        run: python3 .github/scripts/check_variant_assets.py ./nupkg/*.nupkg
 
       - name: Assert every BC-minor engine variant made it into the package
         # A staging-step failure that got silently skipped (e.g. a bad glob) would

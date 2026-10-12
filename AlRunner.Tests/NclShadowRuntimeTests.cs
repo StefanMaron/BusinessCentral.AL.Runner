@@ -459,4 +459,118 @@ public sealed class NclShadowRuntimeTests
             Directory.Delete(shadowDir, recursive: true);
         }
     }
+    private static void WriteAt(string root, string rel, params byte[] bytes)
+    {
+        var path = Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, bytes);
+    }
+
+    /// <summary>A directory the install and the variant both carry is mirrored as the union of the two (#5461).
+    /// The BC 29 variant's deps.json names <c>runtimes/win/lib/net10.0/...</c>, the install ships only
+    /// <c>runtimes/win/lib/net8.0/...</c>; mirroring the install's <c>runtimes</c> as one link left the variant's
+    /// own asset unreachable and BC 29 died on Windows with a TypeLoadException. Three things must hold together:
+    /// the variant's file is reachable, the install's file still is, and the directory is a real one — a link to the
+    /// install's would let a later write into the shadow land in the install.</summary>
+    [Fact]
+    public void MirrorInstallDirectory_WithEntrySource_ASharedDirectoryIsTheUnionOfBoth()
+    {
+        var origDir = NewTempDir("mirror-union-orig");
+        var entryDir = NewTempDir("mirror-union-entry");
+        var shadowDir = NewTempDir("mirror-union-shadow");
+        try
+        {
+            WriteAt(origDir, "al-runner.dll", 1);
+            WriteAt(origDir, "runtimes/win/lib/net8.0/EventLog.dll", 8);
+            WriteAt(origDir, "runtimes/win/lib/net8.0/Messages.dll", 9);
+            WriteAt(origDir, "runtimes/browser/lib/net8.0/Encodings.dll", 6);
+            WriteAt(entryDir, "al-runner.dll", 2);
+            WriteAt(entryDir, "runtimes/win/lib/net10.0/EventLog.dll", 10);
+            WriteAt(entryDir, "runtimes/win/lib/net8.0/Messages.dll", 99);
+
+            NclShadowRuntime.MirrorInstallDirectory(origDir, shadowDir, entryDir);
+
+            var runtimes = Path.Combine(shadowDir, "runtimes");
+            Assert.False(IsSymlink(runtimes));
+            // The variant's own asset.
+            Assert.Equal(new byte[] { 10 }, File.ReadAllBytes(Path.Combine(runtimes, "win", "lib", "net10.0", "EventLog.dll")));
+            // The install's, which the variant does not carry — still there, still a link into the install.
+            var installOnly = Path.Combine(runtimes, "win", "lib", "net8.0", "EventLog.dll");
+            Assert.Equal(new byte[] { 8 }, File.ReadAllBytes(installOnly));
+            Assert.True(IsSymlink(installOnly));
+            Assert.Equal(new byte[] { 6 }, File.ReadAllBytes(Path.Combine(runtimes, "browser", "lib", "net8.0", "Encodings.dll")));
+            // A name both carry resolves to the variant's, the same rule the top level follows.
+            Assert.Equal(new byte[] { 99 }, File.ReadAllBytes(Path.Combine(runtimes, "win", "lib", "net8.0", "Messages.dll")));
+            // And nothing was written through into the install.
+            Assert.False(File.Exists(Path.Combine(origDir, "runtimes", "win", "lib", "net10.0", "EventLog.dll")));
+            Assert.Equal(new byte[] { 9 }, File.ReadAllBytes(Path.Combine(origDir, "runtimes", "win", "lib", "net8.0", "Messages.dll")));
+        }
+        finally
+        {
+            Directory.Delete(origDir, recursive: true);
+            Directory.Delete(entryDir, recursive: true);
+            Directory.Delete(shadowDir, recursive: true);
+        }
+    }
+
+    /// <summary>The other side of the union: a directory only the variant ships is mirrored too, and a
+    /// directory the variant does NOT carry stays one link to the install — merging must not turn every
+    /// directory into a tree of per-file links, nor drop a variant-only one (#5461).</summary>
+    [Fact]
+    public void MirrorInstallDirectory_WithEntrySource_AVariantOnlyDirectoryIsMirrored_AnInstallOnlyOneStaysALink()
+    {
+        var origDir = NewTempDir("mirror-dironly-orig");
+        var entryDir = NewTempDir("mirror-dironly-entry");
+        var shadowDir = NewTempDir("mirror-dironly-shadow");
+        try
+        {
+            WriteAt(origDir, "al-runner.dll", 1);
+            WriteAt(origDir, "cs/Res.dll", 3);
+            WriteAt(entryDir, "al-runner.dll", 2);
+            WriteAt(entryDir, "variant-only/Thing.dll", 4);
+
+            NclShadowRuntime.MirrorInstallDirectory(origDir, shadowDir, entryDir);
+
+            Assert.Equal(new byte[] { 4 }, File.ReadAllBytes(Path.Combine(shadowDir, "variant-only", "Thing.dll")));
+            Assert.True(IsSymlink(Path.Combine(shadowDir, "cs")));
+            Assert.Equal(new byte[] { 3 }, File.ReadAllBytes(Path.Combine(shadowDir, "cs", "Res.dll")));
+        }
+        finally
+        {
+            Directory.Delete(origDir, recursive: true);
+            Directory.Delete(entryDir, recursive: true);
+            Directory.Delete(shadowDir, recursive: true);
+        }
+    }
+
+    /// <summary>The shadow directory of a variant is keyed on what the variant folder holds, so re-staging
+    /// a variant at the same install path (a local reinstall of one package version) does not reuse the
+    /// directory built from its previous contents (#5461). Same contents, same hash; an added asset, a
+    /// changed length, and a changed write time each move it.</summary>
+    [Fact]
+    public void VariantShadowKey_IsStableForSameContents_AndMovesWhenTheVariantChanges()
+    {
+        var dir = NewTempDir("variant-layout-hash");
+        const string origDir = "/install/any";
+        try
+        {
+            WriteAt(dir, "al-runner.dll", 1, 2);
+            WriteAt(dir, "runtimes/win/lib/net8.0/a.dll", 3);
+            var baseline = NclShadowRuntime.VariantShadowKey(origDir, dir);
+            Assert.Equal(baseline, NclShadowRuntime.VariantShadowKey(origDir, dir));
+            Assert.NotEqual(baseline, NclShadowRuntime.VariantShadowKey(origDir + "-elsewhere", dir));
+
+            WriteAt(dir, "runtimes/win/lib/net10.0/a.dll", 4);
+            var withAsset = NclShadowRuntime.VariantShadowKey(origDir, dir);
+            Assert.NotEqual(baseline, withAsset);
+
+            WriteAt(dir, "al-runner.dll", 1, 2, 3);
+            var resized = NclShadowRuntime.VariantShadowKey(origDir, dir);
+            Assert.NotEqual(withAsset, resized);
+
+            File.SetLastWriteTimeUtc(Path.Combine(dir, "al-runner.dll"), new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+            Assert.NotEqual(resized, NclShadowRuntime.VariantShadowKey(origDir, dir));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
 }

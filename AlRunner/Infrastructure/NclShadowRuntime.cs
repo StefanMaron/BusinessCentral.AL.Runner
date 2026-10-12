@@ -188,9 +188,7 @@ public static class NclShadowRuntime
         string key;
         if (entrySource != null)
         {
-            var pathHash0 = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(origFull)))
-                .ToLowerInvariant()[..16];
-            key = $"variant-{Path.GetFileName(entrySource)}-{pathHash0}";
+            key = VariantShadowKey(origFull, entrySource);
         }
         else
         {
@@ -297,6 +295,36 @@ public static class NclShadowRuntime
         PruneStaleShadowDirs(shadowRoot, publishedDir, keepNewest: 4);
 
         return Path.Combine(publishedDir, EntryDllName);
+    }
+
+    /// <summary>The shadow-dir name for a variant swap: the variant's name, the install's path, and
+    /// <see cref="VariantLayoutHash"/>.</summary>
+    internal static string VariantShadowKey(string origFull, string entrySource)
+    {
+        var pathHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(origFull)))
+            .ToLowerInvariant()[..16];
+        return $"variant-{Path.GetFileName(entrySource)}-{pathHash}-{VariantLayoutHash(entrySource)}";
+    }
+
+    /// <summary>
+    /// A short hash of what the variant folder holds (relative path, length, last write), so a variant
+    /// re-staged at the SAME install path gets a new shadow directory instead of the one built from its
+    /// previous contents. The key's other terms are the variant's name and the install's path, and a
+    /// local reinstall of one package version changes neither (#5461: a shadow built before the
+    /// runtimes/ fix was reused after it, and the engine still died at startup).
+    /// </summary>
+    internal static string VariantLayoutHash(string entrySource)
+    {
+        var sb = new StringBuilder();
+        foreach (var file in Directory.EnumerateFiles(entrySource, "*", SearchOption.AllDirectories)
+                     .OrderBy(f => f, StringComparer.Ordinal))
+        {
+            var info = new FileInfo(file);
+            sb.Append(Path.GetRelativePath(entrySource, file).Replace('\\', '/'))
+              .Append('|').Append(info.Length)
+              .Append('|').Append(info.LastWriteTimeUtc.Ticks).Append('\n');
+        }
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()))).ToLowerInvariant()[..8];
     }
 
     // #2489: the issue's own field observation of "incomplete published dir" listed
@@ -831,10 +859,12 @@ public static class NclShadowRuntime
                 // .NET 10 builds of assemblies the net8 install ships older copies of (measured entering
                 // a 29 variant from an assembled install: FileLoadException for Microsoft.CodeAnalysis
                 // 5.3.0.0), so a variant that ships its own closure files must be mirrored with them.
-                var variantCopy = entrySource != null && !Directory.Exists(entry)
-                    ? Path.Combine(entrySource, name)
-                    : null;
-                if (variantCopy != null && File.Exists(variantCopy))
+                // A directory both carry (runtimes/) is merged, not linked from the install alone — #5461,
+                // docs/ncl-shadow-runtime.md#a-variants-own-runtimes-assets-and-what-keys-its-shadow-dir-5461.
+                var variantCopy = entrySource != null ? Path.Combine(entrySource, name) : null;
+                if (variantCopy != null && Directory.Exists(entry) && Directory.Exists(variantCopy))
+                    MirrorMergedDirectory(entry, variantCopy, target);
+                else if (variantCopy != null && !Directory.Exists(entry) && File.Exists(variantCopy))
                     LinkOrCopy(variantCopy, target, isDirectory: false);
                 else
                     LinkOrCopy(entry, target, isDirectory: Directory.Exists(entry));
@@ -863,6 +893,47 @@ public static class NclShadowRuntime
                 if (!File.Exists(target) && !Directory.Exists(target) && !IsBookkeepingName(name))
                     LinkOrCopy(file, target, isDirectory: false);
             }
+
+            // The same for a directory only the variant carries.
+            foreach (var dir in Directory.EnumerateDirectories(entrySource))
+            {
+                var name = Path.GetFileName(dir);
+                var target = Path.Combine(shadowDir, name);
+                if (!File.Exists(target) && !Directory.Exists(target) && !IsBookkeepingName(name))
+                    LinkOrCopy(dir, target, isDirectory: true);
+            }
+        }
+    }
+
+    /// <summary>
+    /// A directory both the install and the variant carry, mirrored as the union of the two with
+    /// the variant's file winning a name clash, so the directory is a real one holding links
+    /// rather than one link to the install's. BC 29 runs on .NET 10 and its
+    /// <c>al-runner.deps.json</c> names the win-rid assets under <c>runtimes/win/lib/net10.0/</c>;
+    /// the install ships only <c>runtimes/win/lib/net8.0/</c>, so linking the install's
+    /// <c>runtimes/</c> alone left the variant's own assets unreachable (#5461).
+    /// </summary>
+    private static void MirrorMergedDirectory(string installDir, string variantDir, string target)
+    {
+        Directory.CreateDirectory(target);
+        foreach (var entry in Directory.EnumerateFileSystemEntries(installDir))
+        {
+            var name = Path.GetFileName(entry);
+            var variantEntry = Path.Combine(variantDir, name);
+            var dest = Path.Combine(target, name);
+            if (Directory.Exists(entry) && Directory.Exists(variantEntry))
+                MirrorMergedDirectory(entry, variantEntry, dest);
+            else if (!Directory.Exists(entry) && File.Exists(variantEntry))
+                LinkOrCopy(variantEntry, dest, isDirectory: false);
+            else
+                LinkOrCopy(entry, dest, isDirectory: Directory.Exists(entry));
+        }
+
+        foreach (var entry in Directory.EnumerateFileSystemEntries(variantDir))
+        {
+            var dest = Path.Combine(target, Path.GetFileName(entry));
+            if (!File.Exists(dest) && !Directory.Exists(dest))
+                LinkOrCopy(entry, dest, isDirectory: Directory.Exists(entry));
         }
     }
 

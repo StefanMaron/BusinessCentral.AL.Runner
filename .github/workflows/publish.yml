@@ -271,6 +271,12 @@ jobs:
                 if [ -f "./variant-ref/$(basename "$f")" ] && cmp -s "$f" "./variant-ref/$(basename "$f")"; then continue; fi
                 cp -n "$f" "./variants-staging/$full/"
               done
+              # Its rid-specific assets keep their relative path (runtimes/win/lib/net10.0/...), which the
+              # tool's own runtimes/ (net8.0 assets) does not carry. Missing, the Windows engine died at
+              # startup (#5461); .github/scripts/check_variant_assets.py asserts it on the packed nupkg.
+              if [ -d "./variant-build-$full/runtimes" ]; then
+                cp -r "./variant-build-$full/runtimes" "./variants-staging/$full/runtimes"
+              fi
             else
               mkdir -p ./variant-ref
               for f in "./variant-build-$full"/*.dll; do cp -n "$f" ./variant-ref/; done
@@ -548,6 +554,11 @@ jobs:
           $extractDir = Join-Path $pwd 'nupkg-extracted'
           [System.IO.Compression.ZipFile]::ExtractToDirectory($nupkg, $extractDir)
           python .github/scripts/pe_signing.py verify $extractDir
+
+      - name: Verify every packed engine variant carries the assets its own deps.json names (#5461)
+        # The same assertion bc-tests.yml's `pack` job runs, here against the signed nupkg that ships.
+        shell: pwsh
+        run: python .github/scripts/check_variant_assets.py (Get-ChildItem nupkg\*.nupkg | Select-Object -First 1).FullName
 
       - name: Upload the signed nupkg
         uses: actions/upload-artifact@v7
