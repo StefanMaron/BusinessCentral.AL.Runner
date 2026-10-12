@@ -170,12 +170,13 @@ errors:
 | `DeleteAll`, Insert, Error; or Insert, Error | `5`: the value the failed run took is consumed |
 | the first row again, with row 3 deleted and committed before the run | `4`, not `3`: the counter, not the rows' highest key |
 | nested: an inner failing run truncated, the outer inserts and succeeds / fails | `5` either way: the outer's Insert took `4` after the inner restore |
+| nested: an inner run that succeeds after `Truncate(true)` and Insert, then the outer inserts and fails | `3`: the inner run's row `1` stays, the outer's Insert (`2`) is rolled back but its value is consumed |
 
 `PushTransactionWorldScope` therefore opens a counter journal beside the scope's row snapshots; a Truncate's
 `NoteIdentityRestart` enters the top-level journal and every open scope's. `PopTransactionWorldScope(restore: true)`
 puts the scope's counters back and drops the entries the scope created from the levels around it (no Truncate happened
 there any more), `restore: false` forgets the tables at every level, and `MarkExplicitCommitPoint` clears each scope's
-journal, all as the row snapshots are handled. Unmeasured: an inner run that succeeds and an outer run that then fails.
+journal, all as the row snapshots are handled.
 
 ## The type of the counter (#5521)
 

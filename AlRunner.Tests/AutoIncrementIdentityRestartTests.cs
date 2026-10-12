@@ -46,6 +46,7 @@ public sealed class AutoIncrementIdentityRestartTests
     private const int ScopeOnlyRestart = 1_900_000_409;
     private const int ScopeExplicitCommit = 1_900_000_410;
     private const int ScopeTwoTruncates = 1_900_000_413;
+    private const int NestedBothRolledBack = 1_900_000_414;
     private const int NestedInnerRolledBack = 1_900_000_411;
 
     private void Ready()
@@ -158,7 +159,7 @@ public sealed class AutoIncrementIdentityRestartTests
     }
 
     [SkippableFact]
-    public void GuardedScope_Committed_KeepsTheRestart_AndAnEarlierTopLevelRollbackLeavesTheCounterAlone()
+    public void GuardedScope_Committed_ForgetsTheRestart_SoALaterTopLevelRollbackLeavesTheCounterAlone()
     {
         Ready();
         Raise(ScopeCommitted, 3);
@@ -252,5 +253,21 @@ public sealed class AutoIncrementIdentityRestartTests
 
         RecordPatches.PopTransactionWorldScope(restore: false);  // outer succeeds
         Assert.Equal(5, Take(NestedInnerRolledBack));
+    }
+
+    [SkippableFact]
+    public void NestedGuardedScopes_InnerThenOuterRolledBack_TheOuterDoesNotRestoreATruncateTheInnerAlreadyUndid()
+    {
+        Ready();
+        Raise(NestedBothRolledBack, 3);
+        RecordPatches.PushTransactionWorldScope();     // outer
+        RecordPatches.PushTransactionWorldScope();     // inner
+        Truncate(NestedBothRolledBack, 3);
+        RecordPatches.PopTransactionWorldScope(restore: true);   // inner fails: counter back at 3
+        Assert.Equal(4, Take(NestedBothRolledBack));              // the outer takes a value, then fails too
+
+        RecordPatches.PopTransactionWorldScope(restore: true);   // outer fails: it truncated nothing itself
+
+        Assert.Equal(5, Take(NestedBothRolledBack));              // the value the outer took stays consumed
     }
 }
