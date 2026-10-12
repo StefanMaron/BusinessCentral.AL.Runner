@@ -101,6 +101,23 @@ Not touched: `Rename` (already stamped at `RenameRecordAsync`, storage level), a
 records, which still get stamps (and no AutoIncrement assignment; `AssignAutoIncrement` returns for
 them) on the funnel route exactly as before, now after the trigger.
 
+## A key the AL code assigned itself raises the counter (#5513)
+
+`AssignAutoIncrement` runs after `OnInsert` (above), so a key that the caller, the table's `OnInsert` or an
+`OnBeforeInsertEvent` subscriber put into the AutoIncrement field reaches it as a non-zero value. It used to leave
+that alone and never move the counter, so the next zero-key `Insert` handed out a value the table already held.
+BC's AutoIncrement is a SQL IDENTITY column written with `IDENTITY_INSERT` for an explicit key, and the corpus
+(codeunit 67822, `AutoInc_*`, measured on the cloud legs 27.0, 28.0, 28.4 and 28.5) shows the effect: an explicit
+key above the counter raises it, so the next zero-key `Insert` gets explicit + 1; a key at or below the counter,
+a negative key, a refused duplicate and a `DeleteAll` leave it alone. The helper now does
+`counter = max(counter, explicit key)` (`RaiseAutoIncrementCounterTo`), seeding a counter that has not started from
+the table's stored high-water mark first. An explicit key refused by an error in `OnInsert` never reaches the
+helper, and one refused on a unique secondary key has raised the counter by then, both as in BC.
+
+Known differences are tracked, not fixed here: Rename of an AutoIncrement key is not refused (#5517), a refused
+zero-key Insert keeps the taken key on the record (#5518), and the counter is not rolled back with an
+`asserterror` rollback (#5519).
+
 ## What a page DELETE does was not measured
 
 `NavForm.SaveRecordAsync` has no delete branch, so nothing here says whether a page-driven

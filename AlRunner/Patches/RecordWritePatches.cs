@@ -649,6 +649,17 @@ public static partial class BcRuntime
             updateValueFactory: (_, v) => v + 1L);
 
     /// <summary>
+    /// Raise <paramref name="tableId"/>'s counter to at least <paramref name="explicitKey"/>, the value the AL
+    /// code stored in the AutoIncrement field itself. Never lowers it. When the counter has not started, it
+    /// starts at the larger of the table's stored high-water mark and the explicit key, the same seed
+    /// <see cref="NextAutoIncrementValue"/> uses.
+    /// </summary>
+    internal static void RaiseAutoIncrementCounterTo(int tableId, int fieldNo, long explicitKey)
+        => _aiCounters.AddOrUpdate(tableId,
+            addValueFactory: id => Math.Max(AlRunner.Patches.RecordPatches.TryGetMaxFieldValue(id, fieldNo, out var max) ? max : 0L, explicitKey),
+            updateValueFactory: (_, v) => Math.Max(v, explicitKey));
+
+    /// <summary>
     /// Take the next AutoIncrement value for a table WITHOUT going through
     /// <c>NavRecord.ALInsertAsync</c> — for a runner path that writes rows straight into the
     /// TempTableDataProvider. Sharing this counter is what keeps the two insert routes from
@@ -665,8 +676,9 @@ public static partial class BcRuntime
     /// (Cecil-prepended to RecordImplementation.InsertRecordAsync). Pure side-effect:
     /// if the table has a registered AutoIncrement field and that field is currently
     /// zero/empty on `self`, advance the per-table counter and stamp the new value
-    /// into the field. Any exception is swallowed — the real async body then runs
-    /// unchanged; if AI couldn't be assigned, the duplicate-key check downstream is
+    /// into the field; if it is non-zero (the AL code assigned it), raise the counter
+    /// to it (#5513, docs/page-save-data-layer-prepends.md). Any exception is swallowed —
+    /// the real async body then runs unchanged; if AI couldn't be assigned, the duplicate-key check downstream is
     /// the observable failure mode, same as without this helper. The signature
     /// (NavRecord)→void is deliberately minimal so the Cecil prepend is a single
     /// `ldarg.0; call` pair with no stack-balance complications.
@@ -684,7 +696,20 @@ public static partial class BcRuntime
                 && self.MetaTable.TryGetFieldByNo(aiFieldNo, out var aiField))
             {
                 var currentVal = self.GetFieldValue(aiField);
-                if (currentVal.IsZeroOrEmpty)
+                if (!currentVal.IsZeroOrEmpty)
+                {
+                    // #5513: a key the AL code assigned itself (caller, OnInsert, an OnBeforeInsertEvent
+                    // subscriber) raises the counter and the next zero-key Insert follows it, as BC's
+                    // IDENTITY_INSERT does (corpus 67822). A key at or below the
+                    // counter, or negative, leaves it. Trap: this runs after OnInsert (#5509), so a
+                    // trigger-assigned key must be read here, not before the trigger.
+                    if (AlRunner.Patches.RecordPatches.TryToLong(currentVal, out long explicitKey))
+                    {
+                        EnsureTableTouchedForAutoIncrement(self);
+                        RaiseAutoIncrementCounterTo(tableId, aiFieldNo, explicitKey);
+                    }
+                }
+                else
                 {
                     // #2289: force this table's storage/hydration into existence BEFORE
                     // reading its high-water mark — see EnsureTableTouchedForAutoIncrement's

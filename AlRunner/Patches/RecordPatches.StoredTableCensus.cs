@@ -222,7 +222,7 @@ public static partial class RecordPatches
     /// failure here means the field type changed underneath us — skip the row rather than
     /// guess.
     /// </summary>
-    private static bool TryToLong(NavValue value, out long result)
+    internal static bool TryToLong(NavValue value, out long result)
     {
         result = 0;
         var t = value.GetType();
