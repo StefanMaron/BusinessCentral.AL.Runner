@@ -75,8 +75,8 @@ if _stdio is not None:
 AGENT_DIR_PREFIX = "agent-"
 
 # An identity becomes a directory name, so it may not contain a separator or a
-# `..`. Matching the shape used for branches and worktrees (`stma-auto-23`,
-# `impl-4`) rather than accepting anything path-safe: an identity that does not
+# `..`. Matching the shape used for branches and worktrees (the pool tag, here
+# plus issue and token) rather than accepting anything path-safe: an identity that does not
 # look like an identity is far more likely to be a bug in the caller than a new
 # naming scheme.
 _VALID_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -117,9 +117,9 @@ def resolve_agent_id(agent_id: str | None = None, env: dict | None = None) -> st
         raise ScratchpadCollision(
             "no agent identity: refusing to guess one, because a default would put "
             "two agents on one path -- which is the collision this exists to prevent. "
-            f"Pass --agent-id <id>, or export {_AGENT_ENV}=<id>. Use the identity from "
-            "your invoking prompt, the same string as your `agent:` label and your "
-            "branch prefix (e.g. stma-auto-23)."
+            f"Pass --agent-id <id>, or export {_AGENT_ENV}=<id>. Use "
+            "`<AGENT-ID>-issue-<N>-<SESSION>` (reviewers: `<ID>-pr-<N>-<SESSION>`), "
+            "e.g. stma-auto-23-issue-2980-1a2b3c4d."
         )
     value = str(value).strip()
     if not _VALID_ID.match(value):
@@ -130,12 +130,18 @@ def resolve_agent_id(agent_id: str | None = None, env: dict | None = None) -> st
             "`stma-auto-23-issue-2980-1a2b3c4d`."
         )
     if not _SESSION_TOKEN.match(value):
+        if re.search(r"-[0-9a-fA-F]{8}$", value):
+            raise ScratchpadCollision(
+                f"agent identity {value!r} ends in an UPPERCASE hex token; the token must be "
+                "lowercase hex (`uuid.uuid4().hex[:8]` already is), because the directory "
+                "name is compared case-sensitively. Lowercase it everywhere you use it."
+            )
         raise ScratchpadCollision(
-            f"agent identity {value!r} carries no session token, so every concurrent agent "
+            f"agent identity {value!r} carries no lowercase-hex session token, so every concurrent agent "
             "holding the same pool tag resolves to the SAME directory and this tool cannot "
             "tell them apart (#3619: three agents under one tag shared one corpus clone, and "
             "`check` said OK to a sibling's path). Append your issue and a session token: "
-            "`<AGENT-ID>-issue-<N>-<SESSION>`, with <SESSION> from "
+            "`<AGENT-ID>-issue-<N>-<SESSION>` (reviewers: `<ID>-pr-<N>-<SESSION>`), with <SESSION> from "
             "`python -c \"import uuid;print(uuid.uuid4().hex[:8])\"` generated once and "
             "copied literally into every call (shell state does not survive between tool "
             "calls). Use the same string for your scratch directories, caches and clones."

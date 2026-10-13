@@ -282,7 +282,11 @@ def test_the_hook_and_the_tool_agree_on_what_a_sessioned_identity_is() -> None:
     hook_spec.loader.exec_module(hook)
     for ident in [ME, OTHER, "stma-auto-2", "impl-4", "stma-auto-2-issue-3606",
                   "stma-auto-2-issue-3606-1a2b3c4", "stma-auto-2-issue-3606-1A2B3C4D",
-                  "stma-auto-2-issue-3606-1a2b3c4dd", "x-0a0a0a0a"]:
+                  "stma-auto-2-issue-3606-1a2b3c4dd", "x-0a0a0a0a",
+                  # 8 lowercase LETTERS that are not all hex: `reviewer` is 8 characters, so
+                  # a `[0-9a-z]` token pattern would bless a realistic role suffix
+                  "stma-auto-R18-reviewer", "stma-auto-2-pr-5568-zzzzzzzz",
+                  "stma-auto-2-issue-3606-ghijklmn"]:
         try:
             asp.resolve_agent_id(ident)
             tool_ok = True
@@ -291,6 +295,28 @@ def test_the_hook_and_the_tool_agree_on_what_a_sessioned_identity_is() -> None:
         hook_ok = bool(hook.OWNED.search(f"/scratchpad/agent-{ident}/x"))
         check(f"tool and hook agree on {ident!r}", tool_ok == hook_ok,
               f"tool accepts={tool_ok} hook owns={hook_ok}")
+
+
+def test_the_refusals_do_not_teach_the_form_they_refuse() -> None:
+    """A message contradicting the next check in its own function costs a round trip."""
+    def refusal(ident):
+        try:
+            asp.resolve_agent_id(ident, env={})
+        except asp.ScratchpadCollision as exc:
+            return str(exc)
+        return ""
+    none = refusal(None)
+    check("the no-identity refusal is raised", bool(none))
+    check("the no-identity refusal does not offer the bare tag as the example",
+          "(e.g. stma-auto-23)" not in none and "same string as your `agent:` label" not in none, none)
+    check("the no-identity refusal shows a sessioned example",
+          "stma-auto-23-issue-2980-1a2b3c4d" in none, none)
+    upper = refusal("stma-auto-2-issue-3606-1A2B3C4D")
+    check("an uppercase token is called uppercase, not 'no session token'",
+          "UPPERCASE" in upper and "lowercase hex" in upper, upper)
+    bare = refusal("stma-auto-2")
+    check("the remedy names the implementer form", "-issue-<N>-" in bare, bare)
+    check("the remedy names the reviewer form", "-pr-<N>-" in bare, bare)
 
 
 def _cli(args: list[str]) -> tuple[int, str, str]:
