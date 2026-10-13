@@ -4764,6 +4764,9 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
             // non-empty and the final round reports nothing. The suite is the unit here: the same question
             // and the same report as the bundled loop's (#3476), and what is dropped or refused in this
             // suite changes nothing about the next one. A refusal runs nothing of THIS suite.
+            // The objects the compile reported dropping by name, for the census below: the bundled loop's
+            // tddExcludedCount / safeExcludedCount.
+            var suiteAccountedFor = tddDropped ? emitOutput.ExcludedObjects.Count : 0;
             if (!tddMode && emitOutput.ExcludedObjects.Count > 0)
             {
                 var drop = ReportNonTddEmitDrops(
@@ -4774,7 +4777,20 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                 {
                     if (!drop.EveryDropSafe) continue; // a survivor may need what was dropped
                     bundleTests.AddRange(drop.Rows);
+                    suiteAccountedFor = emitOutput.ExcludedObjects.Count;
                 }
+            }
+            // #5562: the bundled loop's PARTIAL-EMIT-DROP guard, one rule (EmitDropCensus.FindPartialDrop) with the
+            // bundled loop and --server: this suite's sources declare an object the compile neither emitted nor
+            // reported dropping, so the survivors would run and the suite end PASSED with its tests absent.
+            if (sources.Count > 0 && suiteAlDiagnostics.Count == 0
+                && ProgramSupport.EmitDropCensus.FindPartialDrop(
+                    suitePaths, emitOutput.ManifestAppJsonPath, sources.Select(x => x.Name).ToList(),
+                    suiteAccountedFor, Console.Error) is { } suiteDrop)
+            {
+                Console.Error.WriteLine(suiteDrop.ConsoleLine($"{suiteName}: ", suiteModule));
+                bundleErrors.Add(suiteDrop.Error($"{suiteName}: ", suiteModule));
+                continue; // do not compile or run a partial, silently-wrong suite
             }
 
             var ct = System.Diagnostics.Stopwatch.StartNew();

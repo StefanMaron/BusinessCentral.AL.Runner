@@ -132,6 +132,18 @@ public sealed class PerSuiteEmitExcludedTests
         return (root, Run(root, perSuite: true));
     });
 
+    // #5562: suiteA's profile and its broken test codeunit share ONE file. The retry loop drops the file and names
+    // one object of it (the profile), so the drop reads as profile-only; the codeunit's test is lost unnamed.
+    private static readonly Lazy<(string Root, Spawned PerSuite, Spawned Bundled)> ProfileSharingAFileWithABrokenCodeunit = new(() =>
+    {
+        var root = NewRoot("profile-shares-file");
+        Suite(root, "suiteA", 65000,
+            ("Both.al", BadProfile + "\n\n" + Broken(65001, "Shared File Probe")),
+            ("Good.al", Healthy(65002, "Good Probe", "Fine")));
+        Suite(root, "suiteB", 62000, ("Good.al", Healthy(62002, "B Probe", "BFine")));
+        return (root, Run(root, perSuite: true), Run(root, perSuite: false));
+    });
+
     // An interface declares no executable AL, so the suite emits no source and BC reports no error: nothing
     // failed, there is just nothing to run. suiteB is healthy.
     private static readonly Lazy<(string Root, Spawned Run)> InterfaceOnly = new(() =>
@@ -235,6 +247,29 @@ public sealed class PerSuiteEmitExcludedTests
         Assert.DoesNotContain("SUITE ERRORS", run.Output);
         Assert.Equal(2, run.Rows.Count(r => r.StartsWith("PASS ")));
         Assert.Matches(@"^Tests: 2\s+passed 2\s+failed 0\s+errors 0$", run.Counts);
+    }
+
+    /// <summary>
+    /// #5562: a profile that shares a file with a broken test codeunit drops the codeunit unnamed. The bundled
+    /// loop's PARTIAL-EMIT-DROP census refuses the suite; --per-suite ran the survivors and ended PASSED. It now
+    /// refuses THAT suite alone (the next one still runs), as the bundled run does.
+    /// </summary>
+    [SkippableFact]
+    public void AProfileSharingAFileWithABrokenCodeunit_RefusesThatSuite_AsTheBundledRunDoes()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (_, perSuite, bundled) = ProfileSharingAFileWithABrokenCodeunit.Value;
+
+        Assert.Equal(3, perSuite.Exit);
+        Assert.Contains("suiteA: PARTIAL-EMIT-DROP", perSuite.Output);
+        Assert.Contains("Shared File Probe", perSuite.Output);
+        Assert.DoesNotContain("PASSED, exit code 0", perSuite.Output);
+        Assert.Equal(new[] { "PASS Codeunit62002.BFine" }, perSuite.Rows); // suiteA ran nothing, suiteB ran
+        Assert.Matches(@"^Tests: 1\s+passed 1\s+failed 0\s+errors 0$", perSuite.Counts);
+
+        Assert.Equal(3, bundled.Exit);
+        Assert.Contains("PARTIAL-EMIT-DROP", bundled.Output);
+        Assert.Contains("Shared File Probe", bundled.Output);
     }
 
     /// <summary>
