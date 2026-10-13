@@ -20,6 +20,10 @@ public sealed record AlMemberSyntax(
     IReadOnlyList<AlLoopSite> Sites,
     IReadOnlyList<AlStatementWrites> Writes);
 
+/// <summary>One object declaration read from the syntax tree: <paramref name="Kind"/> is the declaring
+/// keyword, lower-cased; <paramref name="Id"/> is -1 for a kind that has none (profile, interface).</summary>
+public sealed record AlDeclaredObject(string Kind, int Id, string Name, bool IsTestCodeunit);
+
 public sealed class AlMemberSyntaxIndex
 {
     // Built-ins whose first argument is by reference.
@@ -169,6 +173,44 @@ public sealed class AlMemberSyntaxIndex
                 names.Add(((NavSyntax.ObjectSyntax)obj).Name?.Identifier.ValueText.Trim('"') ?? "");
             }
             return names;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Every object <paramref name="source"/> declares, kind, id, name and whether it is a
+    /// <c>Subtype = Test</c> codeunit, from BC's syntax tree under the options the compile of this
+    /// file used, so a header or a property inside a comment or an inactive <c>#if</c> branch is not
+    /// one (#5557). Null when the parse throws; the caller must refuse, not read it as nothing.
+    /// <para>Never inlines and returns plain values, for the reason <see cref="DeclaredObjectNames"/> states.</para>
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    internal static IReadOnlyList<AlDeclaredObject>? DeclaredObjects(string source, string filePath, string? manifestAppJsonPath)
+    {
+        try
+        {
+            var parseOpts = BcCompiler.BuildParseOptions(BcCompiler.ReadManifestCompilerInputs(manifestAppJsonPath));
+            var root = NavSyntax.SyntaxTree.ParseObjectText(source, path: filePath, encoding: null!, parseOpts, default)
+                .GetCompilationUnitRoot();
+            var result = new List<AlDeclaredObject>();
+            foreach (var obj in root.Objects)
+            {
+                if (obj is not NavSyntax.ObjectSyntax os) continue;
+                var kind = os.GetFirstToken().Text.ToLowerInvariant();
+                var id = obj is NavSyntax.ApplicationObjectSyntax ao && ao.ObjectId?.Value.Value is int n ? n : -1;
+                var isTest = false;
+                if (obj is NavSyntax.CodeunitSyntax cu && cu.PropertyList != null)
+                    foreach (var entry in cu.PropertyList.Properties)
+                        if (entry is NavSyntax.PropertySyntax p
+                            && string.Equals(p.Name?.Identifier.ValueText, "Subtype", StringComparison.OrdinalIgnoreCase)
+                            && string.Equals(p.Value?.ToString()?.Trim(), "Test", StringComparison.OrdinalIgnoreCase))
+                            isTest = true;
+                result.Add(new AlDeclaredObject(kind, id, os.Name?.Identifier.ValueText.Trim('"') ?? "", isTest));
+            }
+            return result;
         }
         catch
         {

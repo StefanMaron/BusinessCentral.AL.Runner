@@ -69,6 +69,25 @@ public sealed class ExcludedObjectTriageSyntaxTests : IDisposable
         Assert.Contains("table 70002 \"Real\"", v.Reason, StringComparison.Ordinal);
     }
 
+    /// <summary>The branch the COMPILE took is the branch read: with the app's own manifest defining the
+    /// symbol, the guarded header is a real declaration and blocks.</summary>
+    [SkippableFact]
+    public void AnActiveBranchHeader_Blocks_WhenTheManifestDefinesTheSymbol()
+    {
+        RequireEngine();
+        var appJson = Path.Combine(_dir, "app.json");
+        File.WriteAllText(appJson, "{ \"id\": \"b5557000-0000-4000-8000-000000005557\", \"name\": \"N\", \"publisher\": \"P\", "
+            + "\"version\": \"1.0.0.0\", \"dependencies\": [], \"runtime\": \"14.0\", \"preprocessorSymbols\": [ \"TRIAGE_SYM_5557\" ] }");
+        var path = Path.Combine(_dir, "Broken.Codeunit.al");
+        File.WriteAllText(path, "#if TRIAGE_SYM_5557\ntable 70002 \"Guarded\"\n{\n}\n#endif\n" + TestCodeunit);
+
+        var v = Assert.Single(ProgramSupport.ExcludedObjectTriage.Triage(
+            new[] { new TddExcludedObjectDetail(path, "Broken", new[] { "error" }, appJson) }, new[] { path }));
+
+        Assert.False(v.Droppable);
+        Assert.Contains("table 70002 \"Guarded\"", v.Reason, StringComparison.Ordinal);
+    }
+
     [SkippableFact]
     public void AnInactiveBranchHeader_DoesNotBlock()
     {
@@ -98,5 +117,39 @@ public sealed class ExcludedObjectTriageSyntaxTests : IDisposable
 
         Assert.False(v.Droppable);
         Assert.Contains("without Subtype = Test", v.Reason, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A file BC's parser cannot read is refused, never droppable: it fails CLOSED. Driven through
+    /// the parser parameter, with a file that WOULD be droppable if the null were read as nothing
+    /// to block it.
+    /// </summary>
+    [Fact]
+    public void AFileTheParserCannotRead_IsRefused_NotDroppable()
+    {
+        var path = Path.Combine(_dir, "Unreadable.Codeunit.al");
+        File.WriteAllText(path, TestCodeunit);
+
+        var v = Assert.Single(ProgramSupport.ExcludedObjectTriage.Triage(
+            new[] { new TddExcludedObjectDetail(path, "Unreadable", new[] { "error" }) },
+            new[] { path }, parse: (_, _, _) => null));
+
+        Assert.False(v.Droppable);
+        Assert.Contains("parser could not read", v.Reason, StringComparison.Ordinal);
+    }
+
+    /// <summary>Control for the test above: the same file, parsed, IS droppable.</summary>
+    [Fact]
+    public void TheSameFileParsed_IsDroppable()
+    {
+        var path = Path.Combine(_dir, "Readable.Codeunit.al");
+        File.WriteAllText(path, TestCodeunit);
+
+        var v = Assert.Single(ProgramSupport.ExcludedObjectTriage.Triage(
+            new[] { new TddExcludedObjectDetail(path, "Readable", new[] { "error" }) },
+            new[] { path },
+            parse: (_, _, _) => new[] { new AlRunner.Infrastructure.AlDeclaredObject("codeunit", 135209, "T", true) }));
+
+        Assert.True(v.Droppable, v.Reason);
     }
 }
