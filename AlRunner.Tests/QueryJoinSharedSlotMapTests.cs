@@ -279,6 +279,41 @@ public class QueryJoinSharedSlotMapTests
                     Error('Kind 2 + FlowField must read H1:20/30, H3:7/12: %1', Seen);
             end;
 
+            // A runtime filter on a NORMAL (projected, non-aggregated) column of the join: H2 only.
+            [Test]
+            procedure NormalColumnFilter_ExcludesOtherHeaders()
+            var
+                Q: Query "QJSM Join Filter Only";
+                Seen: Text;
+            begin
+                Seed();
+                Q.SetRange(HeaderNo, 'H2');
+                Q.Open();
+                while Q.Read() do
+                    Seen += StrSubstNo('%1=%2;', Q.HeaderNo, Q.LineTotal);
+                Q.Close();
+                if Seen <> 'H2=300;' then
+                    Error('HeaderNo H2 must keep H2 only: %1', Seen);
+            end;
+
+            // A runtime filter ON the FlowField column itself: its slot comes from the
+            // FlowField-calculation synthesized dataitem. H3's total (12) fails "> 20".
+            [Test]
+            procedure FlowFieldColumnFilter_ExcludesRowsByTheCalculatedValue()
+            var
+                Q: Query "QJSM Join FF Filter Only";
+                Seen: Text;
+            begin
+                Seed();
+                Q.SetFilter(HeaderTotal, '>%1', 20);
+                Q.Open();
+                while Q.Read() do
+                    Seen += StrSubstNo('%1:%2/%3;', Q.HeaderNo, Q.LineSum, Q.HeaderTotal);
+                Q.Close();
+                if Seen <> 'H1:30/30;H2:300/300;' then
+                    Error('HeaderTotal > 20 must keep H1 and H2: %1', Seen);
+            end;
+
             [Test]
             procedure FlowFieldColumn_WithHaving_ExcludesRows()
             var
@@ -309,6 +344,6 @@ public class QueryJoinSharedSlotMapTests
 
         r.AssertOutputDoesNotContain("EMIT-EXCLUDED");
         Assert.True(r.CompilationErrors.Count == 0, string.Join("\n", r.CompilationErrors));
-        r.AssertCounts(passed: 8, failed: 0, errors: 0);
+        r.AssertCounts(passed: 10, failed: 0, errors: 0);
     }
 }
