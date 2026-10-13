@@ -203,7 +203,17 @@ public static partial class NclCecilRewrite
     /// and returns modified bytes ready for Assembly.Load.
     /// </summary>
 
-    public static byte[] RewriteNcl(string nclPath)
+    public static byte[] RewriteNcl(string nclPath) => RewriteNcl(nclPath, null);
+
+    /// <param name="ledger">When supplied, records which pass replaced which method body wholesale
+    /// (<see cref="BodyOwnershipLedger"/>, #3519). Null on every production path.</param>
+    internal static byte[] RewriteNcl(string nclPath, BodyOwnershipLedger? ledger)
+    {
+        try { return RewriteNclCore(nclPath, ledger); }
+        finally { s_bodyOwnershipAudit = null; }
+    }
+
+    private static byte[] RewriteNclCore(string nclPath, BodyOwnershipLedger? ledger)
     {
         var originalBytes = File.ReadAllBytes(nclPath);
 
@@ -213,6 +223,9 @@ public static partial class NclCecilRewrite
 
         using var inStream = new MemoryStream(originalBytes);
         var asm = AssemblyDefinition.ReadAssembly(inStream, new ReaderParameters { ReadWrite = false, AssemblyResolver = resolver });
+
+        var audit = ledger == null ? null : new BodyOwnershipAudit(asm.MainModule, ledger);
+        s_bodyOwnershipAudit = audit;
 
         // NCLMetaApplicationObject.IsEventSubscribed is deliberately NOT rewritten (#3576).
         //
@@ -503,20 +516,33 @@ public static partial class NclCecilRewrite
             + $" ({runRequestPageRefusedCount} unrecognised shape(s) → throw OOS)");
 
 
+        audit?.EndPass("Driver");
         RewriteNcl_Forms(asm);
+        audit?.EndPass("Forms");
         RewriteNcl_Media(asm);
+        audit?.EndPass("Media");
         RewriteNcl_Dispatch(asm, oosCtor);
+        audit?.EndPass("Dispatch");
         RewriteNcl_Records(asm);
+        audit?.EndPass("Records");
         RewriteNcl_Queries(asm);
+        audit?.EndPass("Queries");
         RewriteNcl_Metadata(asm);
+        audit?.EndPass("Metadata");
         RewriteNcl_Reports(asm, oosCtor);
+        audit?.EndPass("Reports");
         RewriteNcl_Runtime(asm);
+        audit?.EndPass("Runtime");
         RewriteNcl_ExternalEvents(asm);
+        audit?.EndPass("ExternalEvents");
         RewriteNcl_SqlConnection(asm);
+        audit?.EndPass("SqlConnection");
         RewriteNcl_ValidateRelationCompanyStore(asm);
+        audit?.EndPass("ValidateRelationCompanyStore");
         // Last: it rewrites every read of RecordImplementation.dataAccess, including any an
         // earlier pass emitted.
         RewriteNcl_RecordDataAccessReads(asm);
+        audit?.EndPass("RecordDataAccessReads");
 
         var outStream = new MemoryStream();
         asm.Write(outStream);
@@ -776,6 +802,7 @@ public static partial class NclCecilRewrite
             helperParams.Length,
             argCount);
 
+        s_bodyOwnershipAudit?.NoteHelperReplacement(target);
         var body = target.Body;
         body.Instructions.Clear();
         body.Variables.Clear();
@@ -927,6 +954,7 @@ public static partial class NclCecilRewrite
     /// </summary>
     private static void ReplaceBodyConst(MethodDefinition target, ConstResult result)
     {
+        s_bodyOwnershipAudit?.NoteHelperReplacement(target);
         var body = target.Body;
         body.Instructions.Clear();
         body.Variables.Clear();

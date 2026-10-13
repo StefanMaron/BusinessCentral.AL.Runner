@@ -1539,10 +1539,15 @@ public static partial class NclCecilRewrite
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "RecordImplementation", "VerifyPermissions", "PermissionMask", "Boolean"),
                 H(helperShims, "NoOp3"));
-            ReplaceBodyWithHelper(nclMod,
-                ByParams(Rt + "RecordImplementation", "InternalFindRecordWithoutCheckingValuesAsync",
-                         "DataError", "PrimaryKeyCacheRequest", "Boolean", "Boolean"),
+            // The async-state-machine marker goes with the body it described: the replacement is a
+            // plain call, so the attribute would point at a state machine nothing constructs.
+            var internalFind = ByParams(Rt + "RecordImplementation", "InternalFindRecordWithoutCheckingValuesAsync",
+                         "DataError", "PrimaryKeyCacheRequest", "Boolean", "Boolean");
+            ReplaceBodyWithHelper(nclMod, internalFind,
                 H(helperShims, "RecordImpl_InternalFindRecordWithoutCheckingValuesAsync"));
+            var internalFindAsyncAttr = internalFind.CustomAttributes.FirstOrDefault(
+                ca => ca.AttributeType.Name == "AsyncStateMachineAttribute");
+            if (internalFindAsyncAttr != null) internalFind.CustomAttributes.Remove(internalFindAsyncAttr);
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "RecordImplementation", "VerifySecurityFiltersOnRecordAsync",
                          "IRecordBuffer", "FilterFieldDictionary", "Boolean", "Boolean"),

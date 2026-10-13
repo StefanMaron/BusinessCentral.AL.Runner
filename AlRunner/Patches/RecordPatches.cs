@@ -157,7 +157,7 @@ public static partial class RecordPatches
     // to a `temporary` record". It is registered in exactly one place, the isTemporary branch of
     // GetDataAccessForTableCore, which is the whole funnel -- Ncl's
     // DataAccessSource.GetDataAccessForTable is Cecil-REPLACED by
-    // NavDataAccessSource_GetDataAccessForTable (NclCecilRewrite.Records.cs), so no Record
+    // NavDataAccessSource_GetDataAccessForTable (NclCecilRewrite.Runtime.cs), so no Record
     // acquires a DataAccess by another route.
     //
     // Weak, so a temporary record's DataAccess stays collectable with the record; the value is
