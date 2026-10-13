@@ -1,16 +1,11 @@
-// NclCecilRewrite.BodyOwnership — an audit of WHICH pass replaced WHICH method body, issue #3519.
+// NclCecilRewrite.BodyOwnership — which pass replaced which method body, measured from the IL (#3519).
 //
-// RewriteNcl runs the area passes in a fixed order and a later whole-body replacement clears and
-// overwrites an earlier one, so a target owned by two passes silently runs only the later one and
-// a fix to the earlier copy accomplishes nothing. The replacement sites do not share one primitive
-// (most clear the body inline), so ownership cannot be read off a registry; it is MEASURED instead,
-// from the IL the passes actually produced. The ledger exists only when a caller asks for it
-// (RewriteNcl(path, ledger)); the production path pays nothing.
-//
-// What it can and cannot see: a whole-body replacement leaves NONE of the previous body's
-// instruction objects behind, a prepend/in-place edit leaves them in place. Two replacements of one
-// target inside a SINGLE pass are only visible when both went through ReplaceBodyWithHelper /
-// ReplaceBodyConst (they report themselves); two inline clears inside one pass read as one owner.
+// A later whole-body replacement clears an earlier one, so a target owned by two passes runs only
+// the later copy. Most sites clear the body inline, so no registry can hold ownership; the ledger
+// is filled only when RewriteNcl(path, ledger) is asked for it, and production pays nothing.
+// A whole-body replacement leaves none of the old Instruction objects behind; a prepend or an
+// in-place edit does. Blind spot: two inline clears of one target inside ONE pass read as one owner
+// unless both went through ReplaceBodyWithHelper / ReplaceBodyConst, which report themselves.
 
 using System;
 using System.Collections.Generic;
