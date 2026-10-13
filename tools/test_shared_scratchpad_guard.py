@@ -51,7 +51,7 @@ case("heredoc into a shared scratchpad under ~/.cache",
 case("gh pr comment reading a shared body under ~/.cache",
      f"gh pr comment 4532 --body-file {SP_HOME}/review.md", True)
 case("an agent-owned path under ~/.cache stays silent",
-     f"cat > {SP_HOME}/agent-reviewer-3/review.md <<'EOF'\nx\nEOF", False)
+     f"cat > {SP_HOME}/agent-reviewer-3-pr-4532-0a1b2c3d/review.md <<'EOF'\nx\nEOF", False)
 case("reading a shared log under ~/.cache stays silent",
      f"sed -n '1,20p' {SP_HOME}/ci.txt", False)
 
@@ -64,7 +64,7 @@ case("an impl-agent rm -rf on a shared name is blocked",
 case("the per-call escape downgrades the block to the warning",
      f"rm -rf {SP}/a.txt # hook:allow-shared-scratch", True, agent_type="reviewer")
 case("a reviewer writing to its own agent directory is not blocked",
-     f"cat > {SP_HOME}/agent-reviewer-3/review.md <<'EOF'\nx\nEOF", False,
+     f"cat > {SP_HOME}/agent-reviewer-3-pr-4532-0a1b2c3d/review.md <<'EOF'\nx\nEOF", False,
      agent_type="reviewer")
 case("a reviewer READING a shared log is not blocked",
      f"command grep -n FAIL {SP_HOME}/ci.txt", False, agent_type="reviewer")
@@ -78,11 +78,11 @@ case("an impl-agent passing a shared file to a tool with 2>/dev/null is not bloc
      f"tools/mutation-verdict.py {SP_HOME}/r1.txt 2>/dev/null", False, agent_type="impl-agent")
 # (the advisory still names it -- `cp` is a whole-command verb -- but it does not block)
 case("a reviewer copying FROM a shared file into its own directory is not blocked",
-     f"cp {SP_HOME}/ci.txt {SP_HOME}/agent-reviewer-3/ci.txt", True, agent_type="reviewer")
+     f"cp {SP_HOME}/ci.txt {SP_HOME}/agent-reviewer-3-pr-4532-0a1b2c3d/ci.txt", True, agent_type="reviewer")
 case("a reviewer grepping a shared log into ITS OWN file is warned, not blocked",
-     f"command grep FAIL {SP_HOME}/ci.txt > /x/agent-r3/fails.txt", True, agent_type="reviewer")
+     f"command grep FAIL {SP_HOME}/ci.txt > /x/agent-r3-pr-1-0a1b2c3d/fails.txt", True, agent_type="reviewer")
 case("an impl-agent reading a shared log beside a heredoc of its own is not blocked",
-     f"cat > /x/agent-i/a.md <<'EOF'\nx\nEOF\nhead {SP_HOME}/ci.txt", True, agent_type="impl-agent")
+     f"cat > /x/agent-i-issue-1-0a1b2c3d/a.md <<'EOF'\nx\nEOF\nhead {SP_HOME}/ci.txt", True, agent_type="impl-agent")
 # --- ...while every write-target shape still is ---
 case("a reviewer appending to a shared file with >> is blocked",
      f"echo x >> {SP_HOME}/review.md", True, agent_type="reviewer", should_block=True)
@@ -110,13 +110,23 @@ case("the coordinator (no agent_type) is warned, never blocked",
 
 # --- already private: these must NOT fire, or the tool teaches nothing ---
 case("heredoc into an agent-owned path",
-     f"cat > {SP}/agent-stma-auto-23/pr-body.md <<'EOF'\nx\nEOF", False)
+     f"cat > {SP}/agent-stma-auto-23-issue-2980-1a2b3c4d/pr-body.md <<'EOF'\nx\nEOF", False)
 case("gh pr create with an agent-owned body file",
-     f"gh pr create --body-file {SP}/agent-stma-auto-23/body.md", False)
+     f"gh pr create --body-file {SP}/agent-stma-auto-23-issue-2980-1a2b3c4d/body.md", False)
 case("cloning into an agent-owned directory",
-     f"git clone https://github.com/x/y {SP}/agent-stma-auto-23/corpus", False)
+     f"git clone https://github.com/x/y {SP}/agent-stma-auto-23-issue-2980-1a2b3c4d/corpus", False)
 case("a nested path under an agent directory",
-     f"cp -r bundle {SP}/agent-impl-4/probe/run1", False)
+     f"cp -r bundle {SP}/agent-impl-4-issue-4-9f8e7d6c/probe/run1", False)
+
+# --- a directory named for the bare pool tag is shared by every concurrent holder of it
+# (#3619): `agent-<tag>` with no session token must fire, and block a write ---
+case("heredoc into a bare-tag agent directory",
+     f"cat > {SP}/agent-stma-auto-2/pr-body.md <<'EOF'\nx\nEOF", True)
+case("an impl-agent cloning onto a bare-tag agent directory is blocked",
+     f"git clone https://github.com/x/y {SP_HOME}/agent-stma-auto-2/corpus", True,
+     agent_type="impl-agent", should_block=True)
+case("a tag whose last segment is seven hex digits is still bare",
+     f"cat > {SP}/agent-stma-auto-2-issue-3-1a2b3c4/x.md <<'EOF'\nx\nEOF", True)
 
 # --- ordinary reads: must NOT fire, so the warning stays worth reading ---
 case("listing the scratchpad", f"ls -la {SP}", False)

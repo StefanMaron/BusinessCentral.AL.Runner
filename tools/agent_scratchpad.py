@@ -40,12 +40,12 @@ silent wrong answer being prevented -- the same reasoning as
 
 Usage
 -----
-    # a private path, created for you
-    tools/agent_scratchpad.py path pr-body.md --agent-id stma-auto-23
-    #   -> <scratchpad>/agent-stma-auto-23/pr-body.md
+    # a private path, created for you; the identity ends in a per-session token
+    tools/agent_scratchpad.py path pr-body.md --agent-id stma-auto-23-issue-2980-1a2b3c4d
+    #   -> <scratchpad>/agent-stma-auto-23-issue-2980-1a2b3c4d/pr-body.md
 
     # refuse before reading a file somebody else may own
-    tools/agent_scratchpad.py check <path> --agent-id stma-auto-23
+    tools/agent_scratchpad.py check <path> --agent-id stma-auto-23-issue-2980-1a2b3c4d
 
     # what in this scratchpad is shared and owned by nobody
     tools/agent_scratchpad.py scan
@@ -80,6 +80,15 @@ AGENT_DIR_PREFIX = "agent-"
 # look like an identity is far more likely to be a bug in the caller than a new
 # naming scheme.
 _VALID_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+# The pool identity (`stma-auto-9`) is held by EVERY loop that reuses it, several
+# at once (#3619), so a directory named for it is shared however private it
+# looks. What tells two concurrent agents apart is the per-session token
+# impl-agent.md has each agent generate (`uuid4().hex[:8]`) and append: the whole
+# identity is `<tag>-issue-<N>-<token>`. This module cannot tell WHICH holder of
+# a bare tag is asking -- the third state, `guards-need-a-third-state.md` -- so it
+# refuses one rather than answer "yours".
+_SESSION_TOKEN = re.compile(r"^.+-[0-9a-f]{8}$")
 
 # The harness injects the scratchpad path into the prompt rather than the
 # environment, so an agent normally passes --scratchpad. These are checked
@@ -117,7 +126,19 @@ def resolve_agent_id(agent_id: str | None = None, env: dict | None = None) -> st
         raise ScratchpadCollision(
             f"agent identity {value!r} is not a plain name. It becomes a directory, so "
             "a separator or `..` in it could resolve into another agent's space. Expected "
-            "the shape used for branches and worktrees, e.g. `stma-auto-23` or `impl-4`."
+            "the shape used for branches and worktrees plus a session token, e.g. "
+            "`stma-auto-23-issue-2980-1a2b3c4d`."
+        )
+    if not _SESSION_TOKEN.match(value):
+        raise ScratchpadCollision(
+            f"agent identity {value!r} carries no session token, so every concurrent agent "
+            "holding the same pool tag resolves to the SAME directory and this tool cannot "
+            "tell them apart (#3619: three agents under one tag shared one corpus clone, and "
+            "`check` said OK to a sibling's path). Append your issue and a session token: "
+            "`<AGENT-ID>-issue-<N>-<SESSION>`, with <SESSION> from "
+            "`python -c \"import uuid;print(uuid.uuid4().hex[:8])\"` generated once and "
+            "copied literally into every call (shell state does not survive between tool "
+            "calls). Use the same string for your scratch directories, caches and clones."
         )
     return value
 
@@ -226,7 +247,9 @@ def assert_private(path: str, agent_id: str | None = None, scratchpad: str | Non
 
 
 def scan_shared(scratchpad: str | None = None, env: dict | None = None) -> list[str]:
-    """Entries sitting directly in the scratchpad, i.e. owned by nobody.
+    """Entries owned by nobody in particular: bare entries in the scratchpad, and
+    `agent-<tag>` directories whose tag has no session token (every concurrent
+    holder of the tag shares them, #3619).
 
     The audit half. Sorted so two runs are comparable.
     """
@@ -236,6 +259,7 @@ def scan_shared(scratchpad: str | None = None, env: dict | None = None) -> list[
     return sorted(
         os.path.join(root, e) for e in os.listdir(root)
         if not e.startswith(AGENT_DIR_PREFIX)
+        or not _SESSION_TOKEN.match(e[len(AGENT_DIR_PREFIX):])
     )
 
 
@@ -256,7 +280,7 @@ def main(argv: list[str] | None = None) -> int:
     # absent, so whichever position carried it wins and neither erases the other.
     def add_common(parser):
         parser.add_argument("--agent-id", default=argparse.SUPPRESS,
-                            help=f"your identity, e.g. stma-auto-23 (or ${_AGENT_ENV})")
+                            help=f"your identity with its session token, e.g. stma-auto-23-issue-2980-1a2b3c4d (or ${_AGENT_ENV})")
         parser.add_argument("--scratchpad", default=argparse.SUPPRESS,
                             help="the session scratchpad directory from your prompt")
 
@@ -291,11 +315,12 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "scan":
             shared = scan_shared(scratch)
             if not shared:
-                print("No shared entries: every entry is owned by an agent.")
+                print("No shared entries: every entry is owned by one agent session.")
                 return 0
-            print(f"{len(shared)} entry/entries owned by NOBODY in the shared scratchpad.")
+            print(f"{len(shared)} entry/entries owned by NOBODY in particular in the shared scratchpad.")
             print("Any agent of this session can overwrite these between your write and "
-                  "your read (#2980):")
+                  "your read (#2980); an `agent-<tag>` directory with no session token is "
+                  "shared by every concurrent holder of the tag (#3619):")
             for p in shared:
                 print(f"  {p}")
             return 0

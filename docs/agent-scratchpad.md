@@ -52,16 +52,28 @@ same family as the `grep`-function and `rg --hidden` traps in `CLAUDE.md`.
 so two identities cannot collide; every path it is asked to *check* is refused
 unless it is outside the scratchpad or owned by the caller.
 
+**The identity is `<pool tag>-issue-<N>-<SESSION>`, never the bare pool tag.** The tag
+(`stma-auto-9`) is reused by every loop holding it, several at a time, so a directory
+named for it is shared by all of them: three agents under `stma-auto-2` ended up with one
+`agent-stma-auto-2/` holding all three corpus clones, and `check` answered `OK` to a
+sibling's path (#3619). Nothing in a bare tag says which holder is asking, so the tool
+refuses it rather than guess. `<SESSION>` is `uuid4().hex[:8]` generated once per agent and
+copied literally into every call, because shell state does not survive between tool calls
+(`.claude/agents/impl-agent.md`, "Namespace every path you write to"). The refusal
+covers `path`, `dir` and `check` alike, and `scan` lists an existing bare `agent-<tag>`
+directory as shared. What it cannot detect is two agents deliberately given the same
+token; the token is the discriminator, not a lock.
+
 ```bash
 # a private path, parent directory created
-p=$(tools/agent_scratchpad.py path pr-body.md --agent-id stma-auto-23)
+p=$(tools/agent_scratchpad.py path pr-body.md --agent-id stma-auto-23-issue-2980-1a2b3c4d)
 gh pr create --body-file "$p"
 
 # your private directory, e.g. to clone into
-tools/agent_scratchpad.py dir --agent-id stma-auto-23
+tools/agent_scratchpad.py dir --agent-id stma-auto-23-issue-2980-1a2b3c4d
 
 # refuse before reading something another agent may own -- exit 1 if shared
-tools/agent_scratchpad.py check "$SOME_PATH" --agent-id stma-auto-23
+tools/agent_scratchpad.py check "$SOME_PATH" --agent-id stma-auto-23-issue-2980-1a2b3c4d
 
 # audit: what in this scratchpad is owned by nobody
 tools/agent_scratchpad.py scan
@@ -96,6 +108,11 @@ owner in it. It is **advisory** and never blocks: reading another agent's log to
 diagnose a collision is legitimate, and a hook that blocks legitimate work gets
 switched off, taking the warning with it. The refusal that *can* stop something
 is `agent_scratchpad.py check`, which a caller opts into.
+
+An `agent-<tag>` directory counts as owned only when its name ends in a session token
+(`-` plus 8 lowercase hex digits), the same rule the tool applies; a bare `agent-<tag>`
+is warned and, for an impl-agent or reviewer, blocked as a write target.
+`tools/test_agent_scratchpad.py` pins the two regexes against each other.
 
 It stays quiet on ordinary reads (`ls`, `sed -n`, `grep` of a log) and on paths
 that already carry an agent directory. That is deliberate: a warning that fires

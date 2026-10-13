@@ -174,8 +174,8 @@ python -c "import uuid;print(uuid.uuid4().hex[:8])"
 ```
 
 Shell state does not survive between tool calls, so copy the printed value and write it
-literally wherever `<SESSION>` appears. The scratchpad guard's suggested `--agent-id <YOUR-ID>`
-is the minimum; pass the full `<AGENT-ID>-issue-<N>-<SESSION>`. Name every scratch directory, `--cache` directory (the
+literally wherever `<SESSION>` appears. `tools/agent_scratchpad.py` refuses an
+identity with no session token (#3619), so a bare `<AGENT-ID>` fails; pass the full `<AGENT-ID>-issue-<N>-<SESSION>`. Name every scratch directory, `--cache` directory (the
 `al-runner-tests` skill's recipes take it in place of the shared cache), scratch clone and
 container `<AGENT-ID>-issue-<N>-<SESSION>`, and ask the scratchpad tool for
 paths under that same name:

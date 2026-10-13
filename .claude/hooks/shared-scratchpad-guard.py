@@ -7,7 +7,7 @@ in the prompt looks private, `gh pr create --body-file` reads whatever is there,
 and `cp -r` onto an existing clone succeeds. This hook is the part that fires at
 that moment.
 
-It warns on a scratchpad path with no `agent-` owner directory in it -- writing
+It warns on a scratchpad path with no `agent-<id>-<session>` owner directory in it -- writing
 one, reading one into a `gh`/`git` command, or cloning onto one. It does NOT
 warn when the path already carries an agent directory, which is what makes it a
 usable signal rather than noise on every command.
@@ -43,8 +43,11 @@ SCRATCHPAD_PATH = re.compile(r'((?:~|/)[^\s"\':;|&]*?/claude-\d+/[^\s"\':;|&]*?/
 BLOCKING_AGENT_TYPES = {"impl-agent", "reviewer"}
 ESCAPE = "# hook:allow-shared-scratch"
 
-# A path is SAFE once it names an agent directory anywhere below the scratchpad.
-OWNED = re.compile(r'/agent-[A-Za-z0-9][A-Za-z0-9._-]*(?:/|$)')
+# A path is SAFE once it names a SESSIONED agent directory below the scratchpad:
+# `agent-<tag>-<8 hex>`. A bare `agent-<pool tag>` is shared by every concurrent
+# holder of the tag (#3619), so it is not owned by anyone. Same shape as
+# tools/agent_scratchpad.py `_SESSION_TOKEN`; tools/test_agent_scratchpad.py pins both.
+OWNED = re.compile(r'/agent-[A-Za-z0-9][A-Za-z0-9._-]*-[0-9a-f]{8}(?:/|$)')
 
 # Verbs that make a shared path dangerous rather than merely present. A bare
 # `ls <scratchpad>` or `cat` of a log is fine and must not nudge -- the cost of
@@ -128,15 +131,16 @@ def is_write_target(cmd: str, pos: int) -> bool:
 
 MESSAGE = (
     "Shared-scratchpad warning.\n"
-    "This command uses a session-scratchpad path with no `agent-<id>/` owner in it.\n"
+    "This command uses a session-scratchpad path with no `agent-<id>-<session>/` owner in it.\n"
     "That directory is SHARED by every agent of this session -- it looks per-agent and\n"
-    "is not. Measured 2026-09-07: 200 entries in one session's scratchpad, ONE of them\n"
+    "is not. (A bare `agent-<pool tag>/` is shared too: concurrent agents reuse the tag, #3619.) Measured 2026-09-07: 200 entries in one session's scratchpad, ONE of them\n"
     "namespaced. It has published PRs #2973/#2974/#3181 with another agent's body and a\n"
     "wrong `Closes #N`, buried a bug report inside a closed issue (#3073), and made a\n"
     "full-corpus run silently omit the tests it was measuring (#2980).\n"
     "Use a private path:\n"
-    "  p=$(tools/agent_scratchpad.py path pr-body.md --agent-id <YOUR-ID>)\n"
-    "  tools/agent_scratchpad.py check <path> --agent-id <YOUR-ID>   # exit 1 if shared\n"
+    "  p=$(tools/agent_scratchpad.py path pr-body.md --agent-id <YOUR-ID>-issue-<N>-<SESSION>)\n"
+    "  tools/agent_scratchpad.py check <path> --agent-id <YOUR-ID>-issue-<N>-<SESSION>   # exit 1 if shared\n"
+    "  (<SESSION> = python -c \"import uuid;print(uuid.uuid4().hex[:8])\", generated once)\n"
     "  tools/agent_scratchpad.py scan                                # what is unowned\n"
     "Reading another agent's file on purpose is fine -- this is a reminder, not a rule."
 )

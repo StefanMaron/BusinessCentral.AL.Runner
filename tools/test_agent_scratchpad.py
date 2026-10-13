@@ -33,6 +33,12 @@ _spec.loader.exec_module(asp)
 
 FAILURES: list[str] = []
 
+# An identity is `<pool tag>-issue-<N>-<session token>` (impl-agent.md): the pool
+# tag is shared by every loop holding it, so only the trailing token tells two
+# concurrent agents apart (#3619).
+ME = "stma-auto-23-issue-2980-1a2b3c4d"
+OTHER = "stma-auto-9-issue-3101-5e6f7a8b"
+
 
 def check(name: str, cond: bool, detail: str = "") -> None:
     if cond:
@@ -46,7 +52,8 @@ def test_distinct_identities_never_share_a_path() -> None:
     """The property, over many names and many identities -- not one example."""
     with tempfile.TemporaryDirectory() as root:
         names = ["pr-body.md", "corpus", "body.md", "probe/run.log", "red", "a.json"]
-        ids = ["stma-auto-1", "stma-auto-2", "stma-auto-23", "impl-4", "stma-auto-11"]
+        ids = [ME, "stma-auto-23-issue-2980-1a2b3c4e", "stma-auto-2-issue-7-00000001", "stma-auto-23-issue-9-00000002",
+               "impl-4-issue-3-00000003", "stma-auto-11-issue-5-00000004"]
         seen: dict[str, tuple[str, str]] = {}
         collisions = []
         for agent in ids:
@@ -57,16 +64,16 @@ def test_distinct_identities_never_share_a_path() -> None:
                 seen[p] = (agent, n)
         check("no two identities resolve to one path", not collisions, str(collisions[:2]))
         # ...and the same identity+name IS stable, or nothing could be resumed.
-        a = asp.agent_path("pr-body.md", agent_id="stma-auto-23", scratchpad=root)
-        b = asp.agent_path("pr-body.md", agent_id="stma-auto-23", scratchpad=root)
+        a = asp.agent_path("pr-body.md", agent_id=ME, scratchpad=root)
+        b = asp.agent_path("pr-body.md", agent_id=ME, scratchpad=root)
         check("same identity+name is stable across calls", a == b, f"{a} != {b}")
         # The identity must actually appear, so a reader can attribute a stray file.
-        check("the identity appears in the path", "stma-auto-23" in a, a)
+        check("the identity appears in the path", ME in a, a)
 
 
 def test_the_directory_is_created_and_is_under_the_scratchpad() -> None:
     with tempfile.TemporaryDirectory() as root:
-        p = asp.agent_path("probe/run.log", agent_id="stma-auto-23", scratchpad=root)
+        p = asp.agent_path("probe/run.log", agent_id=ME, scratchpad=root)
         check("parent directory is created", os.path.isdir(os.path.dirname(p)), p)
         check("path stays under the scratchpad root",
               os.path.realpath(p).startswith(os.path.realpath(root)), p)
@@ -77,7 +84,7 @@ def test_escaping_the_agent_directory_is_refused() -> None:
     with tempfile.TemporaryDirectory() as root:
         for bad in ["../body.md", "a/../../body.md", "/etc/passwd"]:
             try:
-                asp.agent_path(bad, agent_id="stma-auto-23", scratchpad=root)
+                asp.agent_path(bad, agent_id=ME, scratchpad=root)
                 check(f"refuses escaping name {bad!r}", False, "no exception raised")
             except asp.ScratchpadCollision:
                 check(f"refuses escaping name {bad!r}", True)
@@ -90,39 +97,39 @@ def test_a_shared_bare_path_is_refused_loudly() -> None:
         with open(shared, "w") as fh:
             fh.write("Closes #2743\n")
         try:
-            asp.assert_private(shared, agent_id="stma-auto-23", scratchpad=root)
+            asp.assert_private(shared, agent_id=ME, scratchpad=root)
             check("a bare shared path is refused", False, "no exception raised")
         except asp.ScratchpadCollision as exc:
             msg = str(exc)
             check("a bare shared path is refused", True)
             check("the refusal names the offending path", "pr-body.md" in msg, msg)
             check("the refusal offers the private path",
-                  "stma-auto-23" in msg, msg)
+                  ME in msg, msg)
 
 
 def test_another_agents_private_path_is_refused_and_names_the_owner() -> None:
     with tempfile.TemporaryDirectory() as root:
-        theirs = asp.agent_path("pr-body.md", agent_id="stma-auto-9", scratchpad=root)
+        theirs = asp.agent_path("pr-body.md", agent_id=OTHER, scratchpad=root)
         with open(theirs, "w") as fh:
             fh.write("Closes #3101\n")
         try:
-            asp.assert_private(theirs, agent_id="stma-auto-23", scratchpad=root)
+            asp.assert_private(theirs, agent_id=ME, scratchpad=root)
             check("another agent's path is refused", False, "no exception raised")
         except asp.ScratchpadCollision as exc:
             check("another agent's path is refused", True)
             check("the refusal names the OWNER, not just the path",
-                  "stma-auto-9" in str(exc), str(exc))
+                  OTHER in str(exc), str(exc))
 
 
 def test_my_own_private_path_is_accepted() -> None:
     """A guard that refuses everything is as useless as one that refuses nothing."""
     with tempfile.TemporaryDirectory() as root:
-        mine = asp.agent_path("pr-body.md", agent_id="stma-auto-23", scratchpad=root)
+        mine = asp.agent_path("pr-body.md", agent_id=ME, scratchpad=root)
         with open(mine, "w") as fh:
             fh.write("Closes #2980\n")
         ok = True
         try:
-            asp.assert_private(mine, agent_id="stma-auto-23", scratchpad=root)
+            asp.assert_private(mine, agent_id=ME, scratchpad=root)
         except asp.ScratchpadCollision as exc:
             ok = False
             detail = str(exc)
@@ -131,7 +138,7 @@ def test_my_own_private_path_is_accepted() -> None:
         outside = os.path.join(root, "..", "elsewhere.md")
         ok2 = True
         try:
-            asp.assert_private(outside, agent_id="stma-auto-23", scratchpad=root)
+            asp.assert_private(outside, agent_id=ME, scratchpad=root)
         except asp.ScratchpadCollision:
             ok2 = False
         check("a path outside the scratchpad is not refused", ok2)
@@ -150,10 +157,10 @@ def test_identity_is_required_and_never_guessed() -> None:
             check("the refusal explains how to supply one",
                   "AL_RUNNER_AGENT_ID" in str(exc), str(exc))
         # ...and the environment variable IS honoured when present.
-        env2 = dict(env, AL_RUNNER_AGENT_ID="stma-auto-23")
+        env2 = dict(env, AL_RUNNER_AGENT_ID=ME)
         p = asp.agent_path("x.md", agent_id=None, scratchpad=root, env=env2)
         check("AL_RUNNER_AGENT_ID supplies the identity",
-              "stma-auto-23" in p, p)
+              ME in p, p)
 
 
 def test_a_malformed_identity_cannot_forge_a_path() -> None:
@@ -172,13 +179,118 @@ def test_scan_reports_shared_entries_with_no_owner() -> None:
         open(os.path.join(root, "body.md"), "w").close()
         open(os.path.join(root, "pr-body.md"), "w").close()
         os.makedirs(os.path.join(root, "corpus"))
-        asp.agent_path("safe.md", agent_id="stma-auto-23", scratchpad=root)
+        asp.agent_path("safe.md", agent_id=ME, scratchpad=root)
         shared = asp.scan_shared(scratchpad=root)
         names = {os.path.basename(p) for p in shared}
         check("scan finds the bare shared files", {"body.md", "pr-body.md"} <= names, str(names))
         check("scan finds the bare shared directory", "corpus" in names, str(names))
         check("scan does not report an agent-owned directory",
-              asp.AGENT_DIR_PREFIX + "stma-auto-23" not in names, str(names))
+              asp.AGENT_DIR_PREFIX + ME not in names, str(names))
+
+
+def test_a_bare_pool_tag_is_refused_because_concurrent_agents_share_it() -> None:
+    """#3619: three agents under `stma-auto-2` all resolved to `agent-stma-auto-2`.
+
+    Nothing in a bare tag says WHICH of its concurrent holders is asking, so the
+    tool cannot answer "yours?" -- the third state. It must refuse, in every
+    entry point, rather than hand back the directory they all share.
+    """
+    with tempfile.TemporaryDirectory() as root:
+        for tag in ["stma-auto-2", "impl-4", "stma-auto-2-issue-3606", "stma-auto-2-3606",
+                    "stma-auto-2-issue-3606-NOTHEX!!", "stma-auto-2-issue-3606-1a2b3c4",
+                    "1a2b3c4d", "-1a2b3c4d"]:
+            for label, call in (
+                ("dir", lambda: asp.agent_dir(tag, scratchpad=root)),
+                ("path", lambda: asp.agent_path("x.md", tag, scratchpad=root)),
+                ("check", lambda: asp.assert_private(
+                    os.path.join(root, "agent-" + tag, "corpus"), tag, scratchpad=root)),
+            ):
+                try:
+                    call()
+                    check(f"{label} refuses the unsessioned identity {tag!r}", False,
+                          "no exception raised")
+                except asp.ScratchpadCollision as exc:
+                    check(f"{label} refuses the unsessioned identity {tag!r}", True)
+                    if tag == "stma-auto-2" and label == "dir":
+                        check("the refusal says what to append",
+                              "<SESSION>" in str(exc) or "session" in str(exc).lower(), str(exc))
+        check("a refused identity creates no directory", os.listdir(root) == [], str(os.listdir(root)))
+
+
+def test_one_tag_in_two_sessions_gets_two_directories() -> None:
+    """The issue's own reproduction: same pool tag, same issue, two live agents."""
+    with tempfile.TemporaryDirectory() as root:
+        a = asp.agent_dir("stma-auto-2-issue-3606-aaaaaaaa", scratchpad=root)
+        b = asp.agent_dir("stma-auto-2-issue-3606-bbbbbbbb", scratchpad=root)
+        c = asp.agent_dir("stma-auto-2-issue-3607-aaaaaaaa", scratchpad=root)
+        check("two sessions on one issue resolve differently", a != b, f"{a} == {b}")
+        check("two issues of one session resolve differently", a != c, f"{a} == {c}")
+        check("one session re-resolving gets its own directory back",
+              a == asp.agent_dir("stma-auto-2-issue-3606-aaaaaaaa", scratchpad=root), a)
+        # ...and the guard turns the first agent's clone into the second one's refusal.
+        clone = os.path.join(a, "corpus")
+        os.makedirs(clone)
+        try:
+            asp.assert_private(clone, "stma-auto-2-issue-3606-bbbbbbbb", scratchpad=root)
+            check("a sibling's clone is refused", False, "no exception raised")
+        except asp.ScratchpadCollision as exc:
+            check("a sibling's clone is refused", True)
+            check("the refusal names the sibling", "aaaaaaaa" in str(exc), str(exc))
+        asp.assert_private(clone, "stma-auto-2-issue-3606-aaaaaaaa", scratchpad=root)
+        check("the owner's own clone is accepted", True)
+        # the legacy shape the issue measured: a bare dir is nobody's in particular
+        legacy = os.path.join(root, "agent-stma-auto-2", "corpus")
+        os.makedirs(legacy)
+        try:
+            asp.assert_private(legacy, "stma-auto-2-issue-3606-aaaaaaaa", scratchpad=root)
+            check("a legacy bare-tag directory is refused", False, "no exception raised")
+        except asp.ScratchpadCollision:
+            check("a legacy bare-tag directory is refused", True)
+
+
+def test_scan_reports_a_bare_tag_directory_as_shared() -> None:
+    with tempfile.TemporaryDirectory() as root:
+        os.makedirs(os.path.join(root, "agent-stma-auto-2", "corpus"))
+        asp.agent_dir(ME, scratchpad=root)
+        names = {os.path.basename(p) for p in asp.scan_shared(scratchpad=root)}
+        check("scan reports the directory every holder of the tag shares",
+              "agent-stma-auto-2" in names, str(names))
+        check("scan does not report a sessioned directory",
+              "agent-" + ME not in names, str(names))
+
+
+def test_cli_reproduces_the_issue_and_now_refuses() -> None:
+    with tempfile.TemporaryDirectory() as root:
+        rc, out, err = _cli(["--agent-id", "stma-auto-2", "--scratchpad", root, "dir"])
+        check("`dir` on a bare tag exits 1 and prints no path", rc == 1 and out == "", f"{rc} {out!r}")
+        check("the refusal goes to stderr and names the fix", "REFUSED" in err and "session" in err.lower(), err)
+        rc, out, err = _cli(["--agent-id", "stma-auto-2", "--scratchpad", root, "check",
+                             os.path.join(root, "agent-stma-auto-2", "corpus")])
+        check("`check` on a sibling's path no longer says OK", rc == 1 and "OK" not in out, f"{rc} {out!r}")
+        rc, out, err = _cli(["--agent-id", ME, "--scratchpad", root, "dir"])
+        rc2, out2, _ = _cli(["--agent-id", ME, "--scratchpad", root, "dir"])
+        check("a sessioned identity resolves, idempotently", rc == 0 and rc2 == 0 and out == out2 and out != "", f"{out!r} {out2!r}")
+
+
+def test_the_hook_and_the_tool_agree_on_what_a_sessioned_identity_is() -> None:
+    """Two regexes, one rule: drift would let the hook bless a directory the tool refuses
+    (or the reverse), which is the silent wrong answer this exists to stop."""
+    hook_spec = importlib.util.spec_from_file_location(
+        "shared_scratchpad_guard",
+        os.path.join(HERE, "..", ".claude", "hooks", "shared-scratchpad-guard.py"))
+    hook = importlib.util.module_from_spec(hook_spec)
+    hook_spec.loader.exec_module(hook)
+    for ident in [ME, OTHER, "stma-auto-2", "impl-4", "stma-auto-2-issue-3606",
+                  "stma-auto-2-issue-3606-1a2b3c4", "stma-auto-2-issue-3606-1A2B3C4D",
+                  "stma-auto-2-issue-3606-1a2b3c4dd", "x-0a0a0a0a"]:
+        try:
+            asp.resolve_agent_id(ident)
+            tool_ok = True
+        except asp.ScratchpadCollision:
+            tool_ok = False
+        hook_ok = bool(hook.OWNED.search(f"/scratchpad/agent-{ident}/x"))
+        check(f"tool and hook agree on {ident!r}", tool_ok == hook_ok,
+              f"tool accepts={tool_ok} hook owns={hook_ok}")
 
 
 def _cli(args: list[str]) -> tuple[int, str, str]:
@@ -201,9 +313,9 @@ def test_cli_accepts_options_on_either_side_of_the_subcommand() -> None:
     """
     with tempfile.TemporaryDirectory() as root:
         rc_a, out_a, err_a = _cli(
-            ["path", "pr-body.md", "--agent-id", "stma-auto-23", "--scratchpad", root])
+            ["path", "pr-body.md", "--agent-id", ME, "--scratchpad", root])
         rc_b, out_b, err_b = _cli(
-            ["--agent-id", "stma-auto-23", "--scratchpad", root, "path", "pr-body.md"])
+            ["--agent-id", ME, "--scratchpad", root, "path", "pr-body.md"])
         check("options AFTER the subcommand work", rc_a == 0, err_a)
         check("options BEFORE the subcommand work", rc_b == 0, err_b)
         check("both spellings give the SAME path", out_a == out_b and bool(out_a),
@@ -215,13 +327,13 @@ def test_cli_check_exits_1_and_explains_on_a_shared_path() -> None:
     with tempfile.TemporaryDirectory() as root:
         shared = os.path.join(root, "pr-body.md")
         open(shared, "w").close()
-        rc, out, err = _cli(["check", shared, "--agent-id", "stma-auto-23",
+        rc, out, err = _cli(["check", shared, "--agent-id", ME,
                              "--scratchpad", root])
         check("check exits 1 on a shared path", rc == 1, f"rc={rc}")
         check("the refusal goes to stderr", "REFUSED" in err, err)
-        mine = asp.agent_path("pr-body.md", agent_id="stma-auto-23", scratchpad=root)
+        mine = asp.agent_path("pr-body.md", agent_id=ME, scratchpad=root)
         open(mine, "w").close()
-        rc2, _, err2 = _cli(["check", mine, "--agent-id", "stma-auto-23",
+        rc2, _, err2 = _cli(["check", mine, "--agent-id", ME,
                              "--scratchpad", root])
         check("check exits 0 on my own path", rc2 == 0, err2)
 

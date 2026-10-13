@@ -71,8 +71,9 @@ the **worktree of the PR you are reviewing** — a missed restore then edits the
 verdict is about (#4534). If the checkout you land in is stale, preflight refuses; extract
 `origin/main`'s copy per its refusal message and run it from here, and it probes the cwd.
 
-**Your scratch files go under `tools/agent_scratchpad.py ... path <file>`, never at the
-scratchpad root** — a shared `review.md` there once carried another reviewer's verdict onto the
+**Your scratch files go under `tools/agent_scratchpad.py --agent-id <YOUR-ID>-pr-<N>-<SESSION> path <file>`
+(`<SESSION>` is `python -c "import uuid;print(uuid.uuid4().hex[:8])"`, generated once and copied literally; a bare
+`<YOUR-ID>` is refused because concurrent loops share it, #3619), never at the scratchpad root** — a shared `review.md` there once carried another reviewer's verdict onto the
 wrong PR (#4534). `.claude/hooks/shared-scratchpad-guard.py` refuses such a write in a reviewer
 context; reading a shared file is never refused.
 
