@@ -359,7 +359,11 @@ public sealed class BcInternalsNullForgivingGuardTests
         // 137 -> 136 (#3523): NCLMetaQueryColumn.ColumnIndex in the deleted ComputeJoinColumnSlotMap
         // was a BcShape.Property. DELETED with the second slot-allocation algorithm, not unconverted:
         // the filter pass now reads the slot JoinExecutor's plan gave the column.
-        Assert.Equal(136, converted);
+        //
+        // 136 -> 138 for NavRecordExtension.ParentObject and NavFormExtension.ParentObject in
+        // GetCallerRecordPatches.EnsureCallerRecordHelpers (#3702), both BcShape.Property: a silent
+        // null made NavRecord.GetCallerRecord answer null for a table or page extension caller.
+        Assert.Equal(138, converted);
     }
 
     /// <summary>

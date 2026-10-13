@@ -150,6 +150,8 @@ public sealed class CachedReflectionHandleNullConditionalRatchetTests
                 "an unresolved type in an ARGUMENT of the lookup")]
     [InlineData("static ConstructorInfo? _c; static void R() { _c ??= System.Array.Find(typeof(Nope).GetConstructors(), c => c.GetParameters().Length == 1); } static object? U() => _c?.Invoke(null);",
                 "Array.Find over an unresolved type's constructors — not a Get* call, still unmeasurable")]
+    [InlineData("static ConstructorInfo? _c; static void R(Nope t) { _c = System.Array.Find(t.GetConstructors(), c => c.GetParameters().Length == 1); } static object? U() => _c?.Invoke(null);",
+                "an error-typed RECEIVER inside a non-lookup call: no diagnostic of its own, so the type check is what sees it")]
     public void ANewSilentlyResolvedHandleUse_TripsTheScanner(string source, string why)
     {
         var found = Found("class C { " + source + " }");
