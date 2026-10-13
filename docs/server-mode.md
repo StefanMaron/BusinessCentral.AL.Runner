@@ -221,6 +221,11 @@ answer an event in a request that omits it. A single-bundle request is unchanged
   skipped test in, so a dropped object still refuses their request. A module compiled with a
   dropped test codeunit is never served from the AL-output cache or reused by another directory
   (below), so each request that compiles it reports the drop again.
+- The CLI's `PARTIAL-EMIT-DROP` guard runs here too (#5559): a module whose sources declare an object
+  the compile neither emitted nor reported dropping is refused with `exitCode: 3`, no `test` lines and
+  a `compilationErrors` entry beginning `PARTIAL-EMIT-DROP`. The case that needs it: a dropped *file*
+  is named by one of its objects, so a `profile` and a test codeunit in one file drop the codeunit
+  with only the profile named, and without the guard its tests vanished behind `exitCode: 0`.
 - `cancelled: true` is present on the summary only when a concurrent `cancel`
   command actually stopped the run before every test ran (see `cancel` below);
   omitted otherwise (never emitted as `false`).
