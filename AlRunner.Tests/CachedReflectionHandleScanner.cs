@@ -29,6 +29,17 @@
 //   fails, and every raw lookup reads as never-null (measured while writing this). Unbound counts
 //   lookup assignments that failed to bind, so the ratchet can refuse a scan in that state
 //   instead of reporting a smaller population.
+//
+// AN UNRESOLVED SYMBOL IS A THIRD STATE, NOT "LOUD" (#3702 review)
+//   `typeof(NavFormExtension).GetProperty("ParentObject", flags)` still BINDS with an error type
+//   inside it, and Roslyn then reports the result as not-null — so the usual way to write a BC
+//   lookup read as loud and escaped the ratchet. Any assignment whose right-hand side contains an
+//   unresolved symbol is therefore UNMEASURABLE and counts as possibly null (Unresolved), unless a
+//   `!` or `?? throw` above it makes it loud by syntax alone. The other remedy, referencing the BC
+//   assemblies, was not taken: the scan would then depend on which BC build the test host carries,
+//   and a type only some builds have would move the population between legs. BcUnresolvedNames
+//   is what separates "BC types are unresolved here, by design" from "the compilation lost a BCL
+//   reference": it lists unresolved names that DO exist in the BCL.
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -45,7 +56,8 @@ internal sealed record HandleUse(
 /// looked at nothing (guards-need-a-third-state.md).</summary>
 internal sealed record HandleScanStats(
     int FilesParsed, int NullConditionalAccesses, int HandleReceivers, int SilentHandles,
-    int LoudHandles, int LookupAssignments, IReadOnlyList<string> UnboundSites)
+    int LoudHandles, int LookupAssignments, IReadOnlyList<string> UnboundSites,
+    int Assignments, int UnresolvedAssignments, IReadOnlyList<string> BcUnresolvedNames)
 {
     public int Unbound => UnboundSites.Count;
 }
@@ -67,6 +79,14 @@ internal static class CachedReflectionHandleScanner
     private static readonly string[] LookupNames =
         { "GetProperty", "GetMethod", "GetField", "GetConstructor", "GetNestedType", "GetType", "GetEvent", "GetMember" };
 
+    /// <summary>What `<ImplicitUsings>enable</ImplicitUsings>` adds for Microsoft.NET.Sdk. A COPY of
+    /// the SDK's list, pinned against AlRunner.csproj / Directory.Build.* by the ratchet's tests.</summary>
+    internal static readonly string[] ImplicitUsings =
+    {
+        "System", "System.Collections.Generic", "System.IO", "System.Linq", "System.Net.Http",
+        "System.Threading", "System.Threading.Tasks",
+    };
+
     private static readonly Lazy<IReadOnlyList<MetadataReference>> Refs = new(() =>
         ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!)
             .Split(Path.PathSeparator)
@@ -75,14 +95,13 @@ internal static class CachedReflectionHandleScanner
             .Select(p => (MetadataReference)MetadataReference.CreateFromFile(p))
             .ToList());
 
-    internal static IReadOnlyList<HandleUse> Scan(IEnumerable<(string Path, string Text)> files, out HandleScanStats stats)
+    internal static IReadOnlyList<HandleUse> Scan(
+        IEnumerable<(string Path, string Text)> files, out HandleScanStats stats, string[]? globalUsings = null)
     {
         var parse = new CSharpParseOptions(LanguageVersion.Latest);
         var trees = files.Select(f => CSharpSyntaxTree.ParseText(f.Text, parse, path: f.Path)).ToList();
         var implicitUsings = CSharpSyntaxTree.ParseText(
-            "global using System; global using System.Collections.Generic; global using System.IO; "
-            + "global using System.Linq; global using System.Net.Http; global using System.Threading; "
-            + "global using System.Threading.Tasks;", parse, path: "<implicit-usings>");
+            string.Concat((globalUsings ?? ImplicitUsings).Select(u => $"global using {u}; ")), parse, path: "<implicit-usings>");
         var compilation = CSharpCompilation.Create("handle-scan", trees.Append(implicitUsings), Refs.Value,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, allowUnsafe: true,
                 nullableContextOptions: NullableContextOptions.Enable));
@@ -110,6 +129,9 @@ internal static class CachedReflectionHandleScanner
         var names = wanted.Select(s => s.Name).ToHashSet(StringComparer.Ordinal);
         var silentAssignments = new Dictionary<ISymbol, bool>(SymbolEqualityComparer.Default);
         var lookupAssignments = 0;
+        var assignments = 0;
+        var unresolved = 0;
+        var bcUnresolved = new SortedSet<string>(StringComparer.Ordinal);
         var unbound = new List<string>();
         foreach (var tree in trees)
         {
@@ -139,7 +161,13 @@ internal static class CachedReflectionHandleScanner
                         unbound.Add($"{tree.FilePath}:{call.GetLocation().GetLineSpan().StartLinePosition.Line + 1}  {call.Expression}");
                 }
 
-                var silent = PossiblyNull(model, rhs);
+                assignments++;
+                var silent = PossiblyNull(model, rhs, out var viaUnresolved);
+                if (viaUnresolved)
+                {
+                    unresolved++;
+                    foreach (var name in BclNamesThatDidNotResolve(compilation, model, rhs)) bcUnresolved.Add(name);
+                }
                 silentAssignments[target] = silentAssignments.GetValueOrDefault(target) | silent;
             }
         }
@@ -167,32 +195,60 @@ internal static class CachedReflectionHandleScanner
         }
 
         stats = new HandleScanStats(trees.Count, cae, uses.Count, silentHandles.Count,
-            wanted.Count - silentHandles.Count, lookupAssignments, unbound);
+            wanted.Count - silentHandles.Count, lookupAssignments, unbound, assignments, unresolved,
+            bcUnresolved.ToList());
         return result;
     }
 
     /// <summary>
-    /// Can <paramref name="e"/> evaluate to null? The compiler's flow state answers, except for a
-    /// lookup call that failed to BIND (BC types are error types here, so an argument of one makes
-    /// overload resolution fail): the compiler then reports its result without the BCL's `?`, which
-    /// would read as never-null. Such a call is treated as nullable unless a `!` or a `?? throw`
-    /// sits above it, which is what the syntax says about it regardless of binding.
+    /// Can <paramref name="e"/> evaluate to null? A `!` and a `?? throw` are loud by syntax alone.
+    /// Otherwise an expression with an UNRESOLVED symbol anywhere in it (BC types are error types
+    /// here) is unmeasurable and counts as possibly null: the compiler still binds the BCL call
+    /// around an error-typed receiver or argument, but reports its result without the `?`.
+    /// <paramref name="viaUnresolved"/> says the verdict came from that rule, not from flow state.
     /// </summary>
-    private static bool PossiblyNull(SemanticModel model, ExpressionSyntax e)
+    private static bool PossiblyNull(SemanticModel model, ExpressionSyntax e, out bool viaUnresolved)
     {
+        viaUnresolved = false;
         while (e is ParenthesizedExpressionSyntax p) e = p.Expression;
         switch (e)
         {
             case PostfixUnaryExpressionSyntax { RawKind: (int)SyntaxKind.SuppressNullableWarningExpression }:
                 return false;
             case BinaryExpressionSyntax b when b.IsKind(SyntaxKind.CoalesceExpression):
-                return PossiblyNull(model, b.Right);
+                return PossiblyNull(model, b.Right, out viaUnresolved);
             case ThrowExpressionSyntax:
                 return false;
-            case InvocationExpressionSyntax inv when IsLookupCall(inv, out _) && model.GetSymbolInfo(inv).Symbol is null:
-                return true;
+        }
+        if (HasUnresolvedSymbol(model, e) || (e is InvocationExpressionSyntax inv && IsLookupCall(inv, out _)
+                                                && model.GetSymbolInfo(inv).Symbol is null))
+        {
+            viaUnresolved = true;
+            return true;
         }
         return model.GetTypeInfo(e).Nullability.FlowState != NullableFlowState.NotNull;
+    }
+
+    /// <summary>An error diagnostic inside the expression (`typeof(Nope)`), or a sub-expression whose
+    /// type is an error type without a diagnostic of its own (a call on an error-typed receiver).</summary>
+    private static bool HasUnresolvedSymbol(SemanticModel model, ExpressionSyntax e) =>
+        model.GetDiagnostics(e.Span).Any(d => d.Severity == DiagnosticSeverity.Error)
+        || e.DescendantNodesAndSelf().OfType<ExpressionSyntax>().Any(n => model.GetTypeInfo(n).Type is IErrorTypeSymbol);
+
+    /// <summary>Names the right-hand side failed to resolve that DO exist in the BCL namespaces the
+    /// project imports implicitly — the signature of a compilation that lost a reference, as
+    /// opposed to a BC type, which is unresolved here on purpose.</summary>
+    private static IEnumerable<string> BclNamesThatDidNotResolve(CSharpCompilation compilation, SemanticModel model, ExpressionSyntax e)
+    {
+        foreach (var d in model.GetDiagnostics(e.Span).Where(d => d.Id == "CS0246"))
+        {
+            var name = d.Location.SourceTree!.GetText().ToString(d.Location.SourceSpan).Trim();
+            var simple = name.Split('<')[0].Split('.').Last();
+            var arity = name.Contains('<') ? name.Count(c => c == ',') + 1 : 0;
+            var meta = arity == 0 ? simple : $"{simple}`{arity}";
+            if (ImplicitUsings.Any(ns => compilation.GetTypeByMetadataName($"{ns}.{meta}") is not null))
+                yield return name;
+        }
     }
 
     private static ITypeSymbol TypeOf(ISymbol s) => s switch

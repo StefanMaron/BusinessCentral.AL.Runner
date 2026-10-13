@@ -90,6 +90,14 @@ public sealed class CachedReflectionHandleNullConditionalRatchetTests
             $"classified {stats.SilentHandles} silent / {stats.LoudHandles} loud handles — one side is empty, "
             + "so the nullable analysis is not distinguishing resolutions");
         Assert.True(stats.LookupAssignments >= 100, $"read only {stats.LookupAssignments} lookup assignments");
+        Assert.True(stats.BcUnresolvedNames.Count == 0,
+            "the right-hand side of a handle assignment failed to resolve names that exist in the BCL "
+            + "namespaces AlRunner.csproj imports implicitly, so the compilation lost a reference: "
+            + string.Join(", ", stats.BcUnresolvedNames));
+        Assert.True(stats.UnresolvedAssignments > 0 && stats.UnresolvedAssignments < stats.Assignments,
+            $"{stats.UnresolvedAssignments} of {stats.Assignments} handle assignments involved an unresolved "
+            + "symbol. BC types ARE unresolved here by design, so some must be (zero means the rule that reads "
+            + "them as possibly-null never ran) and not all (all means nothing resolved).");
         Assert.True(stats.Unbound * 10 < stats.LookupAssignments,
             $"{stats.Unbound} of {stats.LookupAssignments} lookup assignments did not BIND. A few do — an "
             + "argument of a BC type is an error type here — and the scanner reads those as nullable. A "
@@ -134,6 +142,14 @@ public sealed class CachedReflectionHandleNullConditionalRatchetTests
                 "a Type handle (#3622's shape)")]
     [InlineData("static PropertyInfo? _p; static object? U(object o) => _p?.GetValue(o);",
                 "a field no source line assigns cannot be proven loud, so it counts")]
+    [InlineData("static PropertyInfo? _p = typeof(Nope).GetProperty(\"X\", BindingFlags.NonPublic | BindingFlags.Instance); static object? U(object o) => _p?.GetValue(o);",
+                "typeof(<unresolved BC type>).GetProperty(...) — it BINDS, and the compiler then reports it never-null")]
+    [InlineData("static PropertyInfo? _p; static void R() { _p ??= typeof(Nope).GetProperty(\"X\", BindingFlags.NonPublic | BindingFlags.Instance); } static object? U(object o) => _p?.GetValue(o);",
+                "the same, assigned lazily with ??=")]
+    [InlineData("static MethodInfo? _m; static void R() { _m = typeof(Nope).GetMethod(\"X\", new[] { typeof(Nope2) }); } static object? U(object o) => _m?.Invoke(o, null);",
+                "an unresolved type in an ARGUMENT of the lookup")]
+    [InlineData("static ConstructorInfo? _c; static void R() { _c ??= System.Array.Find(typeof(Nope).GetConstructors(), c => c.GetParameters().Length == 1); } static object? U() => _c?.Invoke(null);",
+                "Array.Find over an unresolved type's constructors — not a Get* call, still unmeasurable")]
     public void ANewSilentlyResolvedHandleUse_TripsTheScanner(string source, string why)
     {
         var found = Found("class C { " + source + " }");
@@ -151,6 +167,10 @@ public sealed class CachedReflectionHandleNullConditionalRatchetTests
                 "a helper declared non-nullable — the BcShape.Property shape")]
     [InlineData("static PropertyInfo? _p; static void R(System.Type t) { _p = t.GetProperty(\"X\")!; } static object? U(object o) => _p?.GetValue(o);",
                 "null-forgiving: BcInternalsNullForgivingGuardTests owns that lookup")]
+    [InlineData("static PropertyInfo? _p = typeof(Nope).GetProperty(\"X\", BindingFlags.NonPublic | BindingFlags.Instance) ?? throw new System.InvalidOperationException(\"gone\"); static object? U(object o) => _p?.GetValue(o);",
+                "`?? throw` over an unresolved-type lookup stays loud — an over-refusing scanner is also a failure")]
+    [InlineData("static PropertyInfo? _p = typeof(Nope).GetProperty(\"X\", BindingFlags.NonPublic | BindingFlags.Instance)!; static object? U(object o) => _p?.GetValue(o);",
+                "`!` over an unresolved-type lookup stays owned by the null-forgiving guard")]
     [InlineData("static PropertyInfo? _p; static void R(System.Type t) { _p = t.GetProperty(\"X\"); } static object? U(object o) => _p!.GetValue(o);",
                 "no `?.` at the use — a failed lookup NREs rather than answering")]
     [InlineData("static PropertyInfo? _p; static void R(System.Type t) { _p = t.GetProperty(\"X\")!; _p = null; } static object? U(object o) => _p?.GetValue(o);",
@@ -252,6 +272,47 @@ public sealed class CachedReflectionHandleNullConditionalRatchetTests
         Assert.Single(Found(Decl("t.GetProperty(\"X\")")));
         Assert.Empty(Found(Decl("t.GetProperty(\"X\")!")));
         Assert.Empty(Found(Decl("t.GetProperty(\"X\") ?? throw new System.Exception(\"gone\")")));
+    }
+
+    /// <summary>BC types are unresolved in this compilation on purpose, so that alone must not
+    /// refuse; an unresolved name that EXISTS in the BCL is what means a reference was lost.
+    /// Driven by compiling without the global usings the project supplies.</summary>
+    [Fact]
+    public void UnresolvedBcTypes_AreCounted_AndOnlyAMissingBclNameIsARefusal()
+    {
+        const string bc = "class C { static PropertyInfo? _p; static void R() { _p = typeof(Nope).GetProperty(\"X\", BindingFlags.Instance); } static object? U(object o) => _p?.GetValue(o); }";
+        CachedReflectionHandleScanner.Scan(new[] { ("f.cs", Usings + bc) }, out var withBc);
+        Assert.Equal(1, withBc.UnresolvedAssignments);
+        Assert.Empty(withBc.BcUnresolvedNames);
+
+        const string bcl = "class C { static PropertyInfo? _p; static PropertyInfo? Pick(object o) => null; static void R() { _p = Pick(new List<int>()); } static object? U(object o) => _p?.GetValue(o); }";
+        CachedReflectionHandleScanner.Scan(new[] { ("f.cs", Usings + bcl) }, out var intact);
+        Assert.Empty(intact.BcUnresolvedNames);
+
+        CachedReflectionHandleScanner.Scan(new[] { ("f.cs", Usings + bcl) }, out var lost, globalUsings: Array.Empty<string>());
+        Assert.Contains(lost.BcUnresolvedNames, n => n.StartsWith("List<", StringComparison.Ordinal));
+    }
+
+    /// <summary>The scanner's implicit-usings list is a COPY of what the SDK adds for
+    /// `ImplicitUsings`. Removing one is caught by the unbound ratio; ADDING a `Using` item to the
+    /// project is not — an unresolved `PropertyInfo` drops its receivers before any floor moves —
+    /// so this reads the production files.</summary>
+    [Fact]
+    public void TheImplicitUsingsCopy_MatchesTheProjectFiles()
+    {
+        var project = System.Xml.Linq.XDocument.Load(Path.Combine(RepoRoot, "AlRunner", "AlRunner.csproj"));
+        Assert.Equal("enable", project.Descendants("ImplicitUsings").Single().Value);
+
+        foreach (var f in new[] { Path.Combine("AlRunner", "AlRunner.csproj"), "Directory.Build.props", "Directory.Build.targets" })
+        {
+            var path = Path.Combine(RepoRoot, f);
+            if (!File.Exists(path)) continue;
+            var usings = System.Xml.Linq.XDocument.Load(path).Descendants("Using").ToList();
+            Assert.True(usings.Count == 0,
+                $"{f} declares <Using> item(s) ({string.Join(", ", usings.Select(u => (string?)u.Attribute("Include") ?? (string?)u.Attribute("Remove")))}); "
+                + "add them to CachedReflectionHandleScanner.ImplicitUsings, or files relying on them stop binding "
+                + "and their handles drop out of the scan unseen.");
+        }
     }
 
     /// <summary>The comparison is a pure function, so the two failure directions are driven
@@ -385,8 +446,10 @@ public sealed class CachedReflectionHandleNullConditionalRatchetTests
         ("AlRunner/Patches/MetadataPatches.cs", "BcRuntime", "_piTestExecution", "GetValue", 1),
         // MethodScopePatches.cs — 1
         ("AlRunner/Patches/MethodScopePatches.cs", "BcRuntime", "_fSessLastException", "SetValue", 1),
-        // NavAppResourcePatches.cs — 1
+        // NavAppResourcePatches.cs — 3
+        ("AlRunner/Patches/NavAppResourcePatches.cs", "NavAppResourcePatches", "_pApplicationObject", "GetValue", 1),
         ("AlRunner/Patches/NavAppResourcePatches.cs", "NavAppResourcePatches", "_pCurrentMethodScope", "GetValue", 1),
+        ("AlRunner/Patches/NavAppResourcePatches.cs", "NavAppResourcePatches", "_pParentScope", "GetValue", 1),
         // NavRecordRefPatches.cs — 12
         ("AlRunner/Patches/NavRecordRefPatches.cs", "BcRuntime", "_mTreeGetReferenceTarget", "Invoke", 6),
         ("AlRunner/Patches/NavRecordRefPatches.cs", "BcRuntime", "_mTreeSetReferenceTarget", "Invoke", 6),
@@ -411,7 +474,8 @@ public sealed class CachedReflectionHandleNullConditionalRatchetTests
         ("AlRunner/Patches/NavReportSync.cs", "NavReportSync", "_synthMdiExtNameProp", "SetValue", 1),
         ("AlRunner/Patches/NavReportSync.cs", "NavReportSync", "_synthMdiVarNameProp", "GetValue", 1),
         ("AlRunner/Patches/NavReportSync.cs", "NavReportSync", "_synthMdiVarNameProp", "SetValue", 1),
-        // RecordPatches.CreateObjectInstance.cs — 1
+        // RecordPatches.CreateObjectInstance.cs — 2
+        ("AlRunner/Patches/RecordPatches.CreateObjectInstance.cs", "RecordPatches", "_baseNavRecordCtor", "Invoke", 1),
         ("AlRunner/Patches/RecordPatches.CreateObjectInstance.cs", "RecordPatches", "_fOrderedExtensionObjects", "GetValue", 1),
         // RecordPatches.DataAccessDispatch.cs — 7
         ("AlRunner/Patches/RecordPatches.DataAccessDispatch.cs", "RecordPatches", "_fDasGlobalFilters", "GetValue", 1),
@@ -454,6 +518,8 @@ public sealed class CachedReflectionHandleNullConditionalRatchetTests
         ("AlRunner/Patches/RecordWritePatches.cs", "BcRuntime", "_fRecordImplementationMetaTable", "GetValue", 1),
         ("AlRunner/Patches/RecordWritePatches.cs", "BcRuntime", "_fRecordImplementationMutableRecordBuffer", "SetValue", 1),
         ("AlRunner/Patches/RecordWritePatches.cs", "BcRuntime", "_pMrbResultRecordBuffer", "GetValue", 1),
+        // RunnerPageInstance.cs — 1
+        ("AlRunner/Patches/RunnerPageInstance.cs", "RunnerPageInstance", "_pFormExtensionParentObject", "SetValue", 1),
         // RunnerTestPageState.cs — 1
         ("AlRunner/Patches/RunnerTestPageState.cs", "RunnerTestPageState", "_testPageField", "GetValue", 1),
         // SessionPatches.cs — 3

@@ -49,11 +49,17 @@ public static partial class BcRuntime
     private static void EnsureCallerRecordHelpers()
     {
         if (_callerRecordHelpersResolved) return;
+        // Refuses when BC moves ParentObject (#3702): a null handle made the extension arms of
+        // NavRecord_GetCallerRecord answer null silently. Present on all 25 provisioned Ncl builds
+        // (metadata read), so no build the runner has seen reaches the refusal. The flag is set
+        // AFTER resolution, or a refusal on the first call would be skipped on the second.
+        const BindingFlags Any = BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public;
+        const string Surface = "Record.GetCallerRecord (table / page extension caller)";
+        _pRecordExtensionParentObject = AlRunner.Infrastructure.BcShape.Property(
+            typeof(NavRecordExtension), "ParentObject", Any, Surface, "the caller record of a table extension cannot be read");
+        _pFormExtensionParentObject = AlRunner.Infrastructure.BcShape.Property(
+            typeof(NavFormExtension), "ParentObject", Any, Surface, "the caller record of a page extension cannot be read");
         _callerRecordHelpersResolved = true;
-        _pRecordExtensionParentObject = typeof(NavRecordExtension).GetProperty(
-            "ParentObject", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
-        _pFormExtensionParentObject = typeof(NavFormExtension).GetProperty(
-            "ParentObject", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
     }
 
     /// <summary>
@@ -74,11 +80,11 @@ public static partial class BcRuntime
             case NavType.Record:
                 return applicationObject as NavRecord;
             case NavType.TableExtension:
-                return (_pRecordExtensionParentObject?.GetValue(applicationObject as NavRecordExtension)) as NavRecord;
+                return (_pRecordExtensionParentObject!.GetValue(applicationObject as NavRecordExtension)) as NavRecord;
             case NavType.Form:
                 return (applicationObject as NavForm)?.SourceTable;
             case NavType.PageExtension:
-                var parentForm = (_pFormExtensionParentObject?.GetValue(applicationObject as NavFormExtension)) as NavForm;
+                var parentForm = (_pFormExtensionParentObject!.GetValue(applicationObject as NavFormExtension)) as NavForm;
                 return parentForm?.SourceTable;
             default:
                 return null;
