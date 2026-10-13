@@ -82,8 +82,8 @@ public static class SecurityFilteringPatches
     internal static void InvalidateCurrentResultSetEnumerator(object recImpl)
     {
         Resolve(recImpl.GetType());
-        _pResultSetEnumerator?.SetValue(recImpl, null);
-        _fResultSetReversed?.SetValue(recImpl, false);
+        _pResultSetEnumerator!.SetValue(recImpl, null);
+        _fResultSetReversed!.SetValue(recImpl, false);
     }
 
     private static void Resolve(System.Type recImplType)
@@ -101,12 +101,35 @@ public static class SecurityFilteringPatches
                 "[SecurityFiltering] RecordImplementation.securityFiltering field not found — " +
                 "Record.SecurityFiltering() would silently report a stale mode.");
 
-        for (var t = recImplType; t != null; t = t.BaseType)
-        {
-            _pResultSetEnumerator ??= t.GetProperty("ResultSetEnumerator", Any);
-            _fResultSetReversed ??= t.GetField("resultSetReversed", Any);
-        }
+        (_pResultSetEnumerator, _fResultSetReversed) = ResolveResultSetMembers(recImplType);
 
         _resolved = true;
+    }
+
+    /// <summary>
+    /// The two members <c>InvalidateCurrentResultSetEnumerator</c> writes, walked up the hierarchy.
+    /// Refuses when either is missing: a skipped write left <c>Next()</c> continuing from a stale
+    /// enumerator (#4161) with nothing saying why. The BC body is identical on 27.0 and 28.4
+    /// (bc270/bc284 decompile), so no BC version the runner has seen reaches the throw (#3702).
+    /// </summary>
+    internal static (PropertyInfo Enumerator, FieldInfo Reversed) ResolveResultSetMembers(System.Type recImplType)
+    {
+        const BindingFlags Any =
+            BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
+
+        PropertyInfo? enumerator = null;
+        FieldInfo? reversed = null;
+        for (var t = recImplType; t != null; t = t.BaseType)
+        {
+            enumerator ??= t.GetProperty("ResultSetEnumerator", Any);
+            reversed ??= t.GetField("resultSetReversed", Any);
+        }
+
+        const string Surface = "Record read after Get/FindSet (RecordImplementation.InvalidateCurrentResultSetEnumerator replacement)";
+        return (
+            enumerator ?? throw new AlRunner.Infrastructure.BcShapeGapException(Surface,
+                "RecordImplementation.ResultSetEnumerator", "property not found — the cached result set could not be invalidated"),
+            reversed ?? throw new AlRunner.Infrastructure.BcShapeGapException(Surface,
+                "RecordImplementation.resultSetReversed", "field not found — the cached result set could not be invalidated"));
     }
 }

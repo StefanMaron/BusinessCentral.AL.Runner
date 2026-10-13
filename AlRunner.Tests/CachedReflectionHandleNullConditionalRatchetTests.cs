@@ -85,15 +85,15 @@ public sealed class CachedReflectionHandleNullConditionalRatchetTests
 
         Assert.True(stats.FilesParsed >= 100, $"parsed only {stats.FilesParsed} files under AlRunner/");
         Assert.True(stats.NullConditionalAccesses >= 100, $"saw only {stats.NullConditionalAccesses} `?.` expressions");
-        Assert.True(stats.HandleReceivers >= 10, $"found only {stats.HandleReceivers} `?.` receivers of a reflection-handle type");
-        Assert.True(stats.SilentHandles >= 10 && stats.LoudHandles >= 1,
+        Assert.True(stats.HandleReceivers >= 150, $"found only {stats.HandleReceivers} `?.` receivers of a reflection-handle type");
+        Assert.True(stats.SilentHandles >= 100 && stats.LoudHandles >= 5,
             $"classified {stats.SilentHandles} silent / {stats.LoudHandles} loud handles — one side is empty, "
             + "so the nullable analysis is not distinguishing resolutions");
-        Assert.True(stats.LookupAssignments >= 10, $"read only {stats.LookupAssignments} lookup assignments");
-        Assert.True(stats.Unbound * 4 < stats.LookupAssignments,
+        Assert.True(stats.LookupAssignments >= 100, $"read only {stats.LookupAssignments} lookup assignments");
+        Assert.True(stats.Unbound * 10 < stats.LookupAssignments,
             $"{stats.Unbound} of {stats.LookupAssignments} lookup assignments did not BIND. A few do — an "
             + "argument of a BC type is an error type here — and the scanner reads those as nullable. A "
-            + "quarter or more means the compilation lost a reference or a global using that "
+            + "tenth or more means the compilation lost a reference or a global using that "
             + $"AlRunner.csproj supplies: fix CachedReflectionHandleScanner, not this bound:{Environment.NewLine}"
             + string.Join(Environment.NewLine, stats.UnboundSites));
     }
@@ -132,6 +132,8 @@ public sealed class CachedReflectionHandleNullConditionalRatchetTests
                 "a cached handle held in a property rather than a field")]
     [InlineData("static System.Type? _t; static void R(System.Reflection.Assembly a) { _t = a.GetType(\"N.T\"); } static bool U(object o) => _t?.IsInstanceOfType(o) ?? false;",
                 "a Type handle (#3622's shape)")]
+    [InlineData("static PropertyInfo? _p; static object? U(object o) => _p?.GetValue(o);",
+                "a field no source line assigns cannot be proven loud, so it counts")]
     public void ANewSilentlyResolvedHandleUse_TripsTheScanner(string source, string why)
     {
         var found = Found("class C { " + source + " }");
@@ -151,6 +153,8 @@ public sealed class CachedReflectionHandleNullConditionalRatchetTests
                 "null-forgiving: BcInternalsNullForgivingGuardTests owns that lookup")]
     [InlineData("static PropertyInfo? _p; static void R(System.Type t) { _p = t.GetProperty(\"X\"); } static object? U(object o) => _p!.GetValue(o);",
                 "no `?.` at the use — a failed lookup NREs rather than answering")]
+    [InlineData("static PropertyInfo? _p; static void R(System.Type t) { _p = t.GetProperty(\"X\")!; _p = null; } static object? U(object o) => _p?.GetValue(o);",
+                "a reset to null is not a resolution, so it cannot make a loud handle silent")]
     [InlineData("static System.Type? _t; static void R(System.Reflection.Assembly a) { _t = a.GetType(\"N.T\"); } static object? U() => _t?.GetProperty(\"X\");",
                 "`typeHandle?.GetProperty(..)` is SilentReflectionLookupRatchetTests' population")]
     [InlineData("static string? _s; static void R() { _s = \"x\"; } static int? U() => _s?.Length;",
@@ -206,6 +210,16 @@ public sealed class CachedReflectionHandleNullConditionalRatchetTests
             """;
 
         Assert.Equal(new[] { ("_p", "GetValue") }, Found(src));
+    }
+
+    /// <summary>A local the compiler populated — a pattern variable, an `out var` — was never
+    /// assigned by a lookup this code wrote, so it abstains instead of reading as unresolved.</summary>
+    [Fact]
+    public void ALocalNoStatementAssigns_Abstains()
+    {
+        const string src = "class C { static object? M(System.Type t, object o) { if (t.GetProperty(\"X\") is { } p) return p?.GetValue(o); return null; } }";
+
+        Assert.Empty(CachedReflectionHandleScanner.Scan(new[] { ("f.cs", Usings + src) }, out _));
     }
 
     /// <summary>Method locals are a different shape — the null never leaves its method, so the
@@ -442,9 +456,6 @@ public sealed class CachedReflectionHandleNullConditionalRatchetTests
         ("AlRunner/Patches/RecordWritePatches.cs", "BcRuntime", "_pMrbResultRecordBuffer", "GetValue", 1),
         // RunnerTestPageState.cs — 1
         ("AlRunner/Patches/RunnerTestPageState.cs", "RunnerTestPageState", "_testPageField", "GetValue", 1),
-        // SecurityFilteringPatches.cs — 2
-        ("AlRunner/Patches/SecurityFilteringPatches.cs", "SecurityFilteringPatches", "_fResultSetReversed", "SetValue", 1),
-        ("AlRunner/Patches/SecurityFilteringPatches.cs", "SecurityFilteringPatches", "_pResultSetEnumerator", "SetValue", 1),
         // SessionPatches.cs — 3
         ("AlRunner/Patches/SessionPatches.cs", "BcRuntime", "_pRefTarget", "GetValue", 1),
         ("AlRunner/Patches/SessionPatches.cs", "BcRuntime", "_pTlsCurrent", "GetValue", 1),

@@ -251,5 +251,10 @@ and unenforced anywhere.
 
 - `AlRunner/Infrastructure/BcShapeGapException.cs` — the line between a gap and an answer
 - `AlRunner.Tests/BcInternalsNullForgivingGuardTests.cs` — the sibling ratchet, for `!`
+- `AlRunner.Tests/CachedReflectionHandleNullConditionalRatchetTests.cs` — the third sibling, for the
+  USE of a cached handle: a lookup stored in a field and later dereferenced with `?.` is outside
+  this ratchet's expression-local view (#3702). It reads symbols through Roslyn, so
+  the header there, not this page, is where its rules live. Fixing the handle's resolution
+  (one `BcShape.*` / `?? throw` where the lookup failed) removes all of that handle's uses at once.
 - `.claude/rules/loud-failures.md` — no silent out-of-scope failures
 - #2994 — converting *already-loud* refusals onto `BcShapeGapException`; a different population
