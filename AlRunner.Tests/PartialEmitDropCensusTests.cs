@@ -3,16 +3,29 @@
 // header starts a line was counted as declared, "dropped" by the compile, and the whole bundle
 // refused with exit 3.
 //
+// The census is now BC's syntax tree, so the guard cannot be provoked with a ghost declaration
+// any more. AL_RUNNER_TEST_DROP_EMITTED_OBJECT removes one emitted source by name before the
+// guard runs, which is the state the guard exists to catch; the firing tests use it.
+//
 // Runner-specific: real BC has one parse. No "application" dependency
 // (.claude/rules/no-base-app-in-csharp-tests.md); each test raises its own Error().
 using System.Diagnostics;
 using System.Text;
+using AlRunner.Infrastructure;
 using Xunit;
 
 namespace AlRunner.Tests;
 
+[Collection(BcEngineCollection.Name)]
 public sealed class PartialEmitDropCensusTests : IDisposable
 {
+    private readonly BcEngineFixture _engine;
+
+    public PartialEmitDropCensusTests(BcEngineFixture engine) => _engine = engine;
+
+    private void RequireEngine() =>
+        TestArtifacts.SkipIf(!_engine.Ready, _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
@@ -24,10 +37,12 @@ public sealed class PartialEmitDropCensusTests : IDisposable
         try { Directory.Delete(_root, recursive: true); } catch { /* best-effort cleanup */ }
     }
 
-    private static (string output, int exit) RunRunner(string bundle)
+    private static (string output, int exit) RunRunner(string bundle, string? dropEmittedObject = null)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
+        // The guard runs on an emit; a warm al-out cache HIT skips it, and the seam with it.
+        args.Append(" --no-cache");
         args.Append(" \"").Append(bundle).Append('"');
         var psi = new ProcessStartInfo
         {
@@ -35,6 +50,7 @@ public sealed class PartialEmitDropCensusTests : IDisposable
             RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
         };
+        if (dropEmittedObject != null) psi.Environment["AL_RUNNER_TEST_DROP_EMITTED_OBJECT"] = dropEmittedObject;
         var sb = new StringBuilder();
         var p = Process.Start(psi)!;
         p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
@@ -94,5 +110,179 @@ public sealed class PartialEmitDropCensusTests : IDisposable
         Assert.DoesNotContain("PARTIAL-EMIT-DROP", output);
         Assert.Contains("PASS  Codeunit65520.Runs", output);
         Assert.Equal(0, exit);
+    }
+
+    /// <summary>The seam itself, and the control for every test below: the same bundle is clean
+    /// without it and refused with it, so a refusal is the dropped object's and nothing else's.</summary>
+    [SkippableFact]
+    public void ForcedDrop_OfADeclaredObject_StillFiresTheGuard()
+    {
+        TestArtifacts.SkipIfMissing();
+        var dir = Bundle("forced", "Census Forced Probe");
+        File.WriteAllText(Path.Combine(dir, "Victim.al"), """
+            codeunit 65521 "Census Victim"
+            {
+            }
+            """);
+
+        var (clean, cleanExit) = RunRunner(dir);
+        var (output, exit) = RunRunner(dir, dropEmittedObject: "Census Victim");
+
+        Assert.Equal(0, cleanExit);
+        Assert.DoesNotContain("PARTIAL-EMIT-DROP", clean);
+        Assert.Contains("PARTIAL-EMIT-DROP", output);
+        Assert.Contains("2 object(s) declared, only 1 emitted", output);
+        Assert.Contains("Declared: [Census Forced Probe, Census Victim]", output.Replace("Victim.al", ""));
+        Assert.Equal(3, exit);
+    }
+
+    /// <summary>
+    /// What the regex could not see and the tree can: a capitalised keyword (AL keywords are
+    /// case-insensitive) and a header with its body on the same line. Each is an object the
+    /// compile emitted and the seam then hides; a count that missed either would stay under the
+    /// accounted-for total and the guard would not fire.
+    /// </summary>
+    [SkippableTheory]
+    [InlineData("Codeunit 65521 \"Census Victim\"\n{\n}\n")]
+    [InlineData("codeunit 65521 \"Census Victim\" { }\n")]
+    [InlineData("codeunit 65521 \"Census Victim\" // trailing comment\n{\n}\n")]
+    public void ForcedDrop_OfAnObjectTheRegexCouldNotSee_FiresTheGuard(string victim)
+    {
+        TestArtifacts.SkipIfMissing();
+        var dir = Bundle("unseen", "Census Unseen Probe");
+        File.WriteAllText(Path.Combine(dir, "Victim.al"), victim);
+
+        var (output, _) = RunRunner(dir, dropEmittedObject: "Census Victim");
+
+        Assert.Contains("PARTIAL-EMIT-DROP", output);
+        Assert.Contains("Census Victim", output);
+    }
+
+    /// <summary>
+    /// A drop fires, and the objects the guard LISTS as declared are the real ones: a header in a
+    /// block comment and one in an inactive branch are in the file and not in the list.
+    /// </summary>
+    [SkippableFact]
+    public void ForcedDrop_ListsOnlyRealDeclarations()
+    {
+        TestArtifacts.SkipIfMissing();
+        var dir = Bundle("listed", "Census Listed Probe");
+        File.WriteAllText(Path.Combine(dir, "Victim.al"), """
+            codeunit 65521 "Census Victim"
+            {
+            }
+            """);
+        File.WriteAllText(Path.Combine(dir, "Ghosts.al"), """
+            /*
+            codeunit 65522 "Census Commented Ghost"
+            */
+            #if CENSUS_NEVER_DEFINED_5552
+            codeunit 65523 "Census Inactive Ghost"
+            {
+            }
+            #endif
+            """);
+
+        var (output, _) = RunRunner(dir, dropEmittedObject: "Census Victim");
+
+        var declared = output.Split('\n').First(l => l.Contains("Declared: ["));
+        Assert.Contains("Census Victim", declared);
+        Assert.DoesNotContain("Census Commented Ghost", declared);
+        Assert.DoesNotContain("Census Inactive Ghost", declared);
+    }
+
+    // ── DeclaredObjectNames, in-process ──────────────────────────────────────────────────
+
+    private string WriteApp(string name, string? symbol = null)
+    {
+        var dir = Path.Combine(_root, name);
+        Directory.CreateDirectory(dir);
+        var symbols = symbol == null ? "" : $", \"preprocessorSymbols\": [ \"{symbol}\" ]";
+        File.WriteAllText(Path.Combine(dir, "app.json"),
+            "{ \"id\": \"b5552000-0000-4000-8000-000000005553\", \"name\": \"N\", \"publisher\": \"P\", "
+            + "\"version\": \"1.0.0.0\", \"dependencies\": [], \"runtime\": \"14.0\"" + symbols + " }");
+        return Path.Combine(dir, "app.json");
+    }
+
+    [SkippableFact]
+    public void DeclaredObjectNames_CommentsStringsAndInactiveBranches_AreNotDeclarations()
+    {
+        RequireEngine();
+        var appJson = WriteApp("names");
+        const string text = """
+            // codeunit 65530 "Line Comment Ghost"
+            /*
+            codeunit 65531 "Block Comment Ghost"
+            */
+            #if CENSUS_NEVER_DEFINED_5552
+            codeunit 65532 "Inactive Ghost"
+            {
+            }
+            #endif
+            codeunit 65533 "Real One"
+            {
+                procedure P()
+                begin
+                    Message('codeunit 65534 "String Ghost"');
+                end;
+            }
+            """;
+
+        var names = AlMemberSyntaxIndex.DeclaredObjectNames(text, "Names.al", appJson);
+
+        Assert.Equal(new[] { "Real One" }, names);
+    }
+
+    [SkippableFact]
+    public void DeclaredObjectNames_ManifestSymbolSelectsTheBranch_BothWays()
+    {
+        RequireEngine();
+        const string text = """
+            #if CENSUS_SYMBOL_5552
+            codeunit 65540 "Symbol On"
+            {
+            }
+            #else
+            codeunit 65541 "Symbol Off"
+            {
+            }
+            #endif
+            """;
+
+        Assert.Equal(new[] { "Symbol On" },
+            AlMemberSyntaxIndex.DeclaredObjectNames(text, "S.al", WriteApp("on", "CENSUS_SYMBOL_5552")));
+        Assert.Equal(new[] { "Symbol Off" },
+            AlMemberSyntaxIndex.DeclaredObjectNames(text, "S.al", WriteApp("off")));
+    }
+
+    [SkippableFact]
+    public void DeclaredObjectNames_KindSet_IsTheOneTheRegexCounted()
+    {
+        RequireEngine();
+        var appJson = WriteApp("kinds");
+        const string text = """
+            interface "Kind Iface"
+            {
+                procedure Ping(): Integer;
+            }
+            table 65550 "Kind Table"
+            {
+                fields { field(1; "Code"; Code[20]) { } }
+            }
+            tableextension 65551 "Kind TExt" extends "Kind Table"
+            {
+            }
+            enumextension 65552 "Kind EExt" extends "Kind Enum"
+            {
+            }
+            enum 65553 "Kind Enum"
+            {
+            }
+            """;
+
+        var names = AlMemberSyntaxIndex.DeclaredObjectNames(text, "K.al", appJson);
+
+        // Interface and enumextension carry no emitted source; the extension on one line counts.
+        Assert.Equal(new[] { "Kind Table", "Kind TExt", "Kind Enum" }, names);
     }
 }

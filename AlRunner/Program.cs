@@ -4304,6 +4304,11 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
             // not yet understood — see the tracked runner-gap issue. Per
             // .claude/rules/loud-failures.md this must fail loudly, not vanish a whole
             // suite's tests with no trace.
+            // Test seam: BC's silent drop cannot be provoked on demand, and the census tests need a
+            // declared object the compile "did not emit". Removing one emitted source by name is
+            // exactly the state the guard exists to catch.
+            if (Environment.GetEnvironmentVariable("AL_RUNNER_TEST_DROP_EMITTED_OBJECT") is { Length: > 0 } droppedForTest)
+                sources = sources.Where(s => !string.Equals(s.Name, droppedForTest, StringComparison.Ordinal)).ToList();
             if (sources.Count > 0 && alDiagnostics.Count == 0)
             {
                 var censusFiles = allPaths
@@ -4312,20 +4317,12 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                         .SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Files(d, "*.al")))
                     .Distinct()
                     .ToList();
-                List<string> CountDeclared(bool activeBranchesOnly) => censusFiles
-                    .SelectMany(f => System.Text.RegularExpressions.Regex.Matches(
-                        activeBranchesOnly
-                            ? AlRunner.Infrastructure.AlMemberSyntaxIndex.BlankInactivePreprocessorBranches(File.ReadAllText(f), f, emitManifestAppJsonPath)
-                            : File.ReadAllText(f),
-                        @"^(table|codeunit|page|report|query|enum|xmlport|tableextension|pageextension|permissionset)\s+\d+\s+""?([^""\r\n]+?)""?\s*$",
-                        System.Text.RegularExpressions.RegexOptions.Multiline))
-                    .Select(m => m.Groups[2].Value.Trim())
-                    .ToList();
-                // Raw text first: blanking inactive #if branches only removes declarations, so the
-                // raw count is an upper bound and the parse is paid only when it could fire (#4076).
-                var declaredObjects = CountDeclared(activeBranchesOnly: false);
-                if (declaredObjects.Count > sources.Count + tddExcludedCount + safeExcludedCount)
-                    declaredObjects = CountDeclared(activeBranchesOnly: true);
+                // #5552: counted from BC's syntax tree, not a header regex over the text, so a
+                // declaration in a comment or an inactive #if branch is not one. The cheap bound
+                // inside only avoids parsing every file when nothing could exceed the accounted-for
+                // count (#4076).
+                var declaredObjects = ProgramSupport.EmitDropCensus.DeclaredBeyond(
+                    censusFiles, emitManifestAppJsonPath, sources.Count + tddExcludedCount + safeExcludedCount, Console.Error);
                 // #1997: the gap is not silent when it exactly matches tddExcludedCount — the
                 // TDD-EXCLUDED branch above already reported those objects loudly, with a
                 // synthetic FAILED test each. Only a gap BEYOND that is the unexplained,

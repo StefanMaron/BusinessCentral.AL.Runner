@@ -3,6 +3,10 @@
 // ../app.json (#2542). The runner's own source parse and the PARTIAL-EMIT-DROP census must read
 // the same nothing, or they pick the other #if branch from the compile.
 //
+// The census is BC's syntax tree (#5552), so a ghost declaration in a comment no longer makes the
+// guard fire. The two census cases force a drop instead: AL_RUNNER_TEST_DROP_EMITTED_OBJECT removes
+// one emitted source by name, so the object stays declared and the guard sees it unaccounted for.
+//
 // The last case is the other direction: the app's OWN manifest defines the symbol, so the census
 // must count a codeunit guarded by it — reading no manifest would blank that codeunit and hide a
 // drop elsewhere.
@@ -28,10 +32,12 @@ public sealed class ParentManifestNotReadSubprocessTests : IDisposable
         try { Directory.Delete(_root, recursive: true); } catch { /* best-effort cleanup */ }
     }
 
-    private static (string output, int exit) RunRunner(string bundle)
+    private static (string output, int exit) RunRunner(string bundle, string? dropEmittedObject = null)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
+        // The guard runs on an emit; a warm al-out cache HIT skips it, and the seam with it.
+        if (dropEmittedObject != null) args.Append(" --no-cache");
         args.Append(" \"").Append(bundle).Append('"');
         var psi = new ProcessStartInfo
         {
@@ -39,6 +45,7 @@ public sealed class ParentManifestNotReadSubprocessTests : IDisposable
             RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
         };
+        if (dropEmittedObject != null) psi.Environment["AL_RUNNER_TEST_DROP_EMITTED_OBJECT"] = dropEmittedObject;
         var sb = new StringBuilder();
         var p = Process.Start(psi)!;
         p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
@@ -123,18 +130,18 @@ public sealed class ParentManifestNotReadSubprocessTests : IDisposable
             {
             }
             """);
-        // A declaration line the census counts and the compile never emits, in a branch that is
-        // ACTIVE for the compile (no manifest). The guard must still fire: blanking this region
-        // under the parent's symbols is exactly the misread that silenced it.
+        // An object the compile emits (a branch ACTIVE for it, since it reads no manifest) and
+        // that the seam then hides. The census must still count it: under the parent's symbols
+        // that branch is inactive, the object would not be declared, and the drop would pass.
         File.WriteAllText(Path.Combine(folder, "Ghost.al"), """
             #if not PARENT_ONLY_4071
-            /*
             codeunit 64073 "Parent Manifest Ghost"
-            */
+            {
+            }
             #endif
             """);
 
-        var (output, _) = RunRunner(folder);
+        var (output, _) = RunRunner(folder, dropEmittedObject: "Parent Manifest Ghost");
 
         Assert.Contains("PARTIAL-EMIT-DROP", output);
         Assert.Contains("Parent Manifest Ghost", output);
@@ -177,14 +184,14 @@ public sealed class ParentManifestNotReadSubprocessTests : IDisposable
             }
             #endif
             """);
-        // A declaration line the census counts and the compile never emits.
+        // An emitted object the seam then hides, so the guard has a drop to see.
         File.WriteAllText(Path.Combine(app, "Ghost.al"), """
-            /*
             codeunit 64076 "Own Manifest Ghost"
-            */
+            {
+            }
             """);
 
-        var (output, _) = RunRunner(app);
+        var (output, _) = RunRunner(app, dropEmittedObject: "Own Manifest Ghost");
 
         Assert.Contains("PARTIAL-EMIT-DROP", output);
         Assert.Contains("Own Manifest Ghost", output);

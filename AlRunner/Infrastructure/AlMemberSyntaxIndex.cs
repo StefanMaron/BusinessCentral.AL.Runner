@@ -173,6 +173,41 @@ public sealed class AlMemberSyntaxIndex
     }
 
     /// <summary>
+    /// The names of the objects <paramref name="source"/> declares, from BC's syntax tree under the
+    /// options the compile of this file used (<see cref="BlankInactivePreprocessorBranches"/>), so
+    /// a header inside a comment or an inactive <c>#if</c> branch is not one (#5552). Null when the
+    /// parse throws: the caller must say the file went uncounted, not read it as declaring nothing.
+    /// <para>The kinds are exactly the ones the PARTIAL-EMIT-DROP census's regex counted before
+    /// it, not "every kind that emits": widening it would change what the guard refuses.</para>
+    /// <para>Same constraint as <see cref="BlankInactivePreprocessorBranches"/>: never inlines,
+    /// and returns strings, so Program's Main names no BC CodeAnalysis type (#4071 review).</para>
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    internal static IReadOnlyList<string>? DeclaredObjectNames(string source, string filePath, string? manifestAppJsonPath)
+    {
+        try
+        {
+            var parseOpts = BcCompiler.BuildParseOptions(BcCompiler.ReadManifestCompilerInputs(manifestAppJsonPath));
+            var root = NavSyntax.SyntaxTree.ParseObjectText(source, path: filePath, encoding: null!, parseOpts, default)
+                .GetCompilationUnitRoot();
+            var names = new List<string>();
+            foreach (var obj in root.Objects)
+            {
+                if (obj is not (NavSyntax.TableSyntax or NavSyntax.CodeunitSyntax or NavSyntax.PageSyntax
+                    or NavSyntax.ReportSyntax or NavSyntax.QuerySyntax or NavSyntax.EnumTypeSyntax
+                    or NavSyntax.XmlPortSyntax or NavSyntax.TableExtensionSyntax
+                    or NavSyntax.PageExtensionSyntax or NavSyntax.PermissionSetSyntax)) continue;
+                names.Add(((NavSyntax.ObjectSyntax)obj).Name?.Identifier.ValueText.Trim('"') ?? "");
+            }
+            return names;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// The key both sides of this index agree on: absolute and forward-slashed. Used on the
     /// insert side (<see cref="Build"/>) and the lookup side (<see cref="FindMember"/>), so
     /// canonicalising here moves both together and they cannot drift apart.
