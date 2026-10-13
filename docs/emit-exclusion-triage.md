@@ -43,7 +43,7 @@ says nothing was quietly discarded — the tests that did not run are inside the
 
 | the dropped object | verdict |
 |---|---|
-| a profile | droppable — #2238, unchanged: no executable AL, no `[Test]` procedures |
+| a profile | droppable **only when every dropped object is a profile** — #2238: no executable AL, no `[Test]` procedures. Beside any other dropped object it is refused, so that object's tests cannot vanish from a green run (`ServerEmitExcludedSurvivorsTests`; the rule is applied across the set at the end of `Triage`) |
 | a codeunit with `Subtype = Test` that no surviving source in the module names, by name or by object id | droppable |
 | a codeunit with `Subtype = Test` that some surviving source does name | **refused**, naming the files |
 | a codeunit without `Subtype = Test` | **refused** — a survivor may call it |

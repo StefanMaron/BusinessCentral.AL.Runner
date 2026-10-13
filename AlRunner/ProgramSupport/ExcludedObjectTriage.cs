@@ -105,6 +105,7 @@ internal static partial class ProgramSupport
             }
 
             var verdicts = new List<ExcludedObjectVerdict>();
+            var profileVerdicts = new List<int>();
             foreach (var e in excluded)
             {
                 string src;
@@ -143,6 +144,7 @@ internal static partial class ProgramSupport
                 // unchanged and still the only one that needs no reference scan at all.
                 if (declared.All(d => d.Kind == "profile"))
                 {
+                    profileVerdicts.Add(verdicts.Count);
                     verdicts.Add(new ExcludedObjectVerdict(
                         e.ObjectDisplayName, e.FilePath, true,
                         "a profile declares no executable AL and no [Test] procedures",
@@ -183,6 +185,19 @@ internal static partial class ProgramSupport
                         "a test codeunit no surviving source in this module names, by name or by object id",
                         Array.Empty<string>()));
             }
+            // The profile carve-out (#2238) holds only when EVERY dropped object is a profile. A profile
+            // beside a dropped test codeunit must not let that codeunit's tests vanish from a green
+            // run, so the profile's verdict is withdrawn when anything else is dropped with it. The
+            // old text scan could not see a real `profile "X"` at all, which refused this shape by
+            // accident; seeing it (#5557) makes the rule explicit (ServerEmitExcludedSurvivorsTests).
+            if (profileVerdicts.Count > 0 && profileVerdicts.Count < verdicts.Count)
+                foreach (var i in profileVerdicts)
+                    verdicts[i] = verdicts[i] with
+                    {
+                        Droppable = false,
+                        Reason = "a profile is droppable only when every dropped object is a profile, and this module "
+                            + "also dropped other objects whose tests would go missing from the run",
+                    };
             return verdicts;
         }
 
