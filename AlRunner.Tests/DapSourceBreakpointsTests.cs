@@ -4,6 +4,7 @@
 // distinct System types standing in for the AL scope types a run would resolve.
 
 using System.Reflection;
+using System.Threading;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -79,41 +80,75 @@ public class DapSourceBreakpointsTests
         Assert.Equal(new[] { ScopeB }, reg.ScopesOf("/ws/two.al"));
     }
 
+    // The reader must have done this many reads WHILE replacements were running. A fixed
+    // writer iteration count measured nothing when the reader was not scheduled before the
+    // writer finished (#5554); this makes the precondition the loop's exit condition.
+    private const int MinReadsDuringReplacements = 20_000;
+    private static readonly TimeSpan SchedulingBudget = TimeSpan.FromSeconds(60);
+
     /// <summary>
     /// A breakpoint the replacement KEEPS must stay armed throughout it. The AL thread reads
     /// through the same lock, so a gap between "clear the old set" and "arm the new one" is a
-    /// stop a running program can slip past — with the client never told the breakpoint was
+    /// stop a running program can slip past - with the client never told the breakpoint was
     /// ever missing. RED while Replace was Clear-then-Set as two lock acquisitions.
+    ///
+    /// The reader is a dedicated thread (not the pool, which a loaded leg starves), the writer
+    /// does not start until the reader has completed a read, and the writer keeps replacing
+    /// until the reader has done <see cref="MinReadsDuringReplacements"/> reads during it.
+    /// If the reader can never be scheduled the test fails saying so, not as "measured nothing".
     /// </summary>
     [Fact]
-    public async Task AKeptBreakpoint_IsNeverObservedDisarmedDuringAReplacement()
+    public void AKeptBreakpoint_IsNeverObservedDisarmedDuringAReplacement()
     {
         var reg = new AlRunner.Infrastructure.DapSourceBreakpoints();
         reg.Replace("/ws/race.al", new[] { Bp(ScopeA, 51) });
 
         var stop = false;
         long misses = 0, reads = 0;
-        var reader = Task.Run(() =>
+        using var firstRead = new ManualResetEventSlim(false);
+        var reader = new Thread(() =>
         {
             while (!Volatile.Read(ref stop))
             {
                 if (!Armed(ScopeA, 51)) Interlocked.Increment(ref misses);
                 Interlocked.Increment(ref reads);
+                if (!firstRead.IsSet) firstRead.Set();
             }
-        });
+        }) { IsBackground = true, Name = "dap-breakpoint-reader" };
+        reader.Start();
 
-        // Alternates two sets that BOTH contain (A,51), so a correct replacement never has a
-        // moment where it is absent.
-        for (var i = 0; i < 100_000; i++)
-            reg.Replace("/ws/race.al", (i & 1) == 0
-                ? new[] { Bp(ScopeA, 51), Bp(ScopeA, 52) }
-                : new[] { Bp(ScopeA, 51) });
+        long replacements = 0, readsAtStart, readsDuring;
+        try
+        {
+            Assert.True(firstRead.Wait(SchedulingBudget),
+                $"the reader thread completed no read within {SchedulingBudget.TotalSeconds:0}s of starting; "
+                + "the host could not schedule it, so atomicity was not measured (#5554)");
 
-        Volatile.Write(ref stop, true);
-        await reader;
+            readsAtStart = Interlocked.Read(ref reads);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            // Alternates two sets that BOTH contain (A,51), so a correct replacement never has
+            // a moment where it is absent.
+            while (Interlocked.Read(ref reads) - readsAtStart < MinReadsDuringReplacements)
+            {
+                Assert.True(clock.Elapsed < SchedulingBudget,
+                    $"only {Interlocked.Read(ref reads) - readsAtStart} reader reads happened during "
+                    + $"{replacements} replacements in {SchedulingBudget.TotalSeconds:0}s "
+                    + $"(need {MinReadsDuringReplacements}); the reader was starved, so atomicity was not measured (#5554)");
+                reg.Replace("/ws/race.al", (replacements++ & 1) == 0
+                    ? new[] { Bp(ScopeA, 51), Bp(ScopeA, 52) }
+                    : new[] { Bp(ScopeA, 51) });
+            }
+            readsDuring = Interlocked.Read(ref reads) - readsAtStart;
+        }
+        finally
+        {
+            Volatile.Write(ref stop, true);
+            reader.Join();
+        }
 
-        Assert.True(Interlocked.Read(ref reads) > 0, "the reader never ran, so this measured nothing");
+        Assert.True(replacements > 0 && readsDuring >= MinReadsDuringReplacements);
         Assert.True(Interlocked.Read(ref misses) == 0,
-            $"a kept breakpoint was observed disarmed {misses} time(s) in {reads} reads");
+            $"a kept breakpoint was observed disarmed {misses} time(s) in {reads} reads "
+            + $"({readsDuring} of them during {replacements} replacements)");
     }
 }
