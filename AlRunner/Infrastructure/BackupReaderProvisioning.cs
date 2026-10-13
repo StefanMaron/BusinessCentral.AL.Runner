@@ -103,7 +103,7 @@ internal sealed class BackupReaderProvisioningException : Exception
 /// </summary>
 internal static class BackupReaderProvisioning
 {
-    internal enum Outcome { NotRequested, UserSupplied, AlreadyPresent, Installed, Replaced }
+    internal enum Outcome { NotRequested, UserSupplied, AlreadyPresent, Installed, Replaced, DiffersFromPin }
 
     internal enum FetchStatus { Ok, NotFound }
 
@@ -152,13 +152,14 @@ internal static class BackupReaderProvisioning
 
     internal static Outcome EnsureReader(bool testDataEnabled, bool autoProvision, Inputs inputs, Action<string> report)
     {
-        if (!testDataEnabled || !autoProvision) return Outcome.NotRequested;
+        if (!testDataEnabled) return Outcome.NotRequested;
         var (pin, envValue, cacheRoot, findOnPath, platform, fetch) = inputs;
 
         // Walk the slots in BackupReaderTool.Resolve's order, so the reader judged here is the
         // one the run will start.
         var managed = BackupReaderTool.ManagedInstallPath(cacheRoot);
         var existing = BackupReaderTool.CandidateExecutables(envValue, cacheRoot).FirstOrDefault(File.Exists);
+        if (!autoProvision) return NoteSlotReaderThatIsNotThePin(pin, platform, managed, existing, report);
         if (existing != null && !string.Equals(existing, managed, StringComparison.Ordinal))
             return Outcome.UserSupplied;
         if (existing == null && findOnPath() != null)
@@ -236,6 +237,30 @@ internal static class BackupReaderProvisioning
 
         report($"[provision] --test-data: installed backup reader {pin.Tag} at {managed}.");
         return replacing ? Outcome.Replaced : Outcome.Installed;
+    }
+
+    // #5543: --no-auto-provision leaves the slot alone, but a managed-slot reader that is not the
+    // pin is the one the run starts, so say so (note and continue: the user opted out of
+    // downloads and may want it). A reader named by AL_RUNNER_BCBAK or on PATH is the user's own
+    // and stays silent, as Outcome.UserSupplied. Where the pin gives no checksum to compare to
+    // (unlisted platform, bad sha) there is no claim to make, and the auto path's refusal for
+    // those is not imposed on an opt-out run.
+    private static Outcome NoteSlotReaderThatIsNotThePin(BackupReaderPin pin, string? platform,
+        string? managed, string? existing, Action<string> report)
+    {
+        if (existing == null || !string.Equals(existing, managed, StringComparison.Ordinal))
+            return Outcome.NotRequested;
+        if (platform == null || !pin.Assets.TryGetValue(platform, out var asset))
+            return Outcome.NotRequested;
+        var expected = asset.Sha256?.ToLowerInvariant();
+        if (expected == null || expected.Length != 64 || !expected.All(Uri.IsHexDigit))
+            return Outcome.NotRequested;
+        var actual = Sha256Of(existing);
+        if (string.Equals(actual, expected, StringComparison.Ordinal)) return Outcome.AlreadyPresent;
+        report($"[provision] --test-data: the backup reader at {managed} (SHA-256 {actual}) is not the pinned "
+            + $"{pin.Tag} ({expected}), and --no-auto-provision leaves it as it is, so this run decodes with it. "
+            + $"Drop --no-auto-provision, or run 'al-runner provision --test-data', to replace it with {pin.Tag}.");
+        return Outcome.DiffersFromPin;
     }
 
     private static BackupReaderProvisioningException InstallFailed(string path, string managed,

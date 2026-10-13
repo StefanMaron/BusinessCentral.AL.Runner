@@ -137,6 +137,88 @@ public sealed class BackupReaderProvisioningTests : IDisposable
         Assert.False(File.Exists(Managed));
     }
 
+    // #5543: --no-auto-provision never touches the slot, but a slot reader that is not the pin is
+    // what the run starts, so it says so once. Note-and-continue, not refuse: the user chose not to
+    // download, and the reader there may be the one they want.
+
+    [Fact]
+    public void NoAutoProvision_SlotReaderDiffersFromPin_SaysSoOnce_AndLeavesItAlone()
+    {
+        Publish(PinnedBytes);
+        PreInstall(OtherBytes);
+        var stamp = new DateTime(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(Managed, stamp);
+
+        Assert.Equal(BackupReaderProvisioning.Outcome.DiffersFromPin, Ensure(PinFor(PinnedBytes), autoProvision: false));
+
+        var line = Assert.Single(_reported);
+        Assert.DoesNotContain('\n', line);
+        Assert.Contains(Managed, line, StringComparison.Ordinal);
+        Assert.Contains(Tag, line, StringComparison.Ordinal);
+        Assert.Contains(Sha(OtherBytes), line, StringComparison.Ordinal);   // the reader that will run
+        Assert.Contains(Sha(PinnedBytes), line, StringComparison.Ordinal);  // the one CI uses
+        Assert.Contains("al-runner provision --test-data", line, StringComparison.Ordinal);
+        Assert.Contains("--no-auto-provision", line, StringComparison.Ordinal);
+        Assert.Empty(_fetched);
+        Assert.Equal(OtherBytes, File.ReadAllBytes(Managed));
+        Assert.Equal(stamp, File.GetLastWriteTimeUtc(Managed));
+        Assert.Equal(new[] { Managed }, Directory.GetFiles(Path.GetDirectoryName(Managed)!));
+    }
+
+    [Fact]
+    public void NoAutoProvision_SlotReaderIsThePinned_PrintsNothing()
+    {
+        Publish(PinnedBytes);
+        PreInstall(PinnedBytes);
+
+        Assert.Equal(BackupReaderProvisioning.Outcome.AlreadyPresent, Ensure(PinFor(PinnedBytes), autoProvision: false));
+        Assert.Empty(_reported);
+        Assert.Empty(_fetched);
+    }
+
+    [Fact]
+    public void NoAutoProvision_EmptySlot_PrintsNothing()
+    {
+        Assert.Equal(BackupReaderProvisioning.Outcome.NotRequested, Ensure(PinFor(PinnedBytes), autoProvision: false));
+        Assert.Empty(_reported);
+    }
+
+    /// <summary>The reader the run would start is the user's own (env var first, then the slot, then
+    /// PATH), so a differing slot behind it is not the reader in use and is not mentioned.</summary>
+    [Fact]
+    public void NoAutoProvision_UserSuppliedReader_PrintsNothing_EvenWithADifferingSlot()
+    {
+        PreInstall(OtherBytes);
+        var own = Path.Combine(_root, "own-reader");
+        File.WriteAllBytes(own, OtherBytes);
+
+        Assert.Equal(BackupReaderProvisioning.Outcome.NotRequested, Ensure(PinFor(PinnedBytes), autoProvision: false, env: own));
+        Assert.Empty(_reported);
+    }
+
+    [Fact]
+    public void NoAutoProvision_WithoutTestData_PrintsNothing_EvenWithADifferingSlot()
+    {
+        PreInstall(OtherBytes);
+
+        Assert.Equal(BackupReaderProvisioning.Outcome.NotRequested, Ensure(PinFor(PinnedBytes), testData: false, autoProvision: false));
+        Assert.Empty(_reported);
+    }
+
+    /// <summary>The pin cannot say what to compare against on this platform, so there is no claim to
+    /// make: the opt-out run is not refused for a pin gap the auto path would refuse on.</summary>
+    [Fact]
+    public void NoAutoProvision_PinHasNoChecksumForThisPlatform_PrintsNothing_AndDoesNotThrow()
+    {
+        PreInstall(OtherBytes);
+
+        Assert.Equal(BackupReaderProvisioning.Outcome.NotRequested,
+            Ensure(PinFor(PinnedBytes, sha: null), autoProvision: false));
+        Assert.Equal(BackupReaderProvisioning.Outcome.NotRequested,
+            Ensure(PinFor(PinnedBytes), autoProvision: false, platform: "linux-riscv64"));
+        Assert.Empty(_reported);
+    }
+
     [Fact]
     public void WithoutTestData_NeverFetches()
     {

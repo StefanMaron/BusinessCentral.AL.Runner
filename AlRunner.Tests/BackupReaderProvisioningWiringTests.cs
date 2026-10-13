@@ -38,6 +38,55 @@ public sealed class BackupReaderProvisioningWiringTests : IDisposable
         Assert.Contains("installed backup reader", err.ToString(), StringComparison.Ordinal);
     }
 
+    // #5543: the entry point the run calls, with --no-auto-provision.
+    [Fact]
+    public void ProvisionTestDataBackup_NoAutoProvision_NotesADifferingSlotReader_AndStillSucceeds()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(_fixture.Managed)!);
+        File.WriteAllBytes(_fixture.Managed, BackupReaderProvisioningTests.OtherBytes);
+        var err = new StringWriter();
+
+        var rc = ProgramSupport.ProvisionTestDataBackup("28.5.0.0", autoProvision: false, verbose: false,
+            _fixture.Inputs(BackupReaderProvisioningTests.PinFor(BackupReaderProvisioningTests.PinnedBytes)), err);
+
+        Assert.Equal(0, rc);
+        var line = Assert.Single(err.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        Assert.Contains(_fixture.Managed, line, StringComparison.Ordinal);
+        Assert.Contains("is not the pinned", line, StringComparison.Ordinal);
+        Assert.Equal(BackupReaderProvisioningTests.OtherBytes, File.ReadAllBytes(_fixture.Managed));
+    }
+
+    [Fact]
+    public void ProvisionTestDataBackup_NoAutoProvision_SilentWhenTheSlotReaderIsThePinned()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(_fixture.Managed)!);
+        File.WriteAllBytes(_fixture.Managed, BackupReaderProvisioningTests.PinnedBytes);
+        var err = new StringWriter();
+
+        var rc = ProgramSupport.ProvisionTestDataBackup("28.5.0.0", autoProvision: false, verbose: false,
+            _fixture.Inputs(BackupReaderProvisioningTests.PinFor(BackupReaderProvisioningTests.PinnedBytes)), err);
+
+        Assert.Equal(0, rc);
+        Assert.Equal(string.Empty, err.ToString());
+    }
+
+    /// <summary>The --jobs parent printed the note before the fan-out; each worker re-runs this
+    /// entry point with the same slot and must not print it again.</summary>
+    [Fact]
+    public void ProvisionTestDataBackup_NoAutoProvision_AJobsWorkerDoesNotRepeatTheNote()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(_fixture.Managed)!);
+        File.WriteAllBytes(_fixture.Managed, BackupReaderProvisioningTests.OtherBytes);
+        var err = new StringWriter();
+
+        var rc = ProgramSupport.ProvisionTestDataBackup("28.5.0.0", autoProvision: false, verbose: false,
+            _fixture.Inputs(BackupReaderProvisioningTests.PinFor(BackupReaderProvisioningTests.PinnedBytes)), err,
+            jobsWorker: true);
+
+        Assert.Equal(0, rc);
+        Assert.Equal(string.Empty, err.ToString());
+    }
+
     [Fact]
     public void ChecksumMismatch_StopsTheRun_WithExitTwo_AndTheReason()
     {

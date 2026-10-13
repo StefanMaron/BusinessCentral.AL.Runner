@@ -10,10 +10,15 @@ internal static partial class ProgramSupport
     // (execution error, no tests ran) after printing why a download failed. Needs the SELECTED version and country.
     internal static int ProvisionTestDataBackup(string version, bool autoProvision, bool verbose)
         => ProvisionTestDataBackup(version, autoProvision, verbose,
-            AlRunner.Infrastructure.BackupReaderProvisioning.Inputs.Live(), Console.Error);
+            AlRunner.Infrastructure.BackupReaderProvisioning.Inputs.Live(), Console.Error,
+            jobsWorker: AlRunner.Infrastructure.TestSelectionAudit.IsWorker);
 
+    // jobsWorker (#5543): the --jobs parent ran EnsureReader before it fanned out and its stderr
+    // reaches the user, so a worker repeating a reader note would print it once more per worker.
+    // A worker never downloads (the parent's failure exits before the fan-out), so what it drops
+    // is only that note; failures still throw below.
     internal static int ProvisionTestDataBackup(string version, bool autoProvision, bool verbose,
-        AlRunner.Infrastructure.BackupReaderProvisioning.Inputs reader, TextWriter err)
+        AlRunner.Infrastructure.BackupReaderProvisioning.Inputs reader, TextWriter err, bool jobsWorker = false)
     {
         string? home = null;
         try { home = AlRunner.Infrastructure.AlRunnerPaths.UserHome; } catch { /* probed as absent */ }
@@ -22,7 +27,8 @@ internal static partial class ProgramSupport
             // #4925: the reader first — about 10 MB, and a platform it cannot serve refuses before
             // the 1 GB backup download rather than after it.
             AlRunner.Infrastructure.BackupReaderProvisioning.EnsureReader(
-                AlRunner.Infrastructure.TestDataOptions.Enabled, autoProvision, reader, err.WriteLine);
+                AlRunner.Infrastructure.TestDataOptions.Enabled, autoProvision, reader,
+                jobsWorker ? _ => { } : err.WriteLine);
             AlRunner.Infrastructure.TestDataBackupProvisioning.EnsureBackup(autoProvision, version,
                 AlRunner.Infrastructure.BcArtifacts.SelectedCountry, home,
                 AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, err.WriteLine, verbose);
