@@ -41,8 +41,6 @@ internal static partial class ProgramSupport
     internal static class ExcludedObjectTriage
     {
         // An AL object declaration's header line: `codeunit 135209 "Azure Key Vault Module Test"`.
-        // Same shape Program.cs's PARTIAL-EMIT-DROP guard already scans for, plus the id and the
-        // kind, which that one discards.
         private static readonly Regex ObjectDecl = new(
             @"^\s*(?<kind>table|codeunit|page|report|query|enum|xmlport|profile|tableextension|pageextension|enumextension|reportextension|permissionset|permissionsetextension|interface|controladdin|entitlement|dotnet)\s+(?<id>\d+)\s+(""(?<qname>[^""\r\n]+)""|(?<name>[A-Za-z_][A-Za-z0-9_]*))",
             RegexOptions.Multiline | RegexOptions.IgnoreCase | RegexOptions.Compiled);

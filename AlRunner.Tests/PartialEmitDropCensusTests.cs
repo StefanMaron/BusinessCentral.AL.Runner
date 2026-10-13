@@ -146,6 +146,7 @@ public sealed class PartialEmitDropCensusTests : IDisposable
     [InlineData("Codeunit 65521 \"Census Victim\"\n{\n}\n")]
     [InlineData("codeunit 65521 \"Census Victim\" { }\n")]
     [InlineData("codeunit 65521 \"Census Victim\" // trailing comment\n{\n}\n")]
+    [InlineData("codeunit /* c */ 65521 \"Census Victim\"\n{\n}\n")]
     public void ForcedDrop_OfAnObjectTheRegexCouldNotSee_FiresTheGuard(string victim)
     {
         TestArtifacts.SkipIfMissing();
@@ -284,5 +285,81 @@ public sealed class PartialEmitDropCensusTests : IDisposable
 
         // Interface and enumextension carry no emitted source; the extension on one line counts.
         Assert.Equal(new[] { "Kind Table", "Kind TExt", "Kind Enum" }, names);
+    }
+
+    // ── fail closed when a file cannot be measured ───────────────────────────────────────
+
+    private string TextFile(string name, string text)
+    {
+        Directory.CreateDirectory(_root);
+        var path = Path.Combine(_root, name);
+        File.WriteAllText(path, text);
+        return path;
+    }
+
+    /// <summary>
+    /// A file the parser cannot read must make the guard fire rather than hide a drop: its
+    /// possible declarations count as declared. Driven in-process through the parser parameter.
+    /// </summary>
+    [Fact]
+    public void DeclaredBeyond_AFileTheParserCannotRead_CountsConservatively_AndIsNamed()
+    {
+        var victim = TextFile("Unreadable5552.al", "codeunit 65521 \"Victim\"\n{\n}\n");
+        var log = new StringWriter();
+
+        var names = ProgramSupport.EmitDropCensus.DeclaredBeyond(
+            new[] { victim }, null, accountedFor: 0, log, parse: (_, _, _) => null);
+
+        Assert.Single(names);
+        Assert.Contains("Unreadable5552.al", log.ToString());
+        Assert.Contains("[emit-census]", log.ToString());
+    }
+
+    [Fact]
+    public void DeclaredBeyond_TheSameFileParsed_IsCountedByTheTree_NotTheBound()
+    {
+        var file = TextFile("Parsed5552.al", "codeunit 65521 \"Victim\"\n{\n}\n// codeunit table page\n");
+        var log = new StringWriter();
+
+        var names = ProgramSupport.EmitDropCensus.DeclaredBeyond(
+            new[] { file }, null, accountedFor: 0, log, parse: (_, _, _) => new[] { "Victim" });
+
+        Assert.Equal(new[] { "Victim" }, names);
+        Assert.Equal("", log.ToString());
+    }
+
+    [Fact]
+    public void DeclaredBeyond_BoundWithinAccountedFor_ParsesNothing()
+    {
+        var file = TextFile("Quiet5552.al", "codeunit 65521 \"Victim\"\n{\n}\n");
+        var parsed = 0;
+
+        var names = ProgramSupport.EmitDropCensus.DeclaredBeyond(
+            new[] { file }, null, accountedFor: 1, new StringWriter(), parse: (_, _, _) => { parsed++; return new[] { "x" }; });
+
+        Assert.Empty(names);
+        Assert.Equal(0, parsed);
+    }
+
+    /// <summary>
+    /// Each of the ten counted kinds, capitalised and on one line, is a declaration to the tree.
+    /// Removing a kind from the filter drops exactly its row.
+    /// </summary>
+    [SkippableTheory]
+    [InlineData("Table 65550 \"K Table\" { fields { field(1; \"Code\"; Code[20]) { } } }", "K Table")]
+    [InlineData("Codeunit 65551 \"K Codeunit\" { }", "K Codeunit")]
+    [InlineData("Page 65552 \"K Page\" { }", "K Page")]
+    [InlineData("Report 65553 \"K Report\" { }", "K Report")]
+    [InlineData("Query 65554 \"K Query\" { }", "K Query")]
+    [InlineData("Enum 65555 \"K Enum\" { }", "K Enum")]
+    [InlineData("XmlPort 65556 \"K Xml\" { }", "K Xml")]
+    [InlineData("TableExtension 65557 \"K TExt\" extends \"K Table\" { }", "K TExt")]
+    [InlineData("PageExtension 65558 \"K PExt\" extends \"K Page\" { }", "K PExt")]
+    [InlineData("PermissionSet 65559 \"K Perm\" { Assignable = true; }", "K Perm")]
+    public void DeclaredObjectNames_EachCountedKind_OnOneLine_IsDeclared(string text, string name)
+    {
+        RequireEngine();
+
+        Assert.Equal(new[] { name }, AlMemberSyntaxIndex.DeclaredObjectNames(text, "K.al", WriteApp("kind-" + name.Replace(' ', '-'))));
     }
 }
