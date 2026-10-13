@@ -80,9 +80,12 @@ public class DapSourceBreakpointsTests
         Assert.Equal(new[] { ScopeB }, reg.ScopesOf("/ws/two.al"));
     }
 
-    // The reader must have done this many reads WHILE replacements were running. A fixed
-    // writer iteration count measured nothing when the reader was not scheduled before the
-    // writer finished (#5554); this makes the precondition the loop's exit condition.
+    // Two floors, BOTH required before the writer stops. The read floor alone is not enough:
+    // it counts reads since the writer started, so a reader holding a whole timeslice while the
+    // writer is descheduled reaches it between two Replace calls and the run ends after ONE
+    // replacement - passing with atomicity untested (#5554 review). The replacement floor alone
+    // is the old shape, which measured nothing when the reader was never scheduled.
+    private const int MinReplacements = 100_000;
     private const int MinReadsDuringReplacements = 20_000;
     private static readonly TimeSpan SchedulingBudget = TimeSpan.FromSeconds(60);
 
@@ -105,15 +108,21 @@ public class DapSourceBreakpointsTests
 
         var stop = false;
         long misses = 0, reads = 0;
+        Exception? readerFault = null;
         using var firstRead = new ManualResetEventSlim(false);
         var reader = new Thread(() =>
         {
-            while (!Volatile.Read(ref stop))
+            // A dedicated Thread has no Task to capture a throw: unhandled, it ends the test host.
+            try
             {
-                if (!Armed(ScopeA, 51)) Interlocked.Increment(ref misses);
-                Interlocked.Increment(ref reads);
-                if (!firstRead.IsSet) firstRead.Set();
+                while (!Volatile.Read(ref stop))
+                {
+                    if (!Armed(ScopeA, 51)) Interlocked.Increment(ref misses);
+                    Interlocked.Increment(ref reads);
+                    if (!firstRead.IsSet) firstRead.Set();
+                }
             }
+            catch (Exception ex) { Volatile.Write(ref readerFault, ex); }
         }) { IsBackground = true, Name = "dap-breakpoint-reader" };
         reader.Start();
 
@@ -128,12 +137,14 @@ public class DapSourceBreakpointsTests
             var clock = System.Diagnostics.Stopwatch.StartNew();
             // Alternates two sets that BOTH contain (A,51), so a correct replacement never has
             // a moment where it is absent.
-            while (Interlocked.Read(ref reads) - readsAtStart < MinReadsDuringReplacements)
+            while (Volatile.Read(ref readerFault) == null
+                   && (replacements < MinReplacements
+                       || Interlocked.Read(ref reads) - readsAtStart < MinReadsDuringReplacements))
             {
                 Assert.True(clock.Elapsed < SchedulingBudget,
-                    $"only {Interlocked.Read(ref reads) - readsAtStart} reader reads happened during "
-                    + $"{replacements} replacements in {SchedulingBudget.TotalSeconds:0}s "
-                    + $"(need {MinReadsDuringReplacements}); the reader was starved, so atomicity was not measured (#5554)");
+                    $"{replacements} replacements and {Interlocked.Read(ref reads) - readsAtStart} reader reads "
+                    + $"in {SchedulingBudget.TotalSeconds:0}s (need {MinReplacements} and {MinReadsDuringReplacements}); "
+                    + "the reader was starved, so atomicity was not measured (#5554)");
                 reg.Replace("/ws/race.al", (replacements++ & 1) == 0
                     ? new[] { Bp(ScopeA, 51), Bp(ScopeA, 52) }
                     : new[] { Bp(ScopeA, 51) });
@@ -146,7 +157,7 @@ public class DapSourceBreakpointsTests
             reader.Join();
         }
 
-        Assert.True(replacements > 0 && readsDuring >= MinReadsDuringReplacements);
+        Assert.True(Volatile.Read(ref readerFault) == null, $"the reader thread threw: {readerFault}");
         Assert.True(Interlocked.Read(ref misses) == 0,
             $"a kept breakpoint was observed disarmed {misses} time(s) in {reads} reads "
             + $"({readsDuring} of them during {replacements} replacements)");
