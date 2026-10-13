@@ -208,6 +208,32 @@ public static class AlDapSession
         lock (_bpLock) _breakpoints.RemoveWhere(k => k.ScopeType == scopeType);
     }
 
+    /// <summary>Whether (scope, statement) is armed. The same read OnStmtHit makes, through
+    /// the same lock, so a test reading it observes what the AL thread would.</summary>
+    internal static bool IsBreakpointArmed(System.Reflection.MemberInfo scopeType, int statementIndex)
+    {
+        lock (_bpLock) return _breakpoints.Contains((scopeType, statementIndex));
+    }
+
+    /// <summary>
+    /// Disarms every breakpoint under <paramref name="clearScopes"/> and arms
+    /// <paramref name="add"/> as ONE step under the lock OnStmtHit reads through. Two calls
+    /// (Clear then Set) leave a window in which a breakpoint the replacement KEEPS is not
+    /// armed, and an AL thread running through it (setBreakpoints while not paused) misses a
+    /// stop the client was never told it lost (#3526).
+    /// </summary>
+    internal static void ReplaceBreakpoints(
+        IReadOnlyCollection<System.Reflection.MemberInfo> clearScopes,
+        IReadOnlyCollection<(System.Reflection.MemberInfo ScopeType, int StatementIndex)> add)
+    {
+        var clear = new HashSet<System.Reflection.MemberInfo>(clearScopes);
+        lock (_bpLock)
+        {
+            if (clear.Count > 0) _breakpoints.RemoveWhere(k => clear.Contains(k.ScopeType));
+            foreach (var b in add) _breakpoints.Add((b.ScopeType, b.StatementIndex));
+        }
+    }
+
     /// <summary>The scope currently paused, or null when nothing is paused.</summary>
     public static NavMethodScope? PausedScope => _pausedScope;
 
@@ -302,7 +328,7 @@ public static class AlDapSession
         if (currentStatementNumber == int.MaxValue) return;
 
         bool breakpointHit;
-        lock (_bpLock) breakpointHit = _breakpoints.Contains((AlScopeKey.Of(scope), currentStatementNumber));
+        breakpointHit = IsBreakpointArmed(AlScopeKey.Of(scope), currentStatementNumber);
 
         var stepKind = _stepKind;
         bool stepHit = false;
