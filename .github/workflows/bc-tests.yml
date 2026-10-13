@@ -610,8 +610,25 @@ jobs:
           # 1.83x — a figure that structurally understates occupancy, because much of each
           # test's time is host-side work outside the subprocess. Real thread occupancy was
           # 3.00x, and the whole shortfall was a single-threaded tail. See the report step.
+          #
+          # --filter "Category!=LiveCdn" (#5530): a test that needs the live artifact CDN is not
+          # part of this gating step, because a slow download reddened a required leg twice. It
+          # runs in the advisory step below instead. tools/test_live_cdn_lane.py pins both.
           dotnet test AlRunner.Tests/AlRunner.Tests.csproj -c Release --no-build -p:_BCVersion="$BC_VERSION" --settings engine.runsettings \
+              --filter "Category!=LiveCdn" \
               --logger "trx;LogFileName=unit-tests.trx" --results-directory "$PWD/trx"
+
+      - name: Live-CDN tests (advisory, #5530)
+        # The tests the step above excludes, which reach the real BC artifact CDN. Measured, not
+        # gating: continue-on-error, and a timeout so a stalled CDN cannot hold the leg. A red here
+        # annotates the run; it never reddens the leg. The unit-test step's own setup is reused, so
+        # this adds no build.
+        if: ${{ matrix.target.unit-tests }}
+        continue-on-error: true
+        timeout-minutes: 8
+        run: |
+          dotnet test AlRunner.Tests/AlRunner.Tests.csproj -c Release --no-build -p:_BCVersion="$BC_VERSION" --settings engine.runsettings \
+              --filter "Category=LiveCdn" || echo "::warning title=Live-CDN tests::the live artifact CDN tests did not pass on BC ${BC_VERSION} (advisory; see the step log and #5530)"
 
       - name: TRX occupancy report (unit tests)
         # always(): the timeline is most worth seeing on a red leg, and this must never be

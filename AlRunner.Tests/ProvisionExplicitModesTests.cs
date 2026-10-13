@@ -7,22 +7,25 @@
 // AlRunner.Provisioning.ArtifactDownloader methods tools/DownloadArtifacts already wraps,
 // straight from the shipped binary.
 //
-// These tests spawn the REAL runner binary against a REAL, hermetically empty artifact
-// cache (an isolated $HOME, never the machine's actual
-// ~/.local/share/al-runner/artifacts) and make a genuine download against the public BC
-// artifact CDN — deliberately `--test-apps` (~20MB), the smallest of the three real sets,
-// rather than the ~118MB platform-apps set or the multi-GB service-tier closure, to prove a
-// REAL end-to-end download without paying for the largest one. Confirmed RED on unfixed
-// `main` (pre-#2085, i.e. right after #2086): `--test-apps` is not a recognized flag at
-// all, so the arg parser's fallback rejects it with "Unknown option '--test-apps'. Run with
-// --help for the supported flags." and exits 2 — nothing is downloaded, because the only
-// implemented route (tools/DownloadArtifacts) requires the checkout this test's isolated
-// $HOME/binary-only setup deliberately does not have.
+// These tests spawn the REAL runner binary against a hermetically empty artifact cache (an
+// isolated $HOME, never the machine's actual ~/.local/share/al-runner/artifacts). Which of them
+// may touch the network is decided per claim (#5420, #5530):
+//   * a claim about what the runner DECIDES (resolution, the "already present" short-circuit,
+//     --force, a leftover .app that is not the toolkit) runs against a CDN that refuses every
+//     connection (OfflineCdnEnvironment) and asserts on what the runner announces;
+//   * a claim that real bytes LAND, or that needs the live version index, carries
+//     [Trait("Category", "LiveCdn")]. The required unit step excludes that category and an
+//     advisory step runs it (tools/test_live_cdn_lane.py pins both), so a slow CDN cannot redden
+//     a gating leg. Deliberately `--test-apps` (~20MB) there, the smallest of the three real sets.
+// Confirmed RED on unfixed `main` (pre-#2085, i.e. right after #2086): `--test-apps` is not a
+// recognized flag at all, so the arg parser's fallback rejects it with "Unknown option
+// '--test-apps'. Run with --help for the supported flags." and exits 2.
 using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using AlRunner.Infrastructure;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -162,6 +165,7 @@ public sealed class ProvisionExplicitModesTests
     /// Directory.Exists check.
     /// </summary>
     [SkippableFact]
+    [Trait("Category", "LiveCdn")]
     public void TestApps_FreshCache_DownloadsRealSetIntoCanonicalDir()
     {
         LiveCdnGate.Require();
@@ -182,6 +186,10 @@ public sealed class ProvisionExplicitModesTests
                 $"expected more than 10 .app files, got {apps.Length}: {string.Join(", ", apps.Select(Path.GetFileName))}");
             Assert.Contains(apps, a => Path.GetFileName(a).Contains("Library Assert", StringComparison.OrdinalIgnoreCase));
             Assert.Contains(apps, a => Path.GetFileName(a).Contains("Test Runner", StringComparison.OrdinalIgnoreCase));
+            // The sentinel the "already present" check keys on must be among what landed: a set
+            // missing it would re-download on every run (#2558).
+            Assert.Contains(apps, a => Path.GetFileName(a).Contains(
+                ProvisioningCheck.TestToolkitSentinelApp, StringComparison.OrdinalIgnoreCase));
         }
         finally
         {
@@ -190,33 +198,56 @@ public sealed class ProvisionExplicitModesTests
     }
 
     /// <summary>
-    /// Negative direction of the same feature: a SECOND invocation without --force must
-    /// leave the already-downloaded set alone rather than re-fetching ~20MB on every
-    /// re-run — the whole point of checking the canonical directory before downloading.
-    /// Proven by the marker file's write time: if a re-download happened it would move;
-    /// the "already present — skipping" short-circuit must leave it exactly where the
-    /// FIRST invocation wrote it. A test that only checked "exit 0" would pass even if the
-    /// runner silently re-downloaded every time, which is the failure this guards against.
+    /// A toolkit directory the "already present" check accepts: one Microsoft-published .app named
+    /// <see cref="ProvisioningCheck.TestToolkitSentinelApp"/>, which is all
+    /// <see cref="ProvisioningCheck.TestToolkitPresent"/> reads. Hand-built, so the facts that need
+    /// "a populated cache" do not have to download one (#5530).
+    /// </summary>
+    private static string SeedToolkit(string testAppsDir)
+    {
+        Directory.CreateDirectory(testAppsDir);
+        var path = Path.Combine(testAppsDir, "Microsoft_Business Foundation Test Libraries_seeded.app");
+        var manifest = "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+            "<Package xmlns=\"http://schemas.microsoft.com/navx/2015/manifest\">" +
+            "<App Id=\"bee8cf2f-494a-42f4-aabd-650e87934d39\" Name=\"" + ProvisioningCheck.TestToolkitSentinelApp +
+            "\" Publisher=\"Microsoft\" Version=\"28.1.0.0\"/></Package>";
+        File.WriteAllBytes(path, NavxPackageBuilder.Build(
+            "bee8cf2f-494a-42f4-aabd-650e87934d39", manifest, "{}", Array.Empty<(string Name, string Content)>()));
+        return path;
+    }
+
+    /// <summary>
+    /// Negative direction of the same feature: a run without --force against a directory the
+    /// toolkit check accepts must leave it alone rather than re-fetching ~20MB on every re-run —
+    /// the whole point of checking the canonical directory before downloading. A test that only
+    /// checked "exit 0" would pass even if the runner silently re-downloaded every time.
+    ///
+    /// #5530: the CDN refuses every connection (<see cref="OfflineCdnEnvironment"/>), which makes
+    /// the claim stronger than the live version was: a run that tried to fetch could not exit 0 or
+    /// avoid saying "fetching", so exit 0 and the skip line prove no request was made. The seeded
+    /// file is also left byte-for-byte alone. Previously the first invocation downloaded the real
+    /// set to have something to skip, which is what a slow CDN timed out.
     /// </summary>
     [SkippableFact]
-    public void TestApps_SecondInvocationWithoutForce_DoesNotRedownload()
+    public void TestApps_AlreadyPresentWithoutForce_SkipsWithoutTouchingTheNetwork()
     {
-        LiveCdnGate.Require();
+        SkipUnlessEnvironmentProxyIsHonoured();
         var home = NewIsolatedHome();
         try
         {
-            var testAppsDir = TestAppsDirFor(home);
-            var (exit1, stderr1) = Run(home, "provision", "--test-apps", "--bc-version", RealVersion);
-            Assert.True(exit1 == 0, $"first provision must exit 0. stderr:\n{stderr1}");
-            var marker = Directory.GetFiles(testAppsDir, "*.app").First();
-            var writeTimeBefore = File.GetLastWriteTimeUtc(marker);
+            var seeded = SeedToolkit(TestAppsDirFor(home));
+            var before = File.ReadAllBytes(seeded);
+            var writeTimeBefore = File.GetLastWriteTimeUtc(seeded);
 
-            var (exit2, stderr2) = Run(home, "provision", "--test-apps", "--bc-version", RealVersion);
+            var (exit, stderr) = Run(home, OfflineSpawnTimeoutMs, OfflineCdnEnvironment(),
+                "provision", "--test-apps", "--bc-version", RealVersion);
 
-            Assert.True(exit2 == 0, $"second provision (no --force) must still exit 0. stderr:\n{stderr2}");
-            Assert.Contains("already present", stderr2, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("skipping", stderr2, StringComparison.OrdinalIgnoreCase);
-            Assert.Equal(writeTimeBefore, File.GetLastWriteTimeUtc(marker));
+            Assert.True(exit == 0, $"an already-present toolkit must exit 0 without any download. stderr:\n{stderr}");
+            Assert.Contains("already present", stderr, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("skipping", stderr, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("fetching", stderr, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(before, File.ReadAllBytes(seeded));
+            Assert.Equal(writeTimeBefore, File.GetLastWriteTimeUtc(seeded));
         }
         finally
         {
@@ -231,14 +262,18 @@ public sealed class ProvisionExplicitModesTests
     /// forever, and a re-run never attempted the real download. The entry guard now uses
     /// ProvisioningCheck.TestToolkitPresent (a real manifest parse for the specific,
     /// well-known sentinel app "Business Foundation Test Libraries"), not "does any .app
-    /// file exist". Proven end-to-end against the real CDN: seed the canonical directory
-    /// with one unrelated .app, run without --force, and the run must NOT say "already
-    /// present" — it must actually fetch the real set, landing the sentinel.
+    /// file exist". Seed the canonical directory with one unrelated .app, run without
+    /// --force, and the run must NOT say "already present" — it must attempt the fetch.
+    ///
+    /// #5530: the attempt is the claim, so the CDN refuses every connection
+    /// (<see cref="OfflineCdnEnvironment"/>): "fetching" is printed, the download fails, and the
+    /// run exits 2. That the real set then LANDS, sentinel included, is asserted by
+    /// <see cref="TestApps_FreshCache_DownloadsRealSetIntoCanonicalDir"/>, the live fact.
     /// </summary>
     [SkippableFact]
-    public void TestApps_OnlyUnrelatedAppPresent_DoesNotShortCircuit_DownloadsTheRealSet()
+    public void TestApps_OnlyUnrelatedAppPresent_DoesNotShortCircuit_AttemptsTheDownload()
     {
-        LiveCdnGate.Require();
+        SkipUnlessEnvironmentProxyIsHonoured();
         var home = NewIsolatedHome();
         try
         {
@@ -248,14 +283,16 @@ public sealed class ProvisionExplicitModesTests
             // interrupted extraction that landed one country test app and nothing else.
             File.WriteAllText(Path.Combine(testAppsDir, "leftover.app"), "not a real NAVX package");
 
-            var (exit, stderr) = Run(home, "provision", "--test-apps", "--bc-version", RealVersion);
+            var (exit, stderr) = Run(home, OfflineSpawnTimeoutMs, OfflineCdnEnvironment(),
+                "provision", "--test-apps", "--bc-version", RealVersion);
 
-            Assert.True(exit == 0, $"provision --test-apps must exit 0 once the real download completes. stderr:\n{stderr}");
             Assert.DoesNotContain("already present", stderr, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("fetching", stderr, StringComparison.OrdinalIgnoreCase);
-            var apps = Directory.GetFiles(testAppsDir, "*.app");
-            Assert.Contains(apps, a => Path.GetFileName(a).Contains("Library Assert", StringComparison.OrdinalIgnoreCase));
-            Assert.Contains(apps, a => Path.GetFileName(a).Contains("Business Foundation Test Libraries", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains($"fetching Microsoft test-toolkit apps for BC {RealVersion} → {testAppsDir}",
+                stderr, StringComparison.Ordinal);
+            // The refusing CDN made the attempt fail, and a failed provision is the exit ladder's 2.
+            Assert.Equal(2, exit);
+            Assert.False(ProvisioningCheck.TestToolkitPresent(new[] { testAppsDir }),
+                $"nothing can have landed from a refusing CDN. stderr:\n{stderr}");
         }
         finally
         {
@@ -265,30 +302,32 @@ public sealed class ProvisionExplicitModesTests
 
     /// <summary>
     /// `--force` is the escape hatch from the skip above: it must re-run the download even
-    /// though the directory already looks populated. Proven the same way as the negative
-    /// test above, inverted — the marker's write time MUST move.
+    /// though the directory already looks populated.
+    ///
+    /// #5530: proven against a CDN that refuses every connection, with the SAME seeded directory
+    /// the skip fact above passes on. The pair is the discriminator: without --force that
+    /// directory exits 0 saying "skipping"; with it the run must say "fetching", must not say
+    /// "skipping", and exits 2 because the fetch it was forced to make failed.
     /// </summary>
     [SkippableFact]
-    public void TestApps_Force_RedownloadsEvenWhenAlreadyPresent()
+    public void TestApps_Force_AttemptsTheDownloadEvenWhenAlreadyPresent()
     {
-        LiveCdnGate.Require();
+        SkipUnlessEnvironmentProxyIsHonoured();
         var home = NewIsolatedHome();
         try
         {
             var testAppsDir = TestAppsDirFor(home);
-            var (exit1, stderr1) = Run(home, "provision", "--test-apps", "--bc-version", RealVersion);
-            Assert.True(exit1 == 0, $"first provision must exit 0. stderr:\n{stderr1}");
-            var marker = Directory.GetFiles(testAppsDir, "*.app").First();
-            var writeTimeBefore = File.GetLastWriteTimeUtc(marker);
-            System.Threading.Thread.Sleep(1100); // filesystem mtime resolution margin
+            SeedToolkit(testAppsDir);
+            Assert.True(ProvisioningCheck.TestToolkitPresent(new[] { testAppsDir }),
+                "precondition: the seeded directory must read as a complete toolkit, or --force proves nothing");
 
-            var (exit2, stderr2) = Run(home, "provision", "--test-apps", "--bc-version", RealVersion, "--force");
+            var (exit, stderr) = Run(home, OfflineSpawnTimeoutMs, OfflineCdnEnvironment(),
+                "provision", "--test-apps", "--bc-version", RealVersion, "--force");
 
-            Assert.True(exit2 == 0, $"forced provision must exit 0. stderr:\n{stderr2}");
-            Assert.DoesNotContain("skipping", stderr2, StringComparison.OrdinalIgnoreCase);
-            Assert.True(File.GetLastWriteTimeUtc(marker) > writeTimeBefore,
-                $"expected {marker}'s write time to move after --force. Before: {writeTimeBefore:o}, " +
-                $"after: {File.GetLastWriteTimeUtc(marker):o}\nstderr:\n{stderr2}");
+            Assert.DoesNotContain("skipping", stderr, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains($"fetching Microsoft test-toolkit apps for BC {RealVersion} → {testAppsDir}",
+                stderr, StringComparison.Ordinal);
+            Assert.Equal(2, exit);
         }
         finally
         {
@@ -302,6 +341,7 @@ public sealed class ProvisionExplicitModesTests
     /// a prefix to stdout and exits 0. No artifact cache needed at all.
     /// </summary>
     [SkippableFact]
+    [Trait("Category", "LiveCdn")]
     public void ResolveVersion_PrintsFullVersionToStdout()
     {
         LiveCdnGate.Require();
@@ -339,6 +379,7 @@ public sealed class ProvisionExplicitModesTests
     /// not a mocked one.
     /// </summary>
     [SkippableFact]
+    [Trait("Category", "LiveCdn")]
     public void ResolveVersion_NonexistentPrefix_ExitsExecutionErrorNotTestFailureCode()
     {
         LiveCdnGate.Require();
@@ -568,6 +609,7 @@ public sealed class ProvisionExplicitModesTests
     /// reason the rest of this file already prefers it (see file header).
     /// </summary>
     [SkippableFact]
+    [Trait("Category", "LiveCdn")]
     public void ResolveVersion_CombinedWithTestApps_PrintsVersionAndDownloads()
     {
         LiveCdnGate.Require();
