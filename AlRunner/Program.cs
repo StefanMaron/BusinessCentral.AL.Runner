@@ -4040,6 +4040,9 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
             IReadOnlyList<EmittedSource> sources = Array.Empty<EmittedSource>();
             string? emitManifestAppJsonPath = null;   // the app.json that compile read (#4076)
             IReadOnlyList<string> alDiagnostics = Array.Empty<string>();
+            // #5563: the located diagnostics the emit-retry loop recorded for the files it dropped, which the
+            // PARTIAL-EMIT-DROP report below carries (alDiagnostics is the FINAL round's, empty by then).
+            IReadOnlyList<string> droppedFileDiagnostics = Array.Empty<string>();
             IReadOnlyDictionary<string, string>? compileInputs = null;   // #5368: what this compile read besides .al
             // --tdd only (issue #1997): count of objects the TDD-EXCLUDED branch below
             // deliberately kept `sources` short by. The PARTIAL-EMIT-DROP guard further
@@ -4195,6 +4198,7 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                     sources = emitOutput.Sources;
                     emitManifestAppJsonPath = emitOutput.ManifestAppJsonPath;
                     alDiagnostics = emitOutput.Diagnostics;
+                    droppedFileDiagnostics = emitOutput.ExcludedObjectDiagnostics ?? Array.Empty<string>();
                     compileInputs = emitOutput.CompileInputs;
                     // --tdd (issue #2001): collect regardless of whether anything ended up
                     // excluded afterward — generation can fully resolve an object with NO
@@ -4323,7 +4327,7 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                 var emittedNames = sources.Select(s => s.Name).ToList();
                 if (ProgramSupport.EmitDropCensus.FindPartialDrop(
                         allPaths, emitManifestAppJsonPath, emittedNames,
-                        tddExcludedCount + safeExcludedCount, Console.Error) is { } partialDrop)
+                        tddExcludedCount + safeExcludedCount, Console.Error, droppedFileDiagnostics) is { } partialDrop)
                 {
                     bundleErrors.Add(partialDrop.Error("<bundled>: ", moduleName));
                     Console.Error.WriteLine(partialDrop.ConsoleLine("<bundled>: ", moduleName));
@@ -4786,7 +4790,7 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
             if (sources.Count > 0 && suiteAlDiagnostics.Count == 0
                 && ProgramSupport.EmitDropCensus.FindPartialDrop(
                     suitePaths, emitOutput.ManifestAppJsonPath, sources.Select(x => x.Name).ToList(),
-                    suiteAccountedFor, Console.Error) is { } suiteDrop)
+                    suiteAccountedFor, Console.Error, emitOutput.ExcludedObjectDiagnostics) is { } suiteDrop)
             {
                 Console.Error.WriteLine(suiteDrop.ConsoleLine($"{suiteName}: ", suiteModule));
                 bundleErrors.Add(suiteDrop.Error($"{suiteName}: ", suiteModule));
@@ -7029,10 +7033,13 @@ return strictExitCode ? computedExitCode : 0;
                 if (sources.Count > 0 && alDiagnostics.Count == 0
                     && ProgramSupport.EmitDropCensus.FindPartialDrop(
                         allPaths, emitManifestAppJsonPath, sources.Select(x => x.Name).ToList(),
-                        tdd != null || droppedNonProfile ? excludedObjects.Count : 0, Console.Error) is { } partialDrop)
+                        tdd != null || droppedNonProfile ? excludedObjects.Count : 0, Console.Error,
+                        excludedObjectDiagnostics) is { } partialDrop)
                 {
                     Console.Error.WriteLine(partialDrop.ConsoleLine("  [server] ", moduleName));
-                    compileErrors.Add(partialDrop.Error("", moduleName));
+                    // One entry with the diagnostics inside it, as the dropped-non-profile entry above: a client reads
+                    // each entry as one lost suite, and --server has no --verbose to ask for them.
+                    compileErrors.Add(partialDrop.Error("", moduleName, listEveryDiagnostic: true));
                     return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
                         new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
                 }

@@ -273,6 +273,26 @@ public sealed class PerSuiteEmitExcludedTests
     }
 
     /// <summary>
+    /// #5563: the dropped file's own located AL error (AL0185, the codeunit it could not bind) was recorded by
+    /// the retry loop and is named in the PARTIAL-EMIT-DROP report, on both loops, instead of "0 AL diagnostics
+    /// explain the gap". The refusal and exit code 3 are the same as without it.
+    /// </summary>
+    [SkippableFact]
+    public void AProfileSharingAFileWithABrokenCodeunit_NamesTheDroppedFilesRecordedDiagnostic()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (_, perSuite, bundled) = ProfileSharingAFileWithABrokenCodeunit.Value;
+
+        foreach (var run in new[] { perSuite, bundled })
+        {
+            Assert.Equal(3, run.Exit);
+            Assert.DoesNotContain("0 AL diagnostics explain the gap", run.Output);
+            Assert.Contains("AL diagnostic(s) were recorded for the dropped file(s)", run.Output);
+            Assert.Contains("error AL0185: Codeunit 'PS Excl Does Not Exist' is missing", run.Output);
+        }
+    }
+
+    /// <summary>
     /// #5299's EMIT-ZERO means "no source emitted AND BC reported errors". A suite that emits nothing and
     /// reports nothing (an interface-only one) is not a failed compile: it passes, its neighbour runs, and
     /// no suite error is raised for it. (#5303: the 'errors reported' half of the guard was unpinned.)

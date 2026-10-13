@@ -390,6 +390,8 @@ public sealed class ServerEmitExcludedSurvivorsTests : IClassFixture<SharedCliSe
             Assert.Equal(3, cliExit);
             Assert.Empty(cliRows);
             Assert.Contains("PARTIAL-EMIT-DROP", cliOutput);
+            Assert.DoesNotContain("0 AL diagnostics explain the gap", cliOutput);
+            Assert.Contains("error AL0185: Codeunit 'This Codeunit Does Not Exist At All' is missing", cliOutput);
 
             foreach (var request in new[] { 1, 2 })
             {
@@ -401,6 +403,9 @@ public sealed class ServerEmitExcludedSurvivorsTests : IClassFixture<SharedCliSe
                 Assert.Contains("PARTIAL-EMIT-DROP", server.ErrorText);
                 Assert.Contains("Srv Excl Broken 62392", server.ErrorText);
                 Assert.Contains("Srv Excl Healthy 62391", server.ErrorText);
+                // #5563: --server has no --verbose, so the dropped file's recorded AL error must be in the entry.
+                Assert.DoesNotContain("0 AL diagnostics explain the gap", server.ErrorText);
+                Assert.Contains("error AL0185: Codeunit 'This Codeunit Does Not Exist At All' is missing", server.ErrorText);
             }
 
             // Not sticky: once the file compiles, its tests run and nothing is reported.
@@ -451,6 +456,9 @@ public sealed class ServerEmitExcludedSurvivorsTests : IClassFixture<SharedCliSe
             Assert.Equal(3, server.Exit);
             Assert.Contains("PARTIAL-EMIT-DROP", server.ErrorText);
             Assert.Contains("Srv Excl Healthy 62402", server.ErrorText);
+            // #5563: the file the compile dropped holds the profile's own AL error, and that is what is recorded.
+            Assert.DoesNotContain("0 AL diagnostics explain the gap", server.ErrorText);
+            Assert.Contains("error AL0185: Page 'Srv Excl Nonexistent Page' is missing", server.ErrorText);
         }
         finally
         {

@@ -226,6 +226,9 @@ answer an event in a request that omits it. A single-bundle request is unchanged
   a `compilationErrors` entry beginning `PARTIAL-EMIT-DROP`. The case that needs it: a dropped *file*
   is named by one of its objects, so a `profile` and a test codeunit in one file drop the codeunit
   with only the profile named, and without the guard its tests vanished behind `exitCode: 0`.
+  The entry also carries the located AL diagnostics the compile recorded for the dropped file(s), one per
+  line after the census (#5563) — `--server` has no `--verbose` to ask for them — and says `0 AL diagnostics
+  explain the gap` only when none were recorded.
 - `cancelled: true` is present on the summary only when a concurrent `cancel`
   command actually stopped the run before every test ran (see `cancel` below);
   omitted otherwise (never emitted as `false`).

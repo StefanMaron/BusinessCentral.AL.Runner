@@ -40,32 +40,55 @@ internal static partial class ProgramSupport
                 ? sources.Where(s => !string.Equals(s.Name, dropped, StringComparison.Ordinal)).ToList()
                 : sources;
 
-        /// <summary>An object the sources declare that the compile neither emitted nor accounted for.</summary>
-        internal sealed record PartialDrop(IReadOnlyList<string> Declared, IReadOnlyList<string> Emitted)
+        /// <summary>An object the sources declare that the compile neither emitted nor accounted for.
+        /// <paramref name="DroppedFileDiagnostics"/> are the located AL diagnostics the emit-retry loop recorded for
+        /// the files it dropped (#5563); the unexplained object usually sits in one of them, unnamed.</summary>
+        internal sealed record PartialDrop(
+            IReadOnlyList<string> Declared, IReadOnlyList<string> Emitted,
+            IReadOnlyList<string>? DroppedFileDiagnostics = null)
         {
-            /// <summary>The suite error: <paramref name="prefix"/> is the caller's own lead (`&lt;bundled&gt;: `, or none).</summary>
-            internal string Error(string prefix, string moduleName) =>
-                $"{prefix}PARTIAL-EMIT-DROP for {moduleName}: {Declared.Count} object(s) declared, " +
-                $"only {Emitted.Count} emitted, 0 AL diagnostics explain the gap. Declared: " +
-                $"[{string.Join(", ", Declared)}]. Emitted: [{string.Join(", ", Emitted)}].";
+            private IReadOnlyList<string> Diagnostics => DroppedFileDiagnostics ?? Array.Empty<string>();
 
+            // The count phrase is the only place the message says whether a diagnostic was recorded; "0" stays the
+            // wording when none was, so a reader still learns that nothing explains the gap.
+            private string DiagnosticCount =>
+                Diagnostics.Count == 0 ? "0 AL diagnostics explain the gap"
+                : $"{Diagnostics.Count} AL diagnostic(s) were recorded for the dropped file(s)";
+
+            /// <summary>The suite error: <paramref name="prefix"/> is the caller's own lead (`&lt;bundled&gt;: `, or none).
+            /// <paramref name="listEveryDiagnostic"/> appends each diagnostic on its own line (--server, whose client
+            /// has no other channel); otherwise only the first is quoted, as AL-DIAGNOSTIC-FAIL's suite error does.</summary>
+            internal string Error(string prefix, string moduleName, bool listEveryDiagnostic = false) =>
+                $"{prefix}PARTIAL-EMIT-DROP for {moduleName}: {Declared.Count} object(s) declared, " +
+                $"only {Emitted.Count} emitted, {DiagnosticCount}" +
+                (Diagnostics.Count > 0 && !listEveryDiagnostic ? $" (first: {Diagnostics[0].Split('\n')[0]})" : "") +
+                $". Declared: [{string.Join(", ", Declared)}]. Emitted: [{string.Join(", ", Emitted)}]." +
+                (listEveryDiagnostic ? string.Concat(Diagnostics.Select(d => "\n" + d)) : "");
+
+            /// <summary>The console report: the census, then every recorded diagnostic.</summary>
             internal string ConsoleLine(string lead, string moduleName) =>
                 $"{lead}PARTIAL-EMIT-DROP — {moduleName}: {Declared.Count} declared vs " +
-                $"{Emitted.Count} emitted, no diagnostics. Declared: [{string.Join(", ", Declared)}]. " +
-                $"Emitted: [{string.Join(", ", Emitted)}].";
+                $"{Emitted.Count} emitted, " +
+                (Diagnostics.Count == 0 ? "no diagnostics" : DiagnosticCount) +
+                $". Declared: [{string.Join(", ", Declared)}]. " +
+                $"Emitted: [{string.Join(", ", Emitted)}]." +
+                string.Concat(Diagnostics.Select(d => "\n  " + d));
         }
 
         /// <summary>
         /// The one PARTIAL-EMIT-DROP rule the CLI's bundled loop and --server's request path both ask (#5559):
         /// the sources declare more objects than the compile emitted plus <paramref name="accountedFor"/>, the
-        /// objects it reported dropping by name. Null when they do not.
+        /// objects it reported dropping by name. Null when they do not. <paramref name="droppedFileDiagnostics"/> is the
+        /// retry loop's <c>ExcludedObjectDiagnostics</c>, carried into the report (#5563).
         /// </summary>
         internal static PartialDrop? FindPartialDrop(
             IEnumerable<string> allPaths, string? manifestAppJsonPath, IReadOnlyList<string> emittedNames,
-            int accountedFor, TextWriter log, DeclaredNamesParser? parse = null)
+            int accountedFor, TextWriter log, IReadOnlyList<string>? droppedFileDiagnostics = null,
+            DeclaredNamesParser? parse = null)
         {
             var declared = DeclaredBeyond(SourceFiles(allPaths), manifestAppJsonPath, emittedNames.Count + accountedFor, log, parse);
-            return declared.Count > emittedNames.Count + accountedFor ? new PartialDrop(declared, emittedNames) : null;
+            return declared.Count > emittedNames.Count + accountedFor
+                ? new PartialDrop(declared, emittedNames, droppedFileDiagnostics) : null;
         }
 
         /// <summary>

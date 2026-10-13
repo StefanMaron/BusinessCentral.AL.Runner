@@ -134,6 +134,9 @@ public sealed class PartialEmitDropCensusTests : IDisposable
         Assert.Contains("2 object(s) declared, only 1 emitted", output);
         Assert.Contains("Declared: [Census Forced Probe, Census Victim]", output.Replace("Victim.al", ""));
         Assert.Equal(3, exit);
+        // #5563: nothing was dropped by the compile, so no diagnostic was recorded and the message still says so.
+        Assert.Contains("0 AL diagnostics explain the gap", output);
+        Assert.DoesNotContain("were recorded for the dropped file(s)", output);
     }
 
     /// <summary>
@@ -361,6 +364,63 @@ public sealed class PartialEmitDropCensusTests : IDisposable
         Assert.Equal(
             "  [server] PARTIAL-EMIT-DROP \u2014 M: 2 declared vs 1 emitted, no diagnostics. Declared: [A, B]. Emitted: [A].",
             drop.ConsoleLine("  [server] ", "M"));
+    }
+
+    private static readonly string[] RecordedDiagnostics =
+    {
+        "SourceFile(Both.al@13:18): error AL0185: Codeunit 'Does Not Exist' is missing",
+        "SourceFile(Both.al@4:18): error AL0185: Page 'Gone' is missing",
+    };
+
+    /// <summary>
+    /// #5563: the diagnostics the retry loop recorded for the dropped file are in every rendering of the report,
+    /// and the count it states is the number it holds, so it can never say "0 AL diagnostics" beside a list.
+    /// </summary>
+    [Fact]
+    public void FindPartialDrop_CarriesTheDroppedFilesDiagnostics_IntoEveryRendering()
+    {
+        var file = TextFile("TwoDeclared5563.al", "codeunit 65521 \"A\"\n{\n}\ncodeunit 65522 \"B\"\n{\n}\n");
+
+        var drop = ProgramSupport.EmitDropCensus.FindPartialDrop(
+            new[] { file }, null, new[] { "A" }, accountedFor: 0, new StringWriter(), RecordedDiagnostics,
+            parse: (_, _, _) => new[] { "A", "B" });
+
+        Assert.NotNull(drop);
+        // CLI suite error: the count and the first diagnostic, on one line like AL-DIAGNOSTIC-FAIL's entry.
+        Assert.Equal(
+            "<bundled>: PARTIAL-EMIT-DROP for M: 2 object(s) declared, only 1 emitted, 2 AL diagnostic(s) were recorded "
+            + "for the dropped file(s) (first: SourceFile(Both.al@13:18): error AL0185: Codeunit 'Does Not Exist' is missing). "
+            + "Declared: [A, B]. Emitted: [A].", drop!.Error("<bundled>: ", "M"));
+        // --server: every diagnostic inside the one entry, the first is not the only one.
+        Assert.Equal(
+            "PARTIAL-EMIT-DROP for M: 2 object(s) declared, only 1 emitted, 2 AL diagnostic(s) were recorded "
+            + "for the dropped file(s). Declared: [A, B]. Emitted: [A]."
+            + "\n" + RecordedDiagnostics[0] + "\n" + RecordedDiagnostics[1],
+            drop.Error("", "M", listEveryDiagnostic: true));
+        Assert.Equal(
+            "  [server] PARTIAL-EMIT-DROP \u2014 M: 2 declared vs 1 emitted, 2 AL diagnostic(s) were recorded for the dropped file(s). "
+            + "Declared: [A, B]. Emitted: [A].\n  " + RecordedDiagnostics[0] + "\n  " + RecordedDiagnostics[1],
+            drop.ConsoleLine("  [server] ", "M"));
+    }
+
+    /// <summary>Diagnostics alone are not a drop: a gap the compile accounted for stays no drop, with or without them.</summary>
+    [Fact]
+    public void FindPartialDrop_DiagnosticsDoNotCreateADrop_AndNoneKeepsTheZeroWording()
+    {
+        var file = TextFile("Accounted5563.al", "codeunit 65521 \"A\"\n{\n}\ncodeunit 65522 \"B\"\n{\n}\n");
+        string[] parse(string _, string __, string? ___) => new[] { "A", "B" };
+
+        Assert.Null(ProgramSupport.EmitDropCensus.FindPartialDrop(
+            new[] { file }, null, new[] { "A" }, accountedFor: 1, new StringWriter(), RecordedDiagnostics, parse: parse));
+
+        var none = ProgramSupport.EmitDropCensus.FindPartialDrop(
+            new[] { file }, null, new[] { "A" }, accountedFor: 0, new StringWriter(), Array.Empty<string>(), parse: parse)!;
+        var absent = ProgramSupport.EmitDropCensus.FindPartialDrop(
+            new[] { file }, null, new[] { "A" }, accountedFor: 0, new StringWriter(), null, parse: parse)!;
+        Assert.Equal(none.Error("p: ", "M"), absent.Error("p: ", "M"));
+        Assert.Contains("0 AL diagnostics explain the gap", none.Error("p: ", "M", listEveryDiagnostic: true));
+        Assert.DoesNotContain("were recorded", none.Error("", "M"));
+        Assert.DoesNotContain("\n", none.Error("", "M", listEveryDiagnostic: true));
     }
 
     /// <summary>The accounted-for objects are the ones the compile reported dropping; the guard fires only beyond them.</summary>
