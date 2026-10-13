@@ -2326,7 +2326,8 @@ public sealed partial class BcCompiler
                         string src;
                         try { src = TddSourceOverlay.ReadAllText(alFiles[i]); }
                         catch { nextKeepIdx.Add(i); continue; }
-                        var hit = failing.FirstOrDefault(f => DeclaresObject(src, f.Type, f.Namespace, f.Name));
+                        var hit = PickDroppedFileObject(
+                            failing.Where(f => DeclaresObject(src, f.Type, f.Namespace, f.Name)).ToList());
                         if (hit.Name != null)
                         {
                             var label = $"{hit.Type} {hit.Namespace}.\"{hit.Name}\"";
@@ -2766,6 +2767,20 @@ public sealed partial class BcCompiler
     private static readonly System.Text.RegularExpressions.Regex _failingObjectRx = new(
         @"[Oo]bject:'(\w+) (?:(?:([\w.]+)\.)?""([^""]+)""|([\w.]+))'",
         System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    // A dropped file is named by ONE of the failed objects it declares, and that name picks the path the
+    // module takes: a "Profile " label is the profile path, whose only guard is the PARTIAL-EMIT-DROP census
+    // (#5559); any other label is triaged as a droppable test codeunit. BC lists the failed objects of one
+    // file in no fixed order (the same module named the profile on one process and the codeunit on another),
+    // so the first match decided the verdict by accident. A profile wins: the verdict then no longer depends
+    // on that order, and what else the file declared is what the census counts.
+    internal static (string Type, string Namespace, string Name) PickDroppedFileObject(
+        IReadOnlyList<(string Type, string Namespace, string Name)> failedAndDeclaredHere)
+    {
+        foreach (var f in failedAndDeclaredHere)
+            if (string.Equals(f.Type, "Profile", StringComparison.Ordinal)) return f;
+        return failedAndDeclaredHere.Count > 0 ? failedAndDeclaredHere[0] : default;
+    }
 
     private static List<(string Type, string Namespace, string Name)> ExtractFailingObjectRefs(string message)
     {

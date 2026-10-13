@@ -341,6 +341,58 @@ public sealed class PartialEmitDropCensusTests : IDisposable
         Assert.Equal(0, parsed);
     }
 
+    // ── the one rule the CLI and --server both ask (#5559) ───────────────────────────────
+
+    [Fact]
+    public void FindPartialDrop_MoreDeclaredThanEmittedPlusAccountedFor_NamesBothSides()
+    {
+        var file = TextFile("TwoDeclared5559.al", "codeunit 65521 \"A\"\n{\n}\ncodeunit 65522 \"B\"\n{\n}\n");
+
+        var drop = ProgramSupport.EmitDropCensus.FindPartialDrop(
+            new[] { file }, null, new[] { "A" }, accountedFor: 0, new StringWriter(),
+            parse: (_, _, _) => new[] { "A", "B" });
+
+        Assert.NotNull(drop);
+        Assert.Equal(new[] { "A", "B" }, drop!.Declared);
+        Assert.Equal(new[] { "A" }, drop.Emitted);
+        Assert.Equal(
+            "<bundled>: PARTIAL-EMIT-DROP for M: 2 object(s) declared, only 1 emitted, 0 AL diagnostics explain the gap. "
+            + "Declared: [A, B]. Emitted: [A].", drop.Error("<bundled>: ", "M"));
+        Assert.Equal(
+            "  [server] PARTIAL-EMIT-DROP \u2014 M: 2 declared vs 1 emitted, no diagnostics. Declared: [A, B]. Emitted: [A].",
+            drop.ConsoleLine("  [server] ", "M"));
+    }
+
+    /// <summary>The accounted-for objects are the ones the compile reported dropping; the guard fires only beyond them.</summary>
+    [Fact]
+    public void FindPartialDrop_TheGapIsExactlyWhatWasReportedDropped_IsNotADrop()
+    {
+        var file = TextFile("Accounted5559.al", "codeunit 65521 \"A\"\n{\n}\ncodeunit 65522 \"B\"\n{\n}\n");
+
+        Assert.Null(ProgramSupport.EmitDropCensus.FindPartialDrop(
+            new[] { file }, null, new[] { "A" }, accountedFor: 1, new StringWriter(),
+            parse: (_, _, _) => new[] { "A", "B" }));
+        Assert.NotNull(ProgramSupport.EmitDropCensus.FindPartialDrop(
+            new[] { file }, null, new[] { "A" }, accountedFor: 0, new StringWriter(),
+            parse: (_, _, _) => new[] { "A", "B" }));
+    }
+
+    /// <summary>A directory in the paths is read for its .al files, and a file the parser cannot read still fires.</summary>
+    [Fact]
+    public void FindPartialDrop_ADirectoryOfPaths_IsScanned_AndAnUnreadableFileFailsClosed()
+    {
+        var dir = Path.Combine(_root, "Dir5559");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "X.al"), "codeunit 65521 \"X\"\n{\n}\n");
+        File.WriteAllText(Path.Combine(dir, "ignored.txt"), "codeunit 65522 \"Y\"\n");
+
+        var drop = ProgramSupport.EmitDropCensus.FindPartialDrop(
+            new[] { dir }, null, Array.Empty<string>(), accountedFor: 0, new StringWriter(), parse: (_, _, _) => null);
+
+        Assert.NotNull(drop);
+        Assert.Single(drop!.Declared);
+    }
+
     /// <summary>
     /// Each of the ten counted kinds, capitalised and on one line, is a declaration to the tree.
     /// Removing a kind from the filter drops exactly its row.

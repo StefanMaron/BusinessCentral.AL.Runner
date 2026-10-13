@@ -19,6 +19,55 @@ internal static partial class ProgramSupport
 
         internal delegate IReadOnlyList<string>? DeclaredNamesParser(string source, string filePath, string? manifestAppJsonPath);
 
+        /// <summary>The .al files a module was compiled from: the files named in <paramref name="allPaths"/> and every
+        /// .al file below a directory named there.</summary>
+        internal static IReadOnlyList<string> SourceFiles(IEnumerable<string> allPaths)
+        {
+            var paths = allPaths as IReadOnlyList<string> ?? allPaths.ToList();
+            return paths.Where(File.Exists)
+                .Concat(paths.Where(Directory.Exists)
+                    .SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Files(d, "*.al")))
+                .Distinct()
+                .ToList();
+        }
+
+        /// <summary>
+        /// Test seam: BC's silent drop cannot be provoked on demand, and the census tests need a declared object the
+        /// compile "did not emit". Removing one emitted source by name is exactly the state the guard exists to catch.
+        /// </summary>
+        internal static IReadOnlyList<EmittedSource> WithoutTestSeamObject(IReadOnlyList<EmittedSource> sources) =>
+            Environment.GetEnvironmentVariable("AL_RUNNER_TEST_DROP_EMITTED_OBJECT") is { Length: > 0 } dropped
+                ? sources.Where(s => !string.Equals(s.Name, dropped, StringComparison.Ordinal)).ToList()
+                : sources;
+
+        /// <summary>An object the sources declare that the compile neither emitted nor accounted for.</summary>
+        internal sealed record PartialDrop(IReadOnlyList<string> Declared, IReadOnlyList<string> Emitted)
+        {
+            /// <summary>The suite error: <paramref name="prefix"/> is the caller's own lead (`&lt;bundled&gt;: `, or none).</summary>
+            internal string Error(string prefix, string moduleName) =>
+                $"{prefix}PARTIAL-EMIT-DROP for {moduleName}: {Declared.Count} object(s) declared, " +
+                $"only {Emitted.Count} emitted, 0 AL diagnostics explain the gap. Declared: " +
+                $"[{string.Join(", ", Declared)}]. Emitted: [{string.Join(", ", Emitted)}].";
+
+            internal string ConsoleLine(string lead, string moduleName) =>
+                $"{lead}PARTIAL-EMIT-DROP — {moduleName}: {Declared.Count} declared vs " +
+                $"{Emitted.Count} emitted, no diagnostics. Declared: [{string.Join(", ", Declared)}]. " +
+                $"Emitted: [{string.Join(", ", Emitted)}].";
+        }
+
+        /// <summary>
+        /// The one PARTIAL-EMIT-DROP rule the CLI's bundled loop and --server's request path both ask (#5559):
+        /// the sources declare more objects than the compile emitted plus <paramref name="accountedFor"/>, the
+        /// objects it reported dropping by name. Null when they do not.
+        /// </summary>
+        internal static PartialDrop? FindPartialDrop(
+            IEnumerable<string> allPaths, string? manifestAppJsonPath, IReadOnlyList<string> emittedNames,
+            int accountedFor, TextWriter log, DeclaredNamesParser? parse = null)
+        {
+            var declared = DeclaredBeyond(SourceFiles(allPaths), manifestAppJsonPath, emittedNames.Count + accountedFor, log, parse);
+            return declared.Count > emittedNames.Count + accountedFor ? new PartialDrop(declared, emittedNames) : null;
+        }
+
         /// <summary>
         /// The names of the objects <paramref name="files"/> declare, when more than
         /// <paramref name="accountedFor"/> could be; an empty list when the bound says they cannot

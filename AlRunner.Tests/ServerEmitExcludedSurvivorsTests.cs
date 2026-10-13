@@ -29,7 +29,7 @@ public sealed class ServerEmitExcludedSurvivorsTests : IClassFixture<SharedCliSe
 
     // One AppId and one id range per bundle: the shared server keeps a compiled module per AppId
     // for its whole life (SharedCliServer's rule c).
-    private static void WriteApp(string root, string appId, int from)
+    internal static void WriteApp(string root, string appId, int from)
     {
         Directory.CreateDirectory(root);
         File.WriteAllText(Path.Combine(root, "app.json"), $$"""
@@ -46,7 +46,7 @@ public sealed class ServerEmitExcludedSurvivorsTests : IClassFixture<SharedCliSe
     }
 
     /// <summary>A test codeunit of two tests that bind and run.</summary>
-    private static string Healthy(int id) => $$"""
+    internal static string Healthy(int id) => $$"""
         codeunit {{id}} "Srv Excl Healthy {{id}}"
         {
             Subtype = Test;
@@ -106,7 +106,7 @@ public sealed class ServerEmitExcludedSurvivorsTests : IClassFixture<SharedCliSe
         }
         """;
 
-    private static string Req(string bundle, bool affectedOnly = false) => JsonSerializer.Serialize(new
+    internal static string Req(string bundle, bool affectedOnly = false) => JsonSerializer.Serialize(new
     {
         command = "runTests",
         sourcePaths = new[] { bundle },
@@ -133,7 +133,7 @@ public sealed class ServerEmitExcludedSurvivorsTests : IClassFixture<SharedCliSe
             summary.GetProperty("passed").GetInt32(), rows, text, string.Join("\n", lines));
     }
 
-    private static IEnumerable<string> ServerArgs()
+    internal static IEnumerable<string> ServerArgs()
     {
         var platformApps = TestArtifacts.PlatformAppsDir();
         return Directory.Exists(platformApps) ? new[] { "--package-cache", platformApps } : Array.Empty<string>();
@@ -361,6 +361,96 @@ public sealed class ServerEmitExcludedSurvivorsTests : IClassFixture<SharedCliSe
             Assert.Contains("The module was NOT run", server.ErrorText);
             Assert.Contains("Srv Excl Bad Profile", server.ErrorText);
             Assert.Contains("Srv Excl Broken 62362", server.ErrorText);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// #5559: the same module with the broken profile and the broken test codeunit in ONE file. The retry loop
+    /// drops the file but names one object of it, so a reading of the drop alone is "all profiles"; the
+    /// codeunit's two tests would vanish and the server answered exit code 0. The CLI's PARTIAL-EMIT-DROP census
+    /// sees the missing codeunit and refuses, and the server answers the same, on every request and until the
+    /// file is fixed.
+    /// </summary>
+    [SkippableFact]
+    public async Task ProfileAndBrokenTestCodeunitInOneFile_ServerRefusesAsTheCli()
+    {
+        TestArtifacts.SkipIfMissing();
+        var root = TestScratch.Dir("al-runner-server-excl-survivors-onefile");
+        WriteApp(root, "5559a001-0000-4000-8000-000000000001", 62390);
+        File.WriteAllText(Path.Combine(root, "Healthy.Codeunit.al"), Healthy(62391));
+        var both = Path.Combine(root, "Both.al");
+        File.WriteAllText(both, BadProfile + "\n\n" + Broken(62392));
+        try
+        {
+            var (cliExit, cliRows, cliOutput) = RunCli(root);
+            Assert.Equal(3, cliExit);
+            Assert.Empty(cliRows);
+            Assert.Contains("PARTIAL-EMIT-DROP", cliOutput);
+
+            foreach (var request in new[] { 1, 2 })
+            {
+                var server = await Ask(root);
+                Assert.True(server.Rows.SequenceEqual(cliRows),
+                    $"request {request}: server rows [{Describe(server.Rows)}] differ from the CLI's [{Describe(cliRows)}]\n{server.Raw}\n--- CLI ---\n{cliOutput}");
+                Assert.Equal(3, server.Exit);
+                Assert.Equal(0, server.Total);
+                Assert.Contains("PARTIAL-EMIT-DROP", server.ErrorText);
+                Assert.Contains("Srv Excl Broken 62392", server.ErrorText);
+                Assert.Contains("Srv Excl Healthy 62391", server.ErrorText);
+            }
+
+            // Not sticky: once the file compiles, its tests run and nothing is reported.
+            File.WriteAllText(both, BadProfile.Replace("\"Srv Excl Nonexistent Page\"", "\"Srv Excl Page\"")
+                + "\n\n" + Fixed(62392) + "\n\n" + RoleCenterPage);
+            var fixedRun = await Ask(root);
+            Assert.Equal(0, fixedRun.Exit);
+            Assert.Equal(4, fixedRun.Total);
+            Assert.Equal(4, fixedRun.Passed);
+            Assert.DoesNotContain("PARTIAL-EMIT-DROP", fixedRun.ErrorText);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    private const string RoleCenterPage = """
+        page 62399 "Srv Excl Page"
+        {
+            PageType = RoleCenter;
+        }
+        """;
+
+    /// <summary>
+    /// The census, not the naming, is what makes the two paths agree here: a profile that crashes the emitter
+    /// shares its file with a test codeunit that is perfectly healthy. Nothing names the codeunit, and its two
+    /// tests are as absent as a dropped one's, so both paths refuse the module.
+    /// </summary>
+    [SkippableFact]
+    public async Task ProfileAndAHealthyTestCodeunitInOneFile_BothPathsRefuse_NamingTheCodeunitNothingDropped()
+    {
+        TestArtifacts.SkipIfMissing();
+        var root = TestScratch.Dir("al-runner-server-excl-survivors-onefile-healthy");
+        WriteApp(root, "5559a002-0000-4000-8000-000000000002", 62400);
+        File.WriteAllText(Path.Combine(root, "Healthy.Codeunit.al"), Healthy(62401));
+        File.WriteAllText(Path.Combine(root, "Both.al"), BadProfile + "\n\n" + Healthy(62402));
+        try
+        {
+            var (cliExit, cliRows, cliOutput) = RunCli(root);
+            Assert.Equal(3, cliExit);
+            Assert.Empty(cliRows);
+            Assert.Contains("PARTIAL-EMIT-DROP", cliOutput);
+
+            var server = await Ask(root);
+            Assert.True(server.Rows.SequenceEqual(cliRows),
+                $"server rows [{Describe(server.Rows)}] differ from the CLI's [{Describe(cliRows)}]\n{server.Raw}\n--- CLI ---\n{cliOutput}");
+            Assert.Equal(3, server.Exit);
+            Assert.Contains("PARTIAL-EMIT-DROP", server.ErrorText);
+            Assert.Contains("Srv Excl Healthy 62402", server.ErrorText);
         }
         finally
         {

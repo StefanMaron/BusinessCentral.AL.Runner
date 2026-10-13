@@ -4304,25 +4304,14 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
             // not yet understood — see the tracked runner-gap issue. Per
             // .claude/rules/loud-failures.md this must fail loudly, not vanish a whole
             // suite's tests with no trace.
-            // Test seam: BC's silent drop cannot be provoked on demand, and the census tests need a
-            // declared object the compile "did not emit". Removing one emitted source by name is
-            // exactly the state the guard exists to catch.
-            if (Environment.GetEnvironmentVariable("AL_RUNNER_TEST_DROP_EMITTED_OBJECT") is { Length: > 0 } droppedForTest)
-                sources = sources.Where(s => !string.Equals(s.Name, droppedForTest, StringComparison.Ordinal)).ToList();
+            sources = ProgramSupport.EmitDropCensus.WithoutTestSeamObject(sources);
             if (sources.Count > 0 && alDiagnostics.Count == 0)
             {
-                var censusFiles = allPaths
-                    .Where(File.Exists)
-                    .Concat(allPaths.Where(Directory.Exists)
-                        .SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Files(d, "*.al")))
-                    .Distinct()
-                    .ToList();
                 // #5552: counted from BC's syntax tree, not a header regex over the text, so a
                 // declaration in a comment or an inactive #if branch is not one. The cheap bound
                 // inside only avoids parsing every file when nothing could exceed the accounted-for
-                // count (#4076).
-                var declaredObjects = ProgramSupport.EmitDropCensus.DeclaredBeyond(
-                    censusFiles, emitManifestAppJsonPath, sources.Count + tddExcludedCount + safeExcludedCount, Console.Error);
+                // count (#4076). One rule with --server's request path (#5559): EmitDropCensus.FindPartialDrop.
+                //
                 // #1997: the gap is not silent when it exactly matches tddExcludedCount — the
                 // TDD-EXCLUDED branch above already reported those objects loudly, with a
                 // synthetic FAILED test each. Only a gap BEYOND that is the unexplained,
@@ -4331,17 +4320,13 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                 // guard fires on the very objects EMIT-EXCLUDED just accounted for and wipes
                 // the survivors it deliberately kept — measured, and it cost the one healthy
                 // test in Fixtures/EmitExclusion.
-                if (declaredObjects.Count > sources.Count + tddExcludedCount + safeExcludedCount)
+                var emittedNames = sources.Select(s => s.Name).ToList();
+                if (ProgramSupport.EmitDropCensus.FindPartialDrop(
+                        allPaths, emitManifestAppJsonPath, emittedNames,
+                        tddExcludedCount + safeExcludedCount, Console.Error) is { } partialDrop)
                 {
-                    var emittedNames = sources.Select(s => s.Name).ToList();
-                    bundleErrors.Add(
-                        $"<bundled>: PARTIAL-EMIT-DROP for {moduleName}: {declaredObjects.Count} object(s) declared, " +
-                        $"only {sources.Count} emitted, 0 AL diagnostics explain the gap. Declared: " +
-                        $"[{string.Join(", ", declaredObjects)}]. Emitted: [{string.Join(", ", emittedNames)}].");
-                    Console.Error.WriteLine(
-                        $"<bundled>: PARTIAL-EMIT-DROP — {moduleName}: {declaredObjects.Count} declared vs " +
-                        $"{sources.Count} emitted, no diagnostics. Declared: [{string.Join(", ", declaredObjects)}]. " +
-                        $"Emitted: [{string.Join(", ", emittedNames)}].");
+                    bundleErrors.Add(partialDrop.Error("<bundled>: ", moduleName));
+                    Console.Error.WriteLine(partialDrop.ConsoleLine("<bundled>: ", moduleName));
                     sources = Array.Empty<EmittedSource>(); // do not compile a partial, silently-wrong module
                 }
             }
@@ -6847,6 +6832,7 @@ return strictExitCode ? computedExitCode : 0;
                 IReadOnlyList<string> excludedObjectDiagnostics;
                 IReadOnlyList<TddExcludedObjectDetail> excludedDetails = Array.Empty<TddExcludedObjectDetail>();
                 IReadOnlyDictionary<string, string>? compileInputs = null;   // #5368
+                string? emitManifestAppJsonPath = null;   // the app.json that compile read, for the census (#5559)
                 var et = System.Diagnostics.Stopwatch.StartNew();
                 var generationBeforeEmit = emitter.RadBaselineGeneration(moduleName);
                 try
@@ -6889,6 +6875,7 @@ return strictExitCode ? computedExitCode : 0;
                     sources = emitOutput.Sources;
                     alDiagnostics = emitOutput.Diagnostics;
                     compileInputs = emitOutput.CompileInputs;
+                    emitManifestAppJsonPath = emitOutput.ManifestAppJsonPath;
                     excludedObjects = emitOutput.ExcludedObjects;
                     excludedObjectDiagnostics = emitOutput.ExcludedObjectDiagnostics ?? Array.Empty<string>();
                     excludedDetails = emitOutput.ExcludedObjectDetails ?? Array.Empty<TddExcludedObjectDetail>();
@@ -7016,6 +7003,22 @@ return strictExitCode ? computedExitCode : 0;
                         return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
                             new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
                     }
+                }
+                // #5559: the CLI's PARTIAL-EMIT-DROP guard (EmitDropCensus.FindPartialDrop, one rule): the sources declare
+                // an object this compile neither emitted nor reported dropping. A dropped FILE is named by one object only,
+                // so a profile that shares a file with a test codeunit drops the codeunit unnamed, and without this the
+                // request ran the survivors and answered exit code 0 with its tests absent. Objects reported dropped above
+                // are accounted for the same way the CLI counts them (--tdd's, and a non-profile drop the survivors ran around).
+                sources = ProgramSupport.EmitDropCensus.WithoutTestSeamObject(sources);
+                if (sources.Count > 0 && alDiagnostics.Count == 0
+                    && ProgramSupport.EmitDropCensus.FindPartialDrop(
+                        allPaths, emitManifestAppJsonPath, sources.Select(x => x.Name).ToList(),
+                        tdd != null || droppedNonProfile ? excludedObjects.Count : 0, Console.Error) is { } partialDrop)
+                {
+                    Console.Error.WriteLine(partialDrop.ConsoleLine("  [server] ", moduleName));
+                    compileErrors.Add(partialDrop.Error("", moduleName));
+                    return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
+                        new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
                 }
                 if (sources.Count == 0)
                 {
