@@ -58,6 +58,8 @@ public sealed class LogHyphenatedTagContractTests
         new("AlRunner/ProgramSupport/SiblingCompile.cs", "source-dep", Kind.Loud),
         // [sibling-symbols] names the symbol-compile path per sibling; only --watch reuses a baseline (#2672).
         new("AlRunner/ProgramSupport/SiblingCompile.cs", "sibling-symbols", Kind.OptIn, Gate: @"\bannouncePath\b"),
+        // The PARTIAL-EMIT-DROP guard's third state (#5552): a file it could not parse, counted conservatively so the guard may fire; hiding it would hide why.
+        new("AlRunner/ProgramSupport/EmitDropCensus.cs", "emit-census", Kind.Loud),
         new("AlRunner/Infrastructure/AlCoverageSourceMap.cs", "source-map", Kind.Loud),
         new("AlRunner/Infrastructure/MissingTestDataDiagnosis.cs", "test-data", Kind.Loud),
         new("AlRunner/Infrastructure/TestDataNormalization.cs", "test-data", Kind.Loud),
