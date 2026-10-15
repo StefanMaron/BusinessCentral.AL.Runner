@@ -18,6 +18,12 @@ public static partial class BcRuntime
     /// <summary>The skeleton NavSession every runner-side patch reaches BC through.</summary>
     internal static object? SkeletonSession => _skeletonSession;
 
+    /// <summary>The synthetic Windows SID of the skeleton session user "TESTUSER" (#2352): the
+    /// ASCII bytes of "TEST" and "USER" as the two machine sub-authorities, the way the user's guid
+    /// carries "TESTUS". Without one, Sid(UserId()) and every Windows-Security-ID filter built from it
+    /// degenerate to the blank-SID set. docs/session-user-seed-ordering.md#the-windows-sid.</summary>
+    internal const string SessionUserWindowsSid = "S-1-5-21-1413829460-1431520594-0-1000";
+
     private static DateTime? _skeletonSessionLoginTime;
 
     /// <summary>
@@ -1434,6 +1440,12 @@ public static partial class BcRuntime
 
                     var fFullName = navUserType.GetField("fullName", BindingFlags.NonPublic | BindingFlags.Instance);
                     if (fFullName != null) FieldPoke.SetInstance(fFullName, skelUser, "TESTUSER");
+
+                    // A Windows-authenticated session user always carries a Windows SID, and AL asks for it
+                    // through Sid() and through User."Windows Security ID" lookups. Synthetic like the
+                    // guid above; see SessionUserWindowsSid.
+                    var fWindowsSid = navUserType.GetField("windowsSID", BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (fWindowsSid != null) FieldPoke.SetInstance(fWindowsSid, skelUser, SessionUserWindowsSid);
 
                     var fUserGuid = navUserType.GetField("userGuid", BindingFlags.NonPublic | BindingFlags.Instance);
                     if (fUserGuid != null)

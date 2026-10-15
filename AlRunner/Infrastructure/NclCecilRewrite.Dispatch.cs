@@ -478,6 +478,21 @@ public static partial class NclCecilRewrite
                     ReplaceBodyWithHelper(asm.MainModule, m, alSidHelper);
                     Console.Error.WriteLine("[Cecil] Rewrote ALDatabase.ALSid(string) → host has no Windows identity store");
                 }
+
+                // ALDatabase.UserName(string) — the SID → account name inverse of ALSid; same
+                // PlatformNotSupportedException on this host, same answer (#2352, on the helper).
+                var userNameHelper = typeof(AlRunner.Patches.ALDatabasePatches).GetMethod(
+                    nameof(AlRunner.Patches.ALDatabasePatches.ALDatabase_UserNameForSid),
+                    BindingFlags.Public | BindingFlags.Static)
+                    ?? throw new InvalidOperationException(
+                        "[Cecil] ALDatabasePatches.ALDatabase_UserNameForSid not found");
+                foreach (var m in alDatabaseType.Methods.Where(x =>
+                    x.Name == "UserName" && x.IsStatic && x.Parameters.Count == 1
+                    && x.Parameters[0].ParameterType.FullName == "System.String" && x.HasBody))
+                {
+                    ReplaceBodyWithHelper(asm.MainModule, m, userNameHelper);
+                    Console.Error.WriteLine("[Cecil] Rewrote ALDatabase.UserName(string) → host has no Windows identity store");
+                }
             }
         }
 

@@ -29,6 +29,12 @@
 // A relation declared in this bundle's own AL source would exercise the AL-source parser instead
 // and could pass while the real one still failed.
 //
+// #2352 adds the session user's WINDOWS SID, the same kind of runner invention: TESTUSER is a
+// Windows-authenticated user whose Sid() is S-1-5-21-1413829460-1431520594-0-1000 (the ASCII bytes
+// of "TEST" and "USER"), and whose User row carries it in "Windows Security ID". Before it, Sid() was
+// '' for every name, so the Microsoft idiom `User.SetRange("Windows Security ID", Sid(UserId))`
+// matched the blank-SID set and FindFirst picked a user by random guid order (Codeunit134302).
+//
 // SurRelationRefusesAnUnknownSecurityId is the negative control, and it PASSED before the fix.
 // It is what stops "insert the missing row" from being quietly replaced by "stop validating":
 // a security id that belongs to nobody must still be refused.
@@ -42,6 +48,8 @@ codeunit 65591 "SUR Tests"
         RunnerUserName: Label 'TESTUSER', Locked = true;
         RunnerUserSid: Label '{C0A1BDFA-0000-0000-0000-545553545553}', Locked = true;
         UnknownSid: Label '{DEADBEEF-1111-2222-3333-444455556666}', Locked = true;
+        RunnerWindowsSid: Label 'S-1-5-21-1413829460-1431520594-0-1000', Locked = true;
+        EarlierThanAnyRandomGuid: Label '{00000000-0000-0000-0000-000000000001}', Locked = true;
 
     [Test]
     procedure SurSessionUserIsARowInTheUserTable()
@@ -62,6 +70,79 @@ codeunit 65591 "SUR Tests"
         // Format() of an Option FIELD answers the member name, while Format() of an option
         // MEMBER reference answers its ordinal, so the literal is the one that compares.
         Assert.AreEqual('Enabled', Format(UserRec.State), 'User.State');
+    end;
+
+    [Test]
+    procedure SurSessionUserHasAWindowsSidAndItsRowCarriesIt()
+    var
+        UserRec: Record User;
+    begin
+        Assert.AreEqual(RunnerWindowsSid, Database.Sid(''), 'Sid() is the session user''s Windows SID');
+        UserRec.Get(UserSecurityId());
+        Assert.AreEqual(RunnerWindowsSid, UserRec."Windows Security ID", 'the session user''s row carries the same SID');
+    end;
+
+    [Test]
+    procedure SurSidOfTheSessionUserNameIsTheSessionSidAndOtherNamesStayUnmapped()
+    begin
+        Assert.AreEqual(Database.Sid(''), Database.Sid(UserId()), 'Sid(UserId()) = Sid()');
+        // Account names compare without case, as NTAccount does.
+        Assert.AreEqual(RunnerWindowsSid, Database.Sid(LowerCase(UserId())), 'Sid(<session name, other case>)');
+        // Negative direction: only the session user's name maps; any other name is still BC's not-mapped answer.
+        Assert.AreEqual('', Database.Sid('SUR-NOBODY'), 'Sid(<unknown name>)');
+        Assert.AreEqual('', Database.Sid(UserId() + 'X'), 'Sid(<name that merely starts like the session user''s>)');
+    end;
+
+    [Test]
+    procedure SurUserNameOfASidIsTheInverseOfSid()
+    var
+        IdentityManagement: Codeunit "Identity Management";
+    begin
+        // User Card's OnAfterGetRecord asks for the name behind a row's Windows Security ID
+        // (Codeunit132903); BC's ALDatabase.UserName(sid) raised the platform's NavUserNotFoundException here.
+        Assert.AreEqual(UserId(), IdentityManagement.UserName(Database.Sid(UserId())), 'UserName(Sid(UserId())) is the session user');
+        // Negative direction: a SID that belongs to nobody comes back unchanged, which is BC's own
+        // not-mapped answer, and does not raise.
+        Assert.AreEqual('S-1-5-21-1-2-3-4', IdentityManagement.UserName('S-1-5-21-1-2-3-4'), 'UserName(<unmapped SID>)');
+    end;
+
+    [Test]
+    procedure SurUserNameOfAMalformedSidRaisesAsBcDoes()
+    var
+        IdentityManagement: Codeunit "Identity Management";
+    begin
+        // BC builds a SecurityIdentifier from the text first, and any failure of that, a malformed
+        // sid included, is raised as NavUserNotFoundException; only a well-formed sid BC cannot
+        // map comes back unchanged (the control in SurUserNameOfASidIsTheInverseOfSid).
+        asserterror IdentityManagement.UserName('not-a-sid');
+        Assert.ExpectedError(
+            'Cannot retrieve the requested user name. The following error was reported: Value was invalid. (Parameter ''sddlForm'')');
+    end;
+
+    [Test]
+    procedure SurWindowsSidLookupFindsTheSessionUserNotAUserWithoutOne()
+    var
+        StubUser: Record User;
+        UserRec: Record User;
+    begin
+        // The Microsoft setup idiom (Codeunit134302 SetupUsersForApproval): a stub user without a
+        // Windows SID is inserted, then the session user is found by its SID. The stub's key sorts
+        // BEFORE the session user's, so a SID filter that degenerates to '' returns the stub.
+        StubUser.Init();
+        Evaluate(StubUser."User Security ID", EarlierThanAnyRandomGuid);
+        StubUser.Insert();
+
+        UserRec.SetRange("Windows Security ID", Database.Sid(UserId()));
+        Assert.AreEqual(1, UserRec.Count(), 'exactly the session user carries the session user''s SID');
+        UserRec.FindFirst();
+        Assert.AreEqual(UserSecurityId(), UserRec."User Security ID", 'FindFirst by the session SID is the session user');
+        Assert.AreEqual(RunnerUserName, UserRec."User Name", 'and not the stub');
+
+        // Control: the blank filter still finds the stub, so the filter above is not matching by accident.
+        Clear(UserRec);
+        UserRec.SetRange("Windows Security ID", '');
+        UserRec.FindFirst();
+        Assert.AreEqual(Format(StubUser."User Security ID"), Format(UserRec."User Security ID"), 'a blank SID matches the SID-less stub');
     end;
 
     [Test]

@@ -1003,6 +1003,12 @@ public static class ALDatabasePatches
     // absence is not the same as inventing presence, and no AL caller can read an
     // identity out of "".
     //
+    // THE SESSION USER IS THE ONE NAME THAT DOES MAP (#2352). The runner defines the session
+    // user (TESTUSER) and gives it a synthetic SID (BcRuntime.SessionUserWindowsSid), the way it
+    // gives it a synthetic guid, so Sid() and Sid(UserId()) answer that SID. Mapping nobody made
+    // `User."Windows Security ID" = Sid(UserId())` match the blank-SID set, whose FindFirst order is
+    // random (Microsoft's Codeunit134302 setup).
+    //
     // WHAT NO SERVICE TIER HAS ADJUDICATED, AND WHY.
     // A real BC on Windows, joined to a domain in which N *does* exist, returns N's real
     // SID. The runner cannot reproduce that and does not claim to. What the runner claims
@@ -1026,7 +1032,56 @@ public static class ALDatabasePatches
 #pragma warning restore CS0618
         }
 
-        // Every other name: not mapped on this host. BC's IdentityNotMapped answer.
+        // The session user's own account name maps to the session user's SID (#2352), the Windows
+        // authentication case: NavUser.TryAuthenticate fills windowsSID (Ncl 28.1.49838.53910, 49b11d9b).
+        // Any other name: not mapped on this host. BC's IdentityNotMapped answer.
+#pragma warning disable CS0618
+        var user = Microsoft.Dynamics.Nav.Runtime.NavCurrentThread.Session?.User;
+#pragma warning restore CS0618
+        if (user != null && string.Equals(userName, user.Name, StringComparison.OrdinalIgnoreCase))
+            return user.Sid ?? string.Empty;
         return string.Empty;
+    }
+
+    // ── ALDatabase.UserName(string) — Windows SID → account name, the inverse of ALSid ────
+    //
+    // BC's body (Ncl 28.1, decompiled): an empty sid answers the session user's name;
+    // `new SecurityIdentifier(sid).Translate(typeof(NTAccount)).Value` otherwise, with
+    // IdentityNotMappedException answered by returning the sid itself. On Linux the same
+    // PlatformNotSupportedException as ALSid escapes as NavUserNotFoundException. It became
+    // reachable once the session user carried a Windows SID (#2352): User Card's
+    // OnAfterGetRecord calls it for the row's "Windows Security ID" (Codeunit132903).
+    //
+    // Same claim as ALSidForAccountName: the host's identity store maps no SID, so the sid comes
+    // back unchanged (BC's own not-mapped answer), except the session user's SID, which maps to
+    // the session user's name, the inverse of Sid(UserId()). A malformed sid raises as in BC (Ncl 28.1.49838.53910,
+    // ALDatabase.UserName). No service tier adjudicates the mapped part (#2312).
+    private static readonly System.Text.RegularExpressions.Regex WindowsSidShape = new(
+        @"^(?:[Ss]-1-(?:\d+|0[xX][0-9a-fA-F]+)(?:-\d+){0,15}|[A-Za-z]{2})$",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static string ALDatabase_UserNameForSid(string sid)
+    {
+#pragma warning disable CS0618
+        var user = Microsoft.Dynamics.Nav.Runtime.NavCurrentThread.Session?.User;
+#pragma warning restore CS0618
+        if (string.IsNullOrEmpty(sid))
+            return user?.Name ?? string.Empty;
+        // BC builds `new SecurityIdentifier(sid)` first and wraps ANY failure as NavUserNotFoundException
+        // (UnableToFindUserName, ex). Linux has no working constructor, so the shape it parses is
+        // checked here: S-1-<authority>(-<sub>){0,15}, or a two-letter SDDL alias. Its reject is
+        // ArgumentException(Argument_InvalidValue, "sddlForm") in the .NET reference source (not run here).
+        if (!WindowsSidShape.IsMatch(sid))
+        {
+            var bad = new ArgumentException("Value was invalid.", "sddlForm");
+            throw new Microsoft.Dynamics.Nav.Types.Exceptions.NavUserNotFoundException(
+                string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                    Microsoft.Dynamics.Nav.Common.Language.Lang.UnableToFindUserName, bad.Message), bad);
+        }
+        if (user != null && !string.IsNullOrEmpty(user.Sid)
+            && string.Equals(sid, user.Sid, StringComparison.OrdinalIgnoreCase))
+            return user.Name;
+        return sid;
     }
 }

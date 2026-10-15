@@ -164,6 +164,27 @@ No fixture measures that, because arranging it needs a real backup. What the fix
 instead is a collision arranged **by a dependency install trigger**, which then settles at step
 4 — the same path a DISK-HIT takes.
 
+## The Windows SID
+
+The session user carries a Windows SID, like the guid and the name, and the three places that
+answer for it agree (#2352): `NavUser.Sid` (what `Sid()` and `Sid(UserId())` return), and the
+`Windows Security ID` column of the session user's `User` row.
+
+- **Generated:** `BcRuntime.SessionUserWindowsSid`, `S-1-5-21-1413829460-1431520594-0-1000` — the
+  ASCII bytes of `TEST` and `USER` as the two machine sub-authorities, as the guid carries `TESTUS`.
+  The seed writes it into the row it inserts; `Sid()` answers it; `ALDatabasePatches` maps the
+  session user's own name (without case, as `NTAccount` compares) to it and every other name to `''`.
+- **Followed, not forced:** an adopted row and an already-present row keep their own value, blank
+  included, and `Sid()` answers that row's (`AlignSessionWindowsSidWithRow`, the adoption poke).
+- **Per bundle:** `ResetUserSystemTableForNewBundle` puts the generated one back whether or not
+  anything was adopted, because the skeleton `NavUser` is built once per process.
+
+Why a blank one was wrong: Microsoft's setup idiom `User.SetRange("Windows Security ID",
+Sid(UserId))` then `FindFirst` degenerated to the blank-SID set, and the order within it is the
+primary key, a guid — so Codeunit134302's approval tests passed or failed with the random guid of a
+stub user the same test inserts (`No qualified approver was found`). The key is part of the
+install-baseline key (`SessionIdentityForBaselineKey`).
+
 ## Fixtures
 
 A fixture that has to establish a `User` row the seed did not write does it from a sibling
@@ -173,8 +194,9 @@ the primary key or by BC's user-name uniqueness rule, exactly as it would be on 
 
 | fixture | what its `dep` app does |
 |---|---|
-| `AlRunner.Tests/Fixtures/SessionUserRowAlreadyPresent` | modifies the seeded row (the benign already-present refusal, #2941) |
+| `AlRunner.Tests/Fixtures/SessionUserRowAlreadyPresent` | modifies the seeded row, blanking its Windows SID (the benign already-present refusal, #2941; #2352) |
 | `AlRunner.Tests/Fixtures/SessionUserRowNameCollision` | deletes it and inserts a different user under the session user's name (the adoption, #2983) |
 | `AlRunner.Tests/Fixtures/InstallTriggerSessionIdentity` | the same replacement, with the bundle's own install trigger recording the identity it saw (#3268) |
 | `AlRunner.Tests/Fixtures/DepInstallTriggerSessionIdentity` | only observes: it records whether the session user was a row, and the id it saw (#3698), plus the Company row, the SUPER row and the installed-app registry it saw (#3757) |
 | `AlRunner.Tests/Fixtures/BundleInstallTriggerSeedVisibility` | no dependency app at all: the BUNDLE's own install trigger records the Company row, the SUPER row and its own Published Application row it saw (#3757) |
+| `AlRunner.Tests/Fixtures/SessionUserWindowsSidPlain` | no dependency app: the cross-bundle control that the generated Windows SID is back after bundles that moved it (#2352) |

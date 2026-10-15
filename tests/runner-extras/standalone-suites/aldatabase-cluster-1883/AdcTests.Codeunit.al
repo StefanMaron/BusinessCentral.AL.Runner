@@ -14,7 +14,7 @@
 ///     NavCurrentThread.Session, which does not exist in the skeleton runtime". Stale:
 ///     Session IS wired to the skeleton (confirmed by the pre-existing ALUserID/
 ///     ALUserSecurityId/ALTenantID field-poke seeding in BcRuntime.cs). ALSid("") reads
-///     session.User.Sid (backed by an unpopulated `windowsSID` field → "", not a crash).
+///     session.User.Sid (an unpopulated `windowsSID` field answered "" until #2352 seeded it).
 ///     ALSessionID() reads session.Id after session.CheckConnectionIsOpen() (hasBeenOpened is
 ///     seeded true elsewhere); session.Id is seeded positive at boot (#5144). Deleted
 ///     outright, along with the now-unreferenced
@@ -72,16 +72,18 @@ codeunit 60708 "ADC Tests"
     // No Codeunit Assert dependency in this app (see the sibling suites in this consolidated
     // app.json) — plain Error() with an explicit condition check plays the same role.
 
-    // ── ALDatabase.ALSid(string) — deleted hook, real body returns "" (no crash) ─────────────
+    // ── ALDatabase.ALSid(string) — deleted hook, real body reads session.User.Sid (no crash) ──
+    // The skeleton session user's windowsSID is populated since #2352 (BcRuntime.SessionUserWindowsSid),
+    // so the empty name answers that SID; the session-user-row suite pins the value.
     [Test]
-    procedure Sid_EmptyUserName_ReturnsEmptyString_NoThrow()
+    procedure Sid_EmptyUserName_ReturnsTheSessionUsersSid_NoThrow()
     var
         Sid: Text;
     begin
         Sid := Database.Sid('');
-        if Sid <> '' then
-            Error('Expected Database.Sid('''') to return the unpopulated-windowsSID empty '
-                + 'string on the skeleton runtime, got: %1', Sid);
+        if Sid <> 'S-1-5-21-1413829460-1431520594-0-1000' then
+            Error('Expected Database.Sid('''') to return the skeleton session user''s Windows SID, '
+                + 'got: %1', Sid);
     end;
 
     // ── ALDatabase.ALSid(string) with a NON-EMPTY name ───────────────────────────────────────

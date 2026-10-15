@@ -1,0 +1,18 @@
+{
+  "id": "d7804ab1-c416-4c51-9e01-6a425a7a98da",
+  "name": "Runner Tests Fixture - Session User Windows SID Plain",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "#2352: a bundle that touches nothing about the session user sees the runner-generated Windows SID, after an earlier bundle in the same process moved Sid() onto a row of its own.",
+  "description": "The cross-bundle control for the Windows SID. SessionUserRowNameCollision adopts a row whose Windows Security ID is blank and SessionUserRowAlreadyPresent blanks the seeded row's, so Sid() is '' in both; this bundle, run after them in one process, must see S-1-5-21-1413829460-1431520594-0-1000 again, because the skeleton NavUser is built once per process and its windowsSID is poked per bundle. Nothing in a single-bundle run can observe the difference.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 70890,
+      "to": 70899
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}

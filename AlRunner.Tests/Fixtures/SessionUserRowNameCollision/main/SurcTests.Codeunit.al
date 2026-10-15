@@ -136,4 +136,17 @@ codeunit 70530 "SURC Tests"
               + 'reaching NavUserAccountHelper.SetAuthenticationObjectId fails the AlRunner#2355 way',
               Format(UserSecurityId()));
     end;
+
+    [Test]
+    procedure SurcTheAdoptedRowsBlankWindowsSidIsWhatSidAnswers()
+    begin
+        // #2352. The session user's Windows SID follows the row it became. The stand-in row was
+        // written without one, so Sid() must answer ''; the generated S-1-5-21-1413829460-1431520594-0-1000
+        // would name a SID no row of the adopted user holds, and `User."Windows Security ID" = Sid(UserId())`
+        // would find nobody.
+        if Database.Sid('') <> '' then
+            Error('Sid() must be the adopted row''s (blank) Windows SID, but it is "%1"', Database.Sid(''));
+        if Database.Sid(UserId()) <> '' then
+            Error('Sid(UserId()) must follow Sid(), but it is "%1"', Database.Sid(UserId()));
+    end;
 }

@@ -179,6 +179,8 @@ public sealed class SessionUserRowRefusalTests
             Assert.Contains("PASS  Codeunit70510.SuraSeedLeftTheAlreadyPresentRowExactlyAsItWas", stdout);
             Assert.Contains("PASS  Codeunit70510.SuraSeedAddedNoSecondRowForTheSessionUser", stdout);
             Assert.Contains("PASS  Codeunit70510.SuraAUserSecurityIdBelongingToNobodyIsStillNotFound", stdout);
+            // #2352: Sid() follows the row the install code left, not the generated SID.
+            Assert.Contains("PASS  Codeunit70510.SuraSidFollowsTheAlreadyPresentRow", stdout);
             Assert.DoesNotContain("FAIL", stdout);
         }
         finally
@@ -241,6 +243,9 @@ public sealed class SessionUserRowRefusalTests
                 "PASS  Codeunit70530.SurcAdoptionAddedNoSecondRowAndLeftUserIdAlone", stdout);
             Assert.Contains(
                 "PASS  Codeunit70530.SurcTheAdoptedUserHasItsUserPropertyRow", stdout);
+            // #2352: the adopted row's blank Windows SID is what Sid() answers.
+            Assert.Contains(
+                "PASS  Codeunit70530.SurcTheAdoptedRowsBlankWindowsSidIsWhatSidAnswers", stdout);
             Assert.DoesNotContain("FAIL", stdout);
         }
         finally
@@ -290,7 +295,8 @@ public sealed class SessionUserRowRefusalTests
         try
         {
             var (exit, stdout, stderr) = RunBundles(
-                cacheDir, "SessionUserRowNameCollision/main", "SessionUserRowAlreadyPresent/main");
+                cacheDir, "SessionUserRowNameCollision/main", "SessionUserRowAlreadyPresent/main",
+                "SessionUserWindowsSidPlain/main");
 
             Assert.True(exit == 0,
                 $"expected a clean run over both bundles. exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");
@@ -315,6 +321,11 @@ public sealed class SessionUserRowRefusalTests
                 stdout);
             Assert.Contains("PASS  Codeunit70510.SuraSeedLeftTheAlreadyPresentRowExactlyAsItWas", stdout);
             Assert.Contains("PASS  Codeunit70510.SuraSeedAddedNoSecondRowForTheSessionUser", stdout);
+
+            // #2352: the Windows SID is poked per bundle as well (adoption, an already-present row), and
+            // the reset between bundles restores the generated one even when nothing was adopted --
+            // bundle C touches no row and must see it, after A left Sid() blank and B blanked the row.
+            Assert.Contains("PASS  Codeunit70890.SuwpSidIsTheRunnerGeneratedOneWhenNoRowMovedIt", stdout);
 
             // EXACTLY ONE adoption in the process. Bundle B has nothing to adopt — its Install
             // trigger writes the session user's own security id — so a second adoption line here

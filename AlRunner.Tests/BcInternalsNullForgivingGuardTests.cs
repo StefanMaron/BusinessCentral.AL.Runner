@@ -363,7 +363,12 @@ public sealed class BcInternalsNullForgivingGuardTests
         // 136 -> 138 for NavRecordExtension.ParentObject and NavFormExtension.ParentObject in
         // GetCallerRecordPatches.EnsureCallerRecordHelpers (#3702), both BcShape.Property: a silent
         // null made NavRecord.GetCallerRecord answer null for a table or page extension caller.
-        Assert.Equal(138, converted);
+        //
+        // 138 -> 142 for the session user's Windows SID in RecordPatches.UserSystemTable.cs (#2352),
+        // on top of #3702: BcShape.Property for NavSession.Authenticator and BcShape.Field for navUser,
+        // plus BcShape.Field for windowsSID in the reader and in the poke. A silent null would leave
+        // Sid() on the generated SID while the row says otherwise.
+        Assert.Equal(142, converted);
     }
 
     /// <summary>

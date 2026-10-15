@@ -31,6 +31,9 @@ codeunit 70500 "SURA Installer"
         // replaced it": the runner's own seed writes the skeleton NavUser's Full Name, never
         // this string.
         UserRec."Full Name" := InstalledByFixtureTok;
+        // #2352: the seeded row carries the generated Windows SID; blank it, so the second seed call
+        // has to align Sid() with the row rather than leave the generated one.
+        UserRec."Windows Security ID" := '';
         UserRec.Modify();
     end;
 

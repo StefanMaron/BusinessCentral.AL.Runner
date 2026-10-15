@@ -114,6 +114,7 @@ public sealed class PlatformFloorFixtureGuardTests
         ["Fixtures/InstallTriggerSessionIdentity/dep/app.json"] = "AL reads the System tables User and Access Control (" + Measured + "; InstallTriggerSessionIdentityTests and ServerBundleInstallBaselineReuseTests.SeedThatAdoptsAnotherSessionUser_IsNotReused fail; the seed app does not compile, AL0185 Table 'User' is missing)",
         ["Fixtures/DepInstallTriggerSessionIdentity/dep/app.json"] = "AL reads the System tables User, Access Control, Company and NAV App Installed App (" + Measured + "; DepInstallTriggerSessionIdentityTests fails; the observer app does not compile, AL0185 Table 'User', 'Company', 'Access Control' and 'NAV App Installed App' are missing)",
         ["Fixtures/BundleInstallTriggerSeedVisibility/main/app.json"] = "AL reads the System tables Access Control, Company and Published Application (" + Measured + "; BundleInstallTriggerSeedVisibilityTests: AL0185 Table 'Company', 'Access Control' and 'Published Application' are missing, EMIT-EXCLUDED)",
+        ["Fixtures/SessionUserWindowsSidPlain/main/app.json"] = "AL reads the System table User (" + Measured + "; SessionUserRowRefusalTests.AnAdoptionInOneBundleDoesNotLeakIntoTheNextBundlesSessionIdentity: AL0185 Table 'User' is missing, EMIT-ZERO)",
     };
 
     /// <summary>

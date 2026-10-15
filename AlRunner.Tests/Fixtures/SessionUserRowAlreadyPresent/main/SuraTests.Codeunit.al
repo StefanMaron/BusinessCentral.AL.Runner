@@ -76,4 +76,19 @@ codeunit 70510 "SURA Tests"
         if UserRec.Get(Nobody) then
             Error('User.Get on a security id belonging to nobody must be false');
     end;
+
+    [Test]
+    procedure SuraSidFollowsTheAlreadyPresentRow()
+    var
+        UserRec: Record User;
+    begin
+        // #2352. Nothing is adopted, but the Install trigger blanked the row's Windows SID (the state a
+        // restore without it leaves), so Sid() answers the row's value, not the generated
+        // S-1-5-21-1413829460-1431520594-0-1000.
+        UserRec.Get(UserSecurityId());
+        if UserRec."Windows Security ID" <> '' then
+            Error('precondition: the Install trigger blanked the row''s Windows SID, got "%1"', UserRec."Windows Security ID");
+        if Database.Sid('') <> '' then
+            Error('Sid() must be the session user row''s Windows SID (blank), but it is "%1"', Database.Sid(''));
+    end;
 }

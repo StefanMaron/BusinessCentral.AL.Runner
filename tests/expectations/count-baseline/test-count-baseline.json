@@ -74,7 +74,7 @@
         "server-reload-dep": { "tests": 0 },
         "server-reload-main": { "tests": 1 },
         "session-company-default": { "tests": 4 },
-        "session-user-row": { "tests": 3 },
+        "session-user-row": { "tests": 8 },
         "source-tableext-relation": { "tests": 5 },
         "sql-connection-oos": { "tests": 4 },
         "standalone-suites": { "tests": 116 },
